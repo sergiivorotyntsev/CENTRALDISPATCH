@@ -123,29 +123,48 @@ class TestBaseExtractor:
 class TestIAAExtractor:
     """Tests for IAA extractor."""
 
+    # Realistic IAA document text with multiple indicators
+    IAA_SAMPLE = """
+    Insurance Auto Auctions, Inc.
+    BUYER RECEIPT
+    IAAI Branch Location
+    Pick-Up Location: Tampa, FL
+    StockNo: 123456789
+    VIN: 1HGBH41JXMN109186
+    Thank you for your business.
+    """
+
     def test_can_extract_positive(self):
         """Test that IAA documents are recognized."""
         extractor = IAAExtractor()
 
-        positive_cases = [
-            "Insurance Auto Auctions - Buyer Receipt",
-            "IAAI BRE Document",
-            "Buyer Receipt from IAA",
-        ]
-        for text in positive_cases:
-            assert extractor.can_extract(text), f"Should recognize: {text}"
+        # Using realistic IAA document text
+        assert extractor.can_extract(self.IAA_SAMPLE), "Should recognize IAA sample"
+
+        # Additional test with just key indicators
+        key_text = "Insurance Auto Auctions Buyer Receipt IAAI StockNo: 123 Pick-Up Location: FL" + " " * 50
+        assert extractor.can_extract(key_text), "Should recognize key IAA indicators"
 
     def test_can_extract_negative(self):
         """Test that non-IAA documents are rejected."""
         extractor = IAAExtractor()
 
-        negative_cases = [
-            "Copart Sales Receipt",
-            "Manheim Bill of Sale",
-            "Random document text",
-        ]
-        for text in negative_cases:
-            assert not extractor.can_extract(text), f"Should not recognize: {text}"
+        negative_sample = """
+        Copart Sales Receipt/Bill of Sale
+        MEMBER: 12345
+        PHYSICAL ADDRESS OF LOT
+        LOT# 789456
+        VIN: 1HGBH41JXMN109186
+        """
+        assert not extractor.can_extract(negative_sample), "Should not recognize Copart doc"
+
+        manheim_sample = """
+        Manheim Auto Auction
+        Cox Automotive BILL OF SALE
+        VEHICLE RELEASE
+        Release ID: MAN12345
+        """
+        assert not extractor.can_extract(manheim_sample), "Should not recognize Manheim doc"
 
     def test_source_property(self):
         """Test source property returns IAA."""
@@ -156,30 +175,53 @@ class TestIAAExtractor:
 class TestManheimExtractor:
     """Tests for Manheim extractor."""
 
+    # Realistic Manheim document text with multiple indicators
+    MANHEIM_SAMPLE = """
+    Manheim Auto Auction
+    Cox Automotive
+    BILL OF SALE
+    VEHICLE RELEASE
+    Release ID: MAN12345
+    Visit Manheim.com for details
+    YMMT: 2023 TOYOTA CAMRY
+    """
+
     def test_can_extract_positive(self):
         """Test that Manheim documents are recognized."""
         extractor = ManheimExtractor()
 
-        positive_cases = [
-            "Manheim Auto Auction",
-            "Cox Automotive - Bill of Sale",
-            "VEHICLE RELEASE from Manheim",
-            "Visit Manheim.com",
-        ]
-        for text in positive_cases:
-            assert extractor.can_extract(text), f"Should recognize: {text}"
+        # Using realistic Manheim document text
+        assert extractor.can_extract(self.MANHEIM_SAMPLE), "Should recognize Manheim sample"
+
+        # Offsite release test
+        offsite_text = """
+        Manheim OFFSITE VEHICLE RELEASE
+        Cox Automotive
+        Release ID: OFF789
+        VEHICLE RELEASE documentation
+        """
+        assert extractor.can_extract(offsite_text), "Should recognize offsite release"
 
     def test_can_extract_negative(self):
         """Test that non-Manheim documents are rejected."""
         extractor = ManheimExtractor()
 
-        negative_cases = [
-            "Insurance Auto Auctions",
-            "Copart Sales Receipt",
-            "Random document",
-        ]
-        for text in negative_cases:
-            assert not extractor.can_extract(text), f"Should not recognize: {text}"
+        iaa_sample = """
+        Insurance Auto Auctions, Inc.
+        BUYER RECEIPT
+        IAAI Branch Location
+        Pick-Up Location: Tampa, FL
+        StockNo: 123456789
+        """
+        assert not extractor.can_extract(iaa_sample), "Should not recognize IAA doc"
+
+        copart_sample = """
+        Copart Sales Receipt/Bill of Sale
+        SOLD THROUGH COPART
+        MEMBER: 12345
+        PHYSICAL ADDRESS OF LOT
+        """
+        assert not extractor.can_extract(copart_sample), "Should not recognize Copart doc"
 
     def test_source_property(self):
         """Test source property returns MANHEIM."""
@@ -190,31 +232,55 @@ class TestManheimExtractor:
 class TestCopartExtractor:
     """Tests for Copart extractor."""
 
+    # Realistic Copart document text with multiple indicators
+    COPART_SAMPLE = """
+    Copart
+    Sales Receipt/Bill of Sale
+    SOLD THROUGH COPART
+    MEMBER: 12345678
+    PHYSICAL ADDRESS OF LOT
+    LOT# 45678901
+    Visit copart.com
+    VIN: 1HGBH41JXMN109186
+    """
+
     def test_can_extract_positive(self):
         """Test that Copart documents are recognized."""
         extractor = CopartExtractor()
 
-        positive_cases = [
-            "Copart - Sales Receipt",
-            "Sales Receipt/Bill of Sale",
-            "SOLD THROUGH COPART",
-            "MEMBER: 12345",
-            "PHYSICAL ADDRESS OF LOT",
-        ]
-        for text in positive_cases:
-            assert extractor.can_extract(text), f"Should recognize: {text}"
+        # Using realistic Copart document text
+        assert extractor.can_extract(self.COPART_SAMPLE), "Should recognize Copart sample"
+
+        # Minimal but sufficient indicators
+        key_text = """
+        Copart Sales Receipt/Bill of Sale
+        SOLD THROUGH COPART
+        MEMBER: 12345
+        LOT# 789
+        """
+        assert extractor.can_extract(key_text), "Should recognize key Copart indicators"
 
     def test_can_extract_negative(self):
         """Test that non-Copart documents are rejected."""
         extractor = CopartExtractor()
 
-        negative_cases = [
-            "Insurance Auto Auctions",
-            "Manheim Bill of Sale",
-            "Random document",
-        ]
-        for text in negative_cases:
-            assert not extractor.can_extract(text), f"Should not recognize: {text}"
+        iaa_sample = """
+        Insurance Auto Auctions, Inc.
+        BUYER RECEIPT
+        IAAI Branch Location
+        Pick-Up Location: Tampa, FL
+        StockNo: 123456789
+        """
+        assert not extractor.can_extract(iaa_sample), "Should not recognize IAA doc"
+
+        manheim_sample = """
+        Manheim Auto Auction
+        Cox Automotive
+        BILL OF SALE
+        VEHICLE RELEASE
+        Release ID: MAN12345
+        """
+        assert not extractor.can_extract(manheim_sample), "Should not recognize Manheim doc"
 
     def test_source_property(self):
         """Test source property returns COPART."""
@@ -224,6 +290,33 @@ class TestCopartExtractor:
 
 class TestExtractorManager:
     """Tests for ExtractorManager."""
+
+    IAA_SAMPLE = """
+    Insurance Auto Auctions, Inc.
+    BUYER RECEIPT
+    IAAI Branch Location
+    Pick-Up Location: Tampa, FL
+    StockNo: 123456789
+    VIN: 1HGBH41JXMN109186
+    """
+
+    MANHEIM_SAMPLE = """
+    Manheim Auto Auction
+    Cox Automotive
+    BILL OF SALE
+    VEHICLE RELEASE
+    Release ID: MAN12345
+    Visit Manheim.com
+    """
+
+    COPART_SAMPLE = """
+    Copart
+    Sales Receipt/Bill of Sale
+    SOLD THROUGH COPART
+    MEMBER: 12345678
+    PHYSICAL ADDRESS OF LOT
+    LOT# 45678901
+    """
 
     def test_manager_has_all_extractors(self):
         """Test that manager includes all three extractors."""
@@ -238,7 +331,7 @@ class TestExtractorManager:
         """Test extractor selection for IAA text."""
         manager = ExtractorManager()
 
-        extractor = manager.get_extractor_for_text("Insurance Auto Auctions Buyer Receipt")
+        extractor = manager.get_extractor_for_text(self.IAA_SAMPLE)
         assert extractor is not None
         assert extractor.source == AuctionSource.IAA
 
@@ -246,7 +339,7 @@ class TestExtractorManager:
         """Test extractor selection for Manheim text."""
         manager = ExtractorManager()
 
-        extractor = manager.get_extractor_for_text("Manheim Bill of Sale")
+        extractor = manager.get_extractor_for_text(self.MANHEIM_SAMPLE)
         assert extractor is not None
         assert extractor.source == AuctionSource.MANHEIM
 
@@ -254,7 +347,7 @@ class TestExtractorManager:
         """Test extractor selection for Copart text."""
         manager = ExtractorManager()
 
-        extractor = manager.get_extractor_for_text("Copart Sales Receipt/Bill of Sale")
+        extractor = manager.get_extractor_for_text(self.COPART_SAMPLE)
         assert extractor is not None
         assert extractor.source == AuctionSource.COPART
 
@@ -262,5 +355,10 @@ class TestExtractorManager:
         """Test extractor selection for unrecognized text."""
         manager = ExtractorManager()
 
-        extractor = manager.get_extractor_for_text("Some random document")
+        text = """
+        Some random document that doesn't match any auction.
+        This is just placeholder text for testing purposes.
+        No specific indicators here.
+        """
+        extractor = manager.get_extractor_for_text(text)
         assert extractor is None

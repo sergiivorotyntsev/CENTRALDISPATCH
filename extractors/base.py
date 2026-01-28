@@ -204,8 +204,9 @@ class BaseExtractor(ABC):
     @staticmethod
     def extract_mileage(text: str) -> Optional[int]:
         patterns = [
-            r'Mileage[:\s]+(\d{1,3}(?:,\d{3})*|\d+)',
-            r'(\d{1,3}(?:,\d{3})*)\s*(?:Miles|Mi\.?)'
+            # Match "Mileage: 123456" or "Mileage: 123,456" - \d+ first for non-comma numbers
+            r'Mileage[:\s]+(\d+(?:,\d{3})*|\d+)',
+            r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:Miles|Mi\.?)'
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)

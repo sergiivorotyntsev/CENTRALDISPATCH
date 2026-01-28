@@ -14,14 +14,22 @@ class GatePassInfo:
 class GatePassExtractor:
     """Extracts gate pass/PIN codes from email body text."""
 
+    # Patterns ordered by specificity: source-specific first, then generic
     PATTERNS = [
-        (r'Gate\s*Pass\s*(?:Pin|Code|#|Number)?\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'generic'),
+        # IAA-specific patterns (check before generic Gate Pass)
         (r'(?:IAA|IAAI)\s*(?:Gate\s*)?Pass\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'IAA'),
-        (r'(?:Release|Lot)\s*(?:Code|#|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
-        (r'(?:Release\s*ID|Pickup\s*Code|Pickup\s*Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'MANHEIM'),
-        (r'(?:Pickup|Gate|Access)\s*PIN\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'Auth(?:orization)?\s*Code\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'Pass\s*(?:Code|#)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'generic'),
+        # Copart-specific patterns
+        (r'Copart\s*(?:Release|Lot)\s*(?:Code|#|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
+        (r'(?:Lot\s*#?\s*Pin|Lot\s*Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
+        # Manheim-specific patterns
+        (r'(?:Manheim\s*)?Release\s*ID\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'MANHEIM'),
+        (r'Pickup\s*(?:Code|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'MANHEIM'),
+        # Generic patterns (after source-specific)
+        (r'Gate\s*Pass\s*(?:Pin|Code|#|Number)?\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
+        (r'Release\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
+        (r'(?:Pickup|Gate|Access)\s*PIN\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
+        (r'Auth(?:orization)?\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
+        (r'Pass\s*(?:Code|#)\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
         (r'\b(?:code|pin)\s*[:#]\s*([A-Za-z0-9\-]{4,20})\b', 'generic'),
     ]
 

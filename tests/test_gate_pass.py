@@ -81,7 +81,7 @@ class TestGatePassExtractor:
 
     def test_no_gate_pass_found(self):
         """Test behavior when no gate pass is found."""
-        text = "This email has no gate pass information."
+        text = "This email contains no pickup codes or authentication info."
         result = GatePassExtractor.extract_primary(text)
         assert result is None
 
