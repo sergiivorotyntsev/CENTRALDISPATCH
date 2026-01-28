@@ -14,9 +14,29 @@ class CopartExtractor(BaseExtractor):
     def source(self) -> AuctionSource:
         return AuctionSource.COPART
 
-    def can_extract(self, text: str) -> bool:
-        indicators = ['Copart', 'Sales Receipt/Bill of Sale', 'SOLD THROUGH COPART', 'MEMBER:', 'PHYSICAL ADDRESS OF LOT']
-        return any(ind.lower() in text.lower() for ind in indicators)
+    @property
+    def indicators(self) -> list:
+        return [
+            'Copart',
+            'Sales Receipt/Bill of Sale',
+            'SOLD THROUGH COPART',
+            'MEMBER:',
+            'PHYSICAL ADDRESS OF LOT',
+            'LOT#',
+            'copart.com',
+        ]
+
+    @property
+    def indicator_weights(self) -> dict:
+        return {
+            'Copart': 2.0,
+            'SOLD THROUGH COPART': 3.0,
+            'Sales Receipt/Bill of Sale': 1.5,
+            'MEMBER:': 1.0,
+            'PHYSICAL ADDRESS OF LOT': 1.5,
+            'LOT#': 1.0,
+            'copart.com': 2.0,
+        }
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         text = self.extract_text(pdf_path)

@@ -14,9 +14,27 @@ class IAAExtractor(BaseExtractor):
     def source(self) -> AuctionSource:
         return AuctionSource.IAA
 
-    def can_extract(self, text: str) -> bool:
-        indicators = ['Insurance Auto Auctions', 'Buyer Receipt', 'IAAI BRE', 'IAA Doc']
-        return any(ind.lower() in text.lower() for ind in indicators)
+    @property
+    def indicators(self) -> list:
+        return [
+            'Insurance Auto Auctions',
+            'Buyer Receipt',
+            'IAAI',
+            'IAA Doc',
+            'Pick-Up Location',
+            'StockNo',
+        ]
+
+    @property
+    def indicator_weights(self) -> dict:
+        return {
+            'Insurance Auto Auctions': 3.0,  # Strong indicator
+            'IAAI': 2.0,
+            'Buyer Receipt': 1.5,
+            'IAA Doc': 2.0,
+            'Pick-Up Location': 1.0,
+            'StockNo': 1.0,
+        }
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         text = self.extract_text(pdf_path)

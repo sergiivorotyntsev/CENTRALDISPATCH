@@ -1,27 +1,118 @@
 """Base extractor class for auction invoices."""
 import re
+import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Optional, List, Tuple
 import pdfplumber
 
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExtractionResult:
+    """Result of PDF extraction with metadata."""
+    invoice: Optional[AuctionInvoice]
+    source: AuctionSource
+    score: float  # 0.0 to 1.0 confidence
+    text_length: int
+    needs_ocr: bool = False
+    matched_patterns: List[str] = None
+
+    def __post_init__(self):
+        if self.matched_patterns is None:
+            self.matched_patterns = []
+
 
 class BaseExtractor(ABC):
     """Base class for auction document extractors."""
+
+    # Minimum text length to consider document valid (vs scan/image)
+    MIN_TEXT_LENGTH = 100
+
+    # Score threshold for confident detection
+    SCORE_THRESHOLD = 0.6
 
     @property
     @abstractmethod
     def source(self) -> AuctionSource:
         pass
 
+    @property
     @abstractmethod
-    def can_extract(self, text: str) -> bool:
+    def indicators(self) -> List[str]:
+        """List of text patterns that indicate this document type."""
         pass
+
+    @property
+    def indicator_weights(self) -> dict:
+        """Optional weights for indicators (default: equal weight)."""
+        return {}
+
+    def score(self, text: str) -> Tuple[float, List[str]]:
+        """
+        Calculate confidence score for this extractor.
+        Returns (score, matched_patterns) where score is 0.0 to 1.0.
+        """
+        if not text or len(text) < self.MIN_TEXT_LENGTH:
+            return 0.0, []
+
+        text_lower = text.lower()
+        matched = []
+        total_weight = 0.0
+        matched_weight = 0.0
+
+        for indicator in self.indicators:
+            weight = self.indicator_weights.get(indicator, 1.0)
+            total_weight += weight
+
+            if indicator.lower() in text_lower:
+                matched.append(indicator)
+                matched_weight += weight
+
+        if total_weight == 0:
+            return 0.0, []
+
+        score = matched_weight / total_weight
+        return score, matched
+
+    def can_extract(self, text: str) -> bool:
+        """Check if this extractor can handle the document."""
+        score, _ = self.score(text)
+        return score >= self.SCORE_THRESHOLD
 
     @abstractmethod
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         pass
+
+    def extract_with_result(self, pdf_path: str, text: str = None) -> ExtractionResult:
+        """Extract with full result metadata."""
+        if text is None:
+            text = self.extract_text(pdf_path)
+
+        score, matched = self.score(text)
+        needs_ocr = len(text) < self.MIN_TEXT_LENGTH
+
+        if needs_ocr:
+            logger.warning(f"Document has insufficient text ({len(text)} chars), may need OCR")
+
+        invoice = None
+        if score >= self.SCORE_THRESHOLD:
+            try:
+                invoice = self.extract(pdf_path)
+            except Exception as e:
+                logger.error(f"Extraction failed: {e}")
+
+        return ExtractionResult(
+            invoice=invoice,
+            source=self.source,
+            score=score,
+            text_length=len(text),
+            needs_ocr=needs_ocr,
+            matched_patterns=matched,
+        )
 
     def extract_text(self, pdf_path: str) -> str:
         text = ""
