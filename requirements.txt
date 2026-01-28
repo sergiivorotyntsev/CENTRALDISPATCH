@@ -1,2 +1,12 @@
+# Core dependencies
 pdfplumber>=0.10.0
 requests>=2.28.0
+python-dotenv>=1.0.0
+
+# Development/testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Optional: OCR support (uncomment if needed)
+# pytesseract>=0.3.10
+# pdf2image>=1.16.0
