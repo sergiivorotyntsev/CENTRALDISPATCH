@@ -19,6 +19,7 @@ class ClassificationResult:
     score: float
     extractor: Optional[BaseExtractor]
     matched_patterns: List[str]
+    text: str = ""  # Cached text for subsequent extraction
 
 
 class ExtractorManager:
@@ -61,6 +62,7 @@ class ExtractorManager:
                 score=score,
                 extractor=extractor,
                 matched_patterns=patterns,
+                text=text,
             ))
 
         # Sort by score descending
@@ -82,6 +84,7 @@ class ExtractorManager:
                 score=0.0,
                 extractor=None,
                 matched_patterns=[],
+                text=text,
             )
 
         # Check margin against second place
@@ -99,6 +102,10 @@ class ExtractorManager:
             f"patterns={best.matched_patterns})"
         )
         return best
+
+    def classify_pdf(self, pdf_path: str) -> ClassificationResult:
+        """Alias for classify() - classify a PDF document."""
+        return self.classify(pdf_path)
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         """Extract data from a PDF, auto-detecting the document type."""

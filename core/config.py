@@ -304,3 +304,86 @@ def reset_config() -> None:
     """Reset the global configuration (for testing)."""
     global _config
     _config = None
+
+
+# Local settings path
+LOCAL_SETTINGS_FILE = "config/local_settings.json"
+
+
+def load_local_settings() -> dict:
+    """Load local settings from JSON file.
+
+    Priority:
+    1. config/local_settings.json
+    2. Environment variables (EXPORT_TARGETS, ENABLE_EMAIL_INGEST)
+    3. Defaults
+
+    Returns dict with:
+    - export_targets: List[str] (e.g., ["sheets", "clickup", "cd"])
+    - enable_email_ingest: bool
+    - schema_version: int
+    """
+    import json
+
+    defaults = {
+        "export_targets": ["sheets"],  # Stage 1: only sheets
+        "enable_email_ingest": False,
+        "schema_version": 1,
+    }
+
+    # Try loading from file
+    settings_path = Path(LOCAL_SETTINGS_FILE)
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                file_settings = json.load(f)
+                defaults.update(file_settings)
+        except Exception:
+            pass  # Use defaults on error
+
+    # Override with environment variables if present
+    env_targets = os.getenv("EXPORT_TARGETS")
+    if env_targets:
+        defaults["export_targets"] = [t.strip() for t in env_targets.split(",")]
+
+    env_ingest = os.getenv("ENABLE_EMAIL_INGEST")
+    if env_ingest is not None:
+        defaults["enable_email_ingest"] = env_ingest.lower() in ("true", "1", "yes")
+
+    return defaults
+
+
+def save_local_settings(settings: dict) -> None:
+    """Save local settings to JSON file."""
+    import json
+
+    settings_path = Path(LOCAL_SETTINGS_FILE)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def get_enabled_exporters() -> list:
+    """Get list of enabled export targets based on config and local settings.
+
+    Returns list of valid exporter names that are both:
+    1. In export_targets setting
+    2. Have valid credentials configured
+    """
+    settings = load_local_settings()
+    config = get_config()
+
+    enabled = []
+    targets = settings.get("export_targets", [])
+
+    if "sheets" in targets and config.sheets.enabled:
+        enabled.append("sheets")
+
+    if "clickup" in targets and config.clickup.token and config.clickup.list_id:
+        enabled.append("clickup")
+
+    if "cd" in targets and config.central_dispatch.enabled:
+        enabled.append("cd")
+
+    return enabled
