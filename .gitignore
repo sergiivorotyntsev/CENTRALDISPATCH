@@ -3,6 +3,11 @@
 .env.local
 .env.production
 
+# Google API credentials (NEVER commit!)
+credentials.json
+token.json
+*.pickle
+
 # Python
 __pycache__/
 *.py[cod]
@@ -15,6 +20,7 @@ ENV/
 # SQLite databases
 *.db
 processed_emails.db
+geocode_cache.db
 
 # IDE
 .vscode/

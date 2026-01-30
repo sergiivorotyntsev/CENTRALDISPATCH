@@ -3,14 +3,18 @@
 Vehicle Transport Automation - Email to ClickUp Pipeline
 
 CLI Commands:
+    doctor             - Run preflight checks (Python, deps, configs)
     extract <pdf>      - Extract data from a single PDF file
+    batch-extract      - Extract from multiple PDFs in a folder
     once               - Run single pass: fetch and process unseen emails
     daemon             - Run continuously, polling for new emails
-    validate           - Validate all credentials (email, ClickUp, CD)
+    validate           - Validate all credentials (email, ClickUp, CD, Sheets)
     idempotency        - Manage idempotency database
 
 Usage:
+    python main.py doctor
     python main.py extract invoice.pdf
+    python main.py batch-extract ./invoices --write-sheet
     python main.py once --dry-run
     python main.py daemon --interval 60
     python main.py validate
@@ -19,11 +23,165 @@ import argparse
 import json
 import sys
 import os
+import hashlib
+from datetime import datetime
+from pathlib import Path
 
 # Ensure project root is in path
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+
+def cmd_doctor(args):
+    """Run preflight checks to ensure system is ready."""
+    print("=" * 50)
+    print(" Vehicle Transport Automation - System Check")
+    print("=" * 50)
+    print()
+
+    all_ok = True
+    warnings = []
+
+    # Check 1: Python version
+    print("[1/6] Python version...")
+    py_version = sys.version_info
+    if py_version.major >= 3 and py_version.minor >= 9:
+        print(f"  OK: Python {py_version.major}.{py_version.minor}.{py_version.micro}")
+    else:
+        print(f"  FAIL: Python 3.9+ required (found {py_version.major}.{py_version.minor})")
+        all_ok = False
+
+    # Check 2: Required dependencies
+    print("[2/6] Core dependencies...")
+    required_deps = [
+        ("pdfplumber", "PDF extraction"),
+        ("requests", "HTTP client"),
+        ("dotenv", "Environment loading", "python-dotenv"),
+        ("tenacity", "Retry logic"),
+        ("yaml", "YAML parsing", "pyyaml"),
+    ]
+    for dep in required_deps:
+        module_name = dep[0]
+        description = dep[1]
+        pip_name = dep[2] if len(dep) > 2 else module_name
+        try:
+            __import__(module_name)
+            print(f"  OK: {pip_name} ({description})")
+        except ImportError:
+            print(f"  FAIL: {pip_name} not installed")
+            all_ok = False
+
+    # Check 3: Optional dependencies
+    print("[3/6] Optional dependencies...")
+    optional_deps = [
+        ("google.oauth2", "Google Sheets", "google-auth"),
+        ("googleapiclient", "Google Sheets API", "google-api-python-client"),
+        ("streamlit", "Web UI", "streamlit"),
+    ]
+    for dep in optional_deps:
+        module_name = dep[0]
+        description = dep[1]
+        pip_name = dep[2] if len(dep) > 2 else module_name
+        try:
+            __import__(module_name)
+            print(f"  OK: {pip_name} ({description})")
+        except ImportError:
+            print(f"  SKIP: {pip_name} not installed (optional)")
+            warnings.append(f"{pip_name} not installed - {description} unavailable")
+
+    # Check 4: Configuration files
+    print("[4/6] Configuration files...")
+    config_files = [
+        (".env", "Environment variables", True),
+        (".env.example", "Example config", False),
+        ("config/local_settings.json", "Local settings", False),
+        ("cd_field_mapping.yaml", "CD field mapping", False),
+        ("warehouses.yaml", "Warehouse locations", False),
+    ]
+    for filename, description, required in config_files:
+        path = Path(PROJECT_ROOT) / filename
+        if path.exists():
+            print(f"  OK: {filename} ({description})")
+        elif required:
+            print(f"  FAIL: {filename} missing ({description})")
+            all_ok = False
+        else:
+            print(f"  SKIP: {filename} missing (optional)")
+
+    # Check 5: Directory structure
+    print("[5/6] Directory structure...")
+    directories = [
+        "extractors",
+        "services",
+        "models",
+        "core",
+        "ingest",
+        "tests",
+    ]
+    for dirname in directories:
+        path = Path(PROJECT_ROOT) / dirname
+        if path.is_dir():
+            print(f"  OK: {dirname}/")
+        else:
+            print(f"  FAIL: {dirname}/ missing")
+            all_ok = False
+
+    # Check 6: Load and validate config (if .env exists)
+    print("[6/6] Configuration validation...")
+    if (Path(PROJECT_ROOT) / ".env").exists():
+        try:
+            from core.config import load_config_from_env, load_local_settings
+            config = load_config_from_env()
+            settings = load_local_settings()
+
+            export_targets = settings.get("export_targets", ["sheets"])
+            print(f"  Export targets: {', '.join(export_targets)}")
+
+            # Check each target
+            if "sheets" in export_targets:
+                if config.sheets.enabled and config.sheets.spreadsheet_id:
+                    print(f"  OK: Sheets configured (ID: {config.sheets.spreadsheet_id[:20]}...)")
+                else:
+                    print("  WARN: Sheets in targets but not configured")
+                    warnings.append("Sheets export enabled but SHEETS_SPREADSHEET_ID not set")
+
+            if "clickup" in export_targets:
+                if config.clickup.token and config.clickup.list_id:
+                    print(f"  OK: ClickUp configured (List: {config.clickup.list_id})")
+                else:
+                    print("  WARN: ClickUp in targets but not configured")
+                    warnings.append("ClickUp export enabled but credentials not set")
+
+            if "cd" in export_targets:
+                if config.central_dispatch.enabled:
+                    print(f"  OK: Central Dispatch configured")
+                else:
+                    print("  WARN: CD in targets but not configured")
+                    warnings.append("Central Dispatch export enabled but credentials not set")
+
+        except Exception as e:
+            print(f"  WARN: Could not load config: {e}")
+            warnings.append(f"Config load error: {e}")
+    else:
+        print("  SKIP: No .env file (run: cp .env.example .env)")
+        warnings.append("No .env file - copy from .env.example")
+
+    # Summary
+    print()
+    print("=" * 50)
+    if all_ok and not warnings:
+        print(" STATUS: ALL CHECKS PASSED")
+    elif all_ok:
+        print(f" STATUS: PASSED WITH {len(warnings)} WARNING(S)")
+        for w in warnings:
+            print(f"   - {w}")
+    else:
+        print(" STATUS: SOME CHECKS FAILED")
+        print(" Fix the issues above before proceeding.")
+    print("=" * 50)
+
+    return 0 if all_ok else 1
 
 
 def cmd_extract(args):
@@ -98,6 +256,195 @@ def cmd_extract(args):
         print("ERROR: Could not extract data from PDF")
         print("The document format may not be recognized (Copart/IAA/Manheim)")
         return 1
+
+
+def cmd_batch_extract(args):
+    """Extract data from multiple PDFs in a folder."""
+    from extractors import ExtractorManager
+    from core.logging_config import setup_logging
+    from core.config import load_config_from_env, load_local_settings
+
+    setup_logging(level="INFO", format_type="text")
+
+    folder_path = Path(args.folder)
+    if not folder_path.is_dir():
+        print(f"Error: Not a directory: {folder_path}")
+        return 1
+
+    # Find all PDFs
+    pdf_files = list(folder_path.glob("**/*.pdf"))
+    if not pdf_files:
+        print(f"No PDF files found in {folder_path}")
+        return 1
+
+    print(f"Found {len(pdf_files)} PDF files")
+    print("-" * 50)
+
+    # Prepare output
+    results = []
+    errors = []
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create runs directory
+    runs_dir = Path(PROJECT_ROOT) / "datasets" / "runs" / run_id
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    manager = ExtractorManager()
+
+    for i, pdf_path in enumerate(pdf_files, 1):
+        print(f"[{i}/{len(pdf_files)}] {pdf_path.name}...")
+
+        try:
+            # Calculate file hash for idempotency
+            with open(pdf_path, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()[:16]
+
+            # Extract text and classify
+            classification = manager.classify_pdf(str(pdf_path))
+
+            if classification and classification.extractor:
+                # Run extraction
+                result = classification.extractor.extract_with_result(
+                    str(pdf_path), classification.text
+                )
+
+                # Calculate status/score
+                score = result.score * 100
+                status = "OK" if score >= 60 else ("NEEDS_REVIEW" if score >= 30 else "FAIL")
+
+                record = {
+                    "file": str(pdf_path),
+                    "file_hash": file_hash,
+                    "auction": result.source.value if result.source else "UNKNOWN",
+                    "score": round(score, 1),
+                    "status": status,
+                    "matched_patterns": result.matched_patterns,
+                    "needs_ocr": result.needs_ocr,
+                    "extracted_at": datetime.now().isoformat(),
+                }
+
+                if result.invoice:
+                    inv = result.invoice
+                    record.update({
+                        "buyer_id": inv.buyer_id,
+                        "buyer_name": inv.buyer_name,
+                        "reference_id": inv.reference_id,
+                        "total_amount": inv.total_amount,
+                        "vehicles": [
+                            {
+                                "vin": v.vin,
+                                "year": v.year,
+                                "make": v.make,
+                                "model": v.model,
+                                "lot_number": v.lot_number,
+                            }
+                            for v in inv.vehicles
+                        ] if inv.vehicles else [],
+                    })
+                    # Extract first vehicle info for flat output
+                    if inv.vehicles:
+                        v = inv.vehicles[0]
+                        record["vin"] = v.vin
+                        record["vehicle_year"] = v.year
+                        record["vehicle_make"] = v.make
+                        record["vehicle_model"] = v.model
+                        record["lot_number"] = v.lot_number
+
+                    if inv.pickup_address:
+                        addr = inv.pickup_address
+                        record["pickup_city"] = addr.city
+                        record["pickup_state"] = addr.state
+                        record["pickup_zip"] = addr.postal_code
+
+                results.append(record)
+                print(f"       [{status}] {record.get('auction', 'UNKNOWN')} - Score: {score:.1f}%")
+
+                if record.get("vin"):
+                    print(f"       VIN: {record['vin']}")
+
+            else:
+                record = {
+                    "file": str(pdf_path),
+                    "file_hash": file_hash,
+                    "auction": "UNKNOWN",
+                    "score": 0,
+                    "status": "FAIL",
+                    "error": "No extractor matched",
+                    "extracted_at": datetime.now().isoformat(),
+                }
+                results.append(record)
+                errors.append(record)
+                print("       [FAIL] No extractor matched")
+
+        except Exception as e:
+            record = {
+                "file": str(pdf_path),
+                "status": "ERROR",
+                "error": str(e),
+                "extracted_at": datetime.now().isoformat(),
+            }
+            results.append(record)
+            errors.append(record)
+            print(f"       [ERROR] {e}")
+
+    # Save results
+    print()
+    print("-" * 50)
+
+    # Save JSON
+    results_file = runs_dir / "extracted.json"
+    with open(results_file, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"Results saved: {results_file}")
+
+    if errors:
+        errors_file = runs_dir / "errors.json"
+        with open(errors_file, "w") as f:
+            json.dump(errors, f, indent=2)
+        print(f"Errors saved: {errors_file}")
+
+    # Save CSV if requested
+    if args.out_csv:
+        import csv
+        csv_file = Path(args.out_csv)
+        fieldnames = [
+            "file", "file_hash", "auction", "score", "status",
+            "vin", "vehicle_year", "vehicle_make", "vehicle_model", "lot_number",
+            "pickup_city", "pickup_state", "pickup_zip",
+            "buyer_id", "reference_id", "total_amount", "error"
+        ]
+        with open(csv_file, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"CSV saved: {csv_file}")
+
+    # Write to Google Sheets if requested
+    if args.write_sheet:
+        try:
+            config = load_config_from_env()
+            if config.sheets.enabled and config.sheets.spreadsheet_id:
+                from services.sheets_exporter import SheetsExporter
+                exporter = SheetsExporter(config.sheets)
+                written = exporter.write_batch(results, run_id=run_id)
+                print(f"Written to Google Sheets: {written} rows")
+            else:
+                print("WARN: Sheets not configured, skipping --write-sheet")
+        except ImportError:
+            print("WARN: Google Sheets dependencies not installed")
+        except Exception as e:
+            print(f"ERROR writing to Sheets: {e}")
+
+    # Summary
+    ok_count = sum(1 for r in results if r.get("status") == "OK")
+    review_count = sum(1 for r in results if r.get("status") == "NEEDS_REVIEW")
+    fail_count = sum(1 for r in results if r.get("status") in ("FAIL", "ERROR"))
+
+    print()
+    print(f"Summary: {ok_count} OK, {review_count} NEEDS_REVIEW, {fail_count} FAIL/ERROR")
+    print(f"Run ID: {run_id}")
+
+    return 0
 
 
 def cmd_once(args):
@@ -335,7 +682,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    python main.py doctor
     python main.py extract invoice.pdf --json
+    python main.py batch-extract ./invoices --write-sheet
     python main.py once --dry-run
     python main.py daemon --interval 120
     python main.py validate
@@ -345,10 +694,19 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # doctor command
+    doctor_parser = subparsers.add_parser("doctor", help="Run preflight checks")
+
     # extract command
     extract_parser = subparsers.add_parser("extract", help="Extract data from a PDF file")
     extract_parser.add_argument("pdf", help="Path to PDF file")
     extract_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # batch-extract command
+    batch_parser = subparsers.add_parser("batch-extract", help="Extract from multiple PDFs")
+    batch_parser.add_argument("folder", help="Folder containing PDF files")
+    batch_parser.add_argument("--write-sheet", action="store_true", help="Write results to Google Sheets")
+    batch_parser.add_argument("--out-csv", help="Output CSV file path")
 
     # once command
     once_parser = subparsers.add_parser("once", help="Run single pass of email processing")
@@ -362,6 +720,8 @@ Examples:
     validate_parser = subparsers.add_parser("validate", help="Validate credentials")
     validate_parser.add_argument("--skip-email", action="store_true", help="Skip email validation")
     validate_parser.add_argument("--skip-clickup", action="store_true", help="Skip ClickUp validation")
+    validate_parser.add_argument("--mode", choices=["full", "local"], default="full",
+                                 help="Validation mode (local=only enabled targets)")
 
     # idempotency command
     idem_parser = subparsers.add_parser("idempotency", help="Manage idempotency database")
@@ -376,7 +736,9 @@ Examples:
         return 1
 
     commands = {
+        "doctor": cmd_doctor,
         "extract": cmd_extract,
+        "batch-extract": cmd_batch_extract,
         "once": cmd_once,
         "daemon": cmd_daemon,
         "validate": cmd_validate,

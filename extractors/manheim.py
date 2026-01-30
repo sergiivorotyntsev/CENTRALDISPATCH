@@ -14,9 +14,31 @@ class ManheimExtractor(BaseExtractor):
     def source(self) -> AuctionSource:
         return AuctionSource.MANHEIM
 
-    def can_extract(self, text: str) -> bool:
-        indicators = ['Manheim', 'Cox Automotive', 'BILL OF SALE', 'VEHICLE RELEASE', 'Manheim.com']
-        return any(ind.lower() in text.lower() for ind in indicators)
+    @property
+    def indicators(self) -> list:
+        return [
+            'Manheim',
+            'Cox Automotive',
+            'BILL OF SALE',
+            'VEHICLE RELEASE',
+            'Manheim.com',
+            'Release ID',
+            'YMMT',
+            'OFFSITE VEHICLE RELEASE',
+        ]
+
+    @property
+    def indicator_weights(self) -> dict:
+        return {
+            'Manheim': 3.0,
+            'Cox Automotive': 2.0,
+            'Manheim.com': 2.5,
+            'BILL OF SALE': 1.0,
+            'VEHICLE RELEASE': 1.5,
+            'Release ID': 1.5,
+            'YMMT': 1.0,
+            'OFFSITE VEHICLE RELEASE': 2.0,
+        }
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         pages_text = self.extract_pages_text(pdf_path)

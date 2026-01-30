@@ -137,12 +137,60 @@ class StorageConfig:
 
 
 @dataclass
+class SheetsConfig:
+    """Google Sheets configuration."""
+    enabled: bool = False
+    spreadsheet_id: str = ""
+    sheet_name: str = "Pickups"
+    credentials_file: str = "credentials.json"
+    token_file: str = "token.json"
+
+    def validate(self) -> List[str]:
+        """Validate Sheets configuration, return list of errors."""
+        errors = []
+        if self.enabled:
+            if not self.spreadsheet_id:
+                errors.append("SHEETS_SPREADSHEET_ID is required when Sheets is enabled")
+            if not Path(self.credentials_file).exists():
+                errors.append(f"Sheets credentials file not found: {self.credentials_file}")
+        return errors
+
+    def __repr__(self) -> str:
+        return f"SheetsConfig(enabled={self.enabled}, spreadsheet_id={self.spreadsheet_id[:8]}...)"
+
+
+@dataclass
+class WarehouseConfig:
+    """Warehouse routing configuration."""
+    enabled: bool = True
+    data_file: str = "warehouses.yaml"
+    geocode_provider: str = "google"  # "google" or "nominatim"
+    geocode_api_key: Optional[str] = None
+    distance_mode: str = "driving"  # "driving" or "haversine"
+    cache_db_path: str = "geocode_cache.db"
+
+    def validate(self) -> List[str]:
+        """Validate warehouse configuration, return list of errors."""
+        errors = []
+        if self.enabled:
+            if self.geocode_provider == "google" and not self.geocode_api_key:
+                # Warning but not error - will fall back to haversine
+                pass
+        return errors
+
+    def __repr__(self) -> str:
+        return f"WarehouseConfig(enabled={self.enabled}, provider={self.geocode_provider})"
+
+
+@dataclass
 class AppConfig:
     """Main application configuration."""
     email: EmailConfig = field(default_factory=EmailConfig)
     clickup: ClickUpConfig = field(default_factory=ClickUpConfig)
     central_dispatch: CentralDispatchConfig = field(default_factory=CentralDispatchConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    sheets: SheetsConfig = field(default_factory=SheetsConfig)
+    warehouse: WarehouseConfig = field(default_factory=WarehouseConfig)
 
     # Runtime settings
     dry_run: bool = False
@@ -160,6 +208,8 @@ class AppConfig:
 
         errors.extend(self.central_dispatch.validate())
         errors.extend(self.storage.validate())
+        errors.extend(self.sheets.validate())
+        errors.extend(self.warehouse.validate())
 
         if errors:
             raise ConfigurationError("Configuration errors:\n  - " + "\n  - ".join(errors))
@@ -167,6 +217,7 @@ class AppConfig:
     def __repr__(self) -> str:
         return (f"AppConfig(\n  email={self.email},\n  clickup={self.clickup},\n  "
                 f"central_dispatch={self.central_dispatch},\n  storage={self.storage},\n  "
+                f"sheets={self.sheets},\n  warehouse={self.warehouse},\n  "
                 f"dry_run={self.dry_run}, log_level={self.log_level}\n)")
 
 
@@ -214,6 +265,21 @@ def load_config_from_env() -> AppConfig:
             idempotency_db_path=os.getenv("IDEMPOTENCY_DB_PATH", "processed_emails.db"),
             temp_dir=os.getenv("TEMP_DIR", "/tmp/dispatch"),
         ),
+        sheets=SheetsConfig(
+            enabled=os.getenv("SHEETS_ENABLED", "false").lower() in ("true", "1", "yes"),
+            spreadsheet_id=os.getenv("SHEETS_SPREADSHEET_ID", ""),
+            sheet_name=os.getenv("SHEETS_SHEET_NAME", "Pickups"),
+            credentials_file=os.getenv("SHEETS_CREDENTIALS_FILE", "credentials.json"),
+            token_file=os.getenv("SHEETS_TOKEN_FILE", "token.json"),
+        ),
+        warehouse=WarehouseConfig(
+            enabled=os.getenv("WAREHOUSE_ENABLED", "true").lower() in ("true", "1", "yes"),
+            data_file=os.getenv("WAREHOUSE_DATA_FILE", "warehouses.yaml"),
+            geocode_provider=os.getenv("GEOCODE_PROVIDER", "google"),
+            geocode_api_key=os.getenv("GEOCODE_API_KEY"),
+            distance_mode=os.getenv("DISTANCE_MODE", "driving"),
+            cache_db_path=os.getenv("GEOCODE_CACHE_DB", "geocode_cache.db"),
+        ),
         dry_run=os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes"),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         log_format=os.getenv("LOG_FORMAT", "text"),
@@ -238,3 +304,86 @@ def reset_config() -> None:
     """Reset the global configuration (for testing)."""
     global _config
     _config = None
+
+
+# Local settings path
+LOCAL_SETTINGS_FILE = "config/local_settings.json"
+
+
+def load_local_settings() -> dict:
+    """Load local settings from JSON file.
+
+    Priority:
+    1. config/local_settings.json
+    2. Environment variables (EXPORT_TARGETS, ENABLE_EMAIL_INGEST)
+    3. Defaults
+
+    Returns dict with:
+    - export_targets: List[str] (e.g., ["sheets", "clickup", "cd"])
+    - enable_email_ingest: bool
+    - schema_version: int
+    """
+    import json
+
+    defaults = {
+        "export_targets": ["sheets"],  # Stage 1: only sheets
+        "enable_email_ingest": False,
+        "schema_version": 1,
+    }
+
+    # Try loading from file
+    settings_path = Path(LOCAL_SETTINGS_FILE)
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                file_settings = json.load(f)
+                defaults.update(file_settings)
+        except Exception:
+            pass  # Use defaults on error
+
+    # Override with environment variables if present
+    env_targets = os.getenv("EXPORT_TARGETS")
+    if env_targets:
+        defaults["export_targets"] = [t.strip() for t in env_targets.split(",")]
+
+    env_ingest = os.getenv("ENABLE_EMAIL_INGEST")
+    if env_ingest is not None:
+        defaults["enable_email_ingest"] = env_ingest.lower() in ("true", "1", "yes")
+
+    return defaults
+
+
+def save_local_settings(settings: dict) -> None:
+    """Save local settings to JSON file."""
+    import json
+
+    settings_path = Path(LOCAL_SETTINGS_FILE)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def get_enabled_exporters() -> list:
+    """Get list of enabled export targets based on config and local settings.
+
+    Returns list of valid exporter names that are both:
+    1. In export_targets setting
+    2. Have valid credentials configured
+    """
+    settings = load_local_settings()
+    config = get_config()
+
+    enabled = []
+    targets = settings.get("export_targets", [])
+
+    if "sheets" in targets and config.sheets.enabled:
+        enabled.append("sheets")
+
+    if "clickup" in targets and config.clickup.token and config.clickup.list_id:
+        enabled.append("clickup")
+
+    if "cd" in targets and config.central_dispatch.enabled:
+        enabled.append("cd")
+
+    return enabled
