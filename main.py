@@ -10,6 +10,7 @@ CLI Commands:
     daemon             - Run continuously, polling for new emails
     validate           - Validate all credentials (email, ClickUp, CD, Sheets)
     idempotency        - Manage idempotency database
+    test-sheets        - Test Google Sheets connection
 
 Usage:
     python main.py doctor
@@ -604,6 +605,94 @@ def cmd_validate(args):
         return 1
 
 
+def cmd_test_sheets(args):
+    """Test Google Sheets connection and optionally write a test row."""
+    from pathlib import Path
+    from core.config import load_config_from_env, load_local_settings
+
+    print("Testing Google Sheets connection...")
+    print("-" * 50)
+
+    config = load_config_from_env()
+    settings = load_local_settings()
+
+    if not config.sheets.enabled:
+        print("ERROR: Google Sheets is not enabled")
+        print("Set SHEETS_ENABLED=true and configure:")
+        print("  - SHEETS_SPREADSHEET_ID")
+        print("  - SHEETS_CREDENTIALS_FILE (path to service account JSON)")
+        return 1
+
+    print(f"Spreadsheet ID: {config.sheets.spreadsheet_id}")
+    print(f"Sheet Name: {config.sheets.sheet_name}")
+    print(f"Credentials: {config.sheets.credentials_file}")
+
+    # Check credentials file
+    creds_path = Path(config.sheets.credentials_file)
+    if not creds_path.exists():
+        print(f"\nERROR: Credentials file not found: {creds_path}")
+        return 1
+    print(f"Credentials file: EXISTS")
+
+    # Try to connect
+    try:
+        from services.sheets_exporter import SheetsExporter
+
+        exporter = SheetsExporter(config.sheets)
+
+        # Test 1: Ensure headers
+        print("\n[1/3] Testing connection (ensure_headers)...")
+        headers_created = exporter.ensure_headers()
+        if headers_created:
+            print("  OK: Headers created/updated")
+        else:
+            print("  OK: Headers already exist")
+
+        # Test 2: Check if we can read
+        print("[2/3] Testing read access...")
+        service = exporter._get_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=config.sheets.spreadsheet_id,
+            range=f"{config.sheets.sheet_name}!A1:A1"
+        ).execute()
+        print(f"  OK: Can read from sheet")
+
+        # Test 3: Write test row (if requested)
+        if args.write_test:
+            print("[3/3] Writing test row...")
+            from datetime import datetime
+            test_record = {
+                "run_id": "test_" + datetime.now().strftime("%H%M%S"),
+                "source_type": "test",
+                "auction": "TEST",
+                "status": "OK",
+                "vin": "TEST_VIN_12345678",
+                "vehicle_year": 2024,
+                "vehicle_make": "Test",
+                "vehicle_model": "Connection",
+                "extraction_score": 100.0,
+                "attachment_name": "test_connection.pdf",
+                "attachment_hash": "test_hash_" + datetime.now().strftime("%Y%m%d"),
+            }
+            exporter.append_record(test_record)
+            print(f"  OK: Test row written successfully")
+        else:
+            print("[3/3] Skipping test write (use --write-test to enable)")
+
+        print("\n" + "-" * 50)
+        print("SUCCESS: Google Sheets connection is working!")
+        print(f"Spreadsheet: https://docs.google.com/spreadsheets/d/{config.sheets.spreadsheet_id}")
+        return 0
+
+    except ImportError as e:
+        print(f"\nERROR: Missing dependencies: {e}")
+        print("Install with: pip install google-auth google-api-python-client")
+        return 1
+    except Exception as e:
+        print(f"\nERROR: Connection failed: {e}")
+        return 1
+
+
 def cmd_idempotency(args):
     """Manage idempotency database."""
     from core.config import load_config_from_env
@@ -729,6 +818,10 @@ Examples:
     idem_parser.add_argument("--days", type=int, help="Days for purge")
     idem_parser.add_argument("--limit", type=int, help="Limit for list")
 
+    # test-sheets command
+    sheets_parser = subparsers.add_parser("test-sheets", help="Test Google Sheets connection")
+    sheets_parser.add_argument("--write-test", action="store_true", help="Write a test row to verify write access")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -743,6 +836,7 @@ Examples:
         "daemon": cmd_daemon,
         "validate": cmd_validate,
         "idempotency": cmd_idempotency,
+        "test-sheets": cmd_test_sheets,
     }
 
     return commands[args.command](args)

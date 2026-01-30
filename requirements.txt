@@ -5,6 +5,11 @@ python-dotenv>=1.0.0
 tenacity>=8.0.0
 pyyaml>=6.0.0
 
+# FastAPI Control Panel
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
 # Google Sheets integration
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.1.0
