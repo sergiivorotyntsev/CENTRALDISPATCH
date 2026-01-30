@@ -11,6 +11,8 @@ CLI Commands:
     validate           - Validate all credentials (email, ClickUp, CD, Sheets)
     idempotency        - Manage idempotency database
     test-sheets        - Test Google Sheets connection
+    sheets-upsert      - Upsert PDF extraction to sheet by dispatch_id
+    cd-export          - Export READY rows from sheet to Central Dispatch
 
 Usage:
     python main.py doctor
@@ -19,6 +21,8 @@ Usage:
     python main.py once --dry-run
     python main.py daemon --interval 60
     python main.py validate
+    python main.py sheets-upsert invoice.pdf
+    python main.py cd-export --from-sheet --dry-run
 """
 import argparse
 import json
@@ -693,6 +697,211 @@ def cmd_test_sheets(args):
         return 1
 
 
+def cmd_sheets_upsert(args):
+    """Upsert PDF extraction to Google Sheets by dispatch_id."""
+    from pathlib import Path
+    from core.config import load_config_from_env
+    from core.logging_config import setup_logging
+    from extractors import ExtractorManager
+    from schemas.sheets_schema_v2 import generate_dispatch_id, RowStatus
+
+    setup_logging(level="INFO", format_type="text")
+
+    pdf_path = Path(args.pdf)
+    if not pdf_path.exists():
+        print(f"Error: File not found: {pdf_path}")
+        return 1
+
+    config = load_config_from_env()
+    if not config.sheets.enabled:
+        print("Error: Google Sheets not configured")
+        return 1
+
+    print(f"Processing: {pdf_path.name}")
+    print("-" * 50)
+
+    # Extract from PDF
+    manager = ExtractorManager()
+    classification = manager.classify_pdf(str(pdf_path))
+
+    if not classification or not classification.extractor:
+        print("Error: Could not classify PDF (no extractor matched)")
+        return 1
+
+    result = classification.extractor.extract_with_result(
+        str(pdf_path), classification.text
+    )
+
+    if not result.invoice:
+        print("Error: Could not extract invoice data from PDF")
+        return 1
+
+    inv = result.invoice
+    auction = result.source.value if result.source else "UNKNOWN"
+
+    # Calculate file hash
+    with open(pdf_path, "rb") as f:
+        file_hash = hashlib.sha256(f.read()).hexdigest()[:16]
+
+    # Get gate pass or lot number for dispatch_id
+    gate_pass = None
+    auction_ref = None
+    vin = None
+    if inv.vehicles:
+        v = inv.vehicles[0]
+        gate_pass = v.lot_number
+        vin = v.vin
+
+    # Generate dispatch_id
+    dispatch_id = generate_dispatch_id(
+        auction_source=auction,
+        gate_pass=gate_pass,
+        auction_reference=auction_ref,
+        vin=vin,
+        attachment_hash=file_hash,
+    )
+
+    print(f"Auction: {auction}")
+    print(f"Dispatch ID: {dispatch_id}")
+
+    # Build record for sheets
+    record = {
+        "dispatch_id": dispatch_id,
+        "row_status": RowStatus.NEW.value,
+        "auction_source": auction,
+        "attachment_name": pdf_path.name,
+        "attachment_hash": file_hash,
+        "extraction_score": round(result.score * 100, 1),
+    }
+
+    # Add vehicle info
+    if inv.vehicles:
+        v = inv.vehicles[0]
+        record.update({
+            "vin": v.vin,
+            "year": v.year,
+            "make": v.make,
+            "model": v.model,
+            "gate_pass": v.lot_number,
+            "color": v.color,
+            "operable": "TRUE",
+        })
+        if v.mileage:
+            record["mileage"] = v.mileage
+
+    # Add pickup address
+    if inv.pickup_address:
+        addr = inv.pickup_address
+        record.update({
+            "pickup_city": addr.city,
+            "pickup_state": addr.state,
+            "pickup_postal_code": addr.postal_code,
+            "pickup_street1": addr.street,
+        })
+
+    # Add buyer info
+    if inv.buyer_name:
+        record["company_name"] = inv.buyer_name
+    if inv.reference_id:
+        record["auction_reference"] = inv.reference_id
+
+    # Upsert to sheets
+    try:
+        from services.sheets_exporter_v2 import SheetsExporterV2
+
+        exporter = SheetsExporterV2(config.sheets, sheet_name=args.sheet or "Pickups")
+        result = exporter.upsert_record(record)
+
+        print()
+        print(f"Action: {result['action'].upper()}")
+        print(f"Dispatch ID: {result['dispatch_id']}")
+        if result.get("protected_fields"):
+            print(f"Protected fields (not updated): {', '.join(result['protected_fields'])}")
+
+        print()
+        print("SUCCESS: Record upserted to Google Sheets")
+        return 0
+
+    except Exception as e:
+        print(f"\nError: {e}")
+        return 1
+
+
+def cmd_cd_export(args):
+    """Export READY rows from Google Sheets to Central Dispatch."""
+    from core.config import load_config_from_env
+    from core.logging_config import setup_logging
+
+    setup_logging(level="INFO", format_type="text")
+
+    config = load_config_from_env()
+
+    if not config.sheets.enabled:
+        print("Error: Google Sheets not configured")
+        return 1
+
+    if not args.from_sheet:
+        print("Error: --from-sheet flag required")
+        return 1
+
+    print("CD Export from Google Sheets")
+    print("-" * 50)
+
+    try:
+        from services.cd_sheet_exporter import CDSheetExporter
+
+        exporter = CDSheetExporter(
+            sheets_config=config.sheets,
+            cd_config=config.central_dispatch,
+            sheet_name=args.sheet or "Pickups",
+        )
+
+        # Preview mode
+        if args.preview:
+            if not args.dispatch_id:
+                print("Error: --dispatch-id required for preview")
+                return 1
+
+            payload = exporter.preview_payload(args.dispatch_id)
+            if payload:
+                print(f"CD Payload for {args.dispatch_id}:")
+                print(json.dumps(payload, indent=2))
+            else:
+                print(f"Error: Row not found: {args.dispatch_id}")
+                return 1
+            return 0
+
+        # Export mode
+        results = exporter.export_ready_rows(
+            dry_run=args.dry_run,
+            limit=args.limit,
+        )
+
+        print()
+        print(f"Total rows: {results['total']}")
+        print(f"Exported: {results['exported']}")
+        print(f"Failed: {results['failed']}")
+        if args.dry_run:
+            print("(DRY RUN - no actual API calls made)")
+
+        if results['results']:
+            print()
+            print("Details:")
+            for r in results['results']:
+                status = "OK" if r['success'] else "FAIL"
+                print(f"  [{status}] {r['dispatch_id']}")
+                if r.get('listing_id'):
+                    print(f"         CD Listing: {r['listing_id']}")
+                if r.get('error'):
+                    print(f"         Error: {r['error']}")
+
+        return 0 if results['failed'] == 0 else 1
+
+    except Exception as e:
+        print(f"\nError: {e}")
+        return 1
+
+
 def cmd_idempotency(args):
     """Manage idempotency database."""
     from core.config import load_config_from_env
@@ -778,6 +987,9 @@ Examples:
     python main.py daemon --interval 120
     python main.py validate
     python main.py idempotency stats
+    python main.py sheets-upsert invoice.pdf
+    python main.py cd-export --from-sheet --dry-run
+    python main.py cd-export --from-sheet --preview --dispatch-id DC-20260130-COPART-ABC12345
         """,
     )
 
@@ -822,6 +1034,20 @@ Examples:
     sheets_parser = subparsers.add_parser("test-sheets", help="Test Google Sheets connection")
     sheets_parser.add_argument("--write-test", action="store_true", help="Write a test row to verify write access")
 
+    # sheets-upsert command
+    upsert_parser = subparsers.add_parser("sheets-upsert", help="Upsert PDF extraction to sheet by dispatch_id")
+    upsert_parser.add_argument("pdf", help="Path to PDF file")
+    upsert_parser.add_argument("--sheet", help="Sheet name (default: Pickups)")
+
+    # cd-export command
+    cd_export_parser = subparsers.add_parser("cd-export", help="Export READY rows from sheet to Central Dispatch")
+    cd_export_parser.add_argument("--from-sheet", action="store_true", help="Export from Google Sheets (required)")
+    cd_export_parser.add_argument("--sheet", help="Sheet name (default: Pickups)")
+    cd_export_parser.add_argument("--dry-run", action="store_true", help="Preview without calling CD API")
+    cd_export_parser.add_argument("--limit", type=int, help="Maximum rows to export")
+    cd_export_parser.add_argument("--preview", action="store_true", help="Preview payload for a single row")
+    cd_export_parser.add_argument("--dispatch-id", help="Dispatch ID for preview mode")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -837,6 +1063,8 @@ Examples:
         "validate": cmd_validate,
         "idempotency": cmd_idempotency,
         "test-sheets": cmd_test_sheets,
+        "sheets-upsert": cmd_sheets_upsert,
+        "cd-export": cmd_cd_export,
     }
 
     return commands[args.command](args)
