@@ -1,0 +1,1530 @@
+"""
+Database Models for ML-Ready MVP
+
+This module extends the database schema to support:
+- AuctionType management (including custom types)
+- Document upload with train/test split
+- Extraction runs with model versioning
+- Review workflow with corrections
+- Training examples and model versioning
+- Export jobs to Central Dispatch
+
+Schema Version: 4
+"""
+
+import json
+import uuid
+from datetime import datetime
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List, Dict, Any
+from enum import Enum
+
+from api.database import get_connection
+
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+class DatasetSplit(str, Enum):
+    """Dataset split types."""
+    TRAIN = "train"
+    TEST = "test"
+
+
+class ExtractorKind(str, Enum):
+    """Type of extractor used."""
+    RULE = "rule"      # Rule-based pattern matching
+    ML = "ml"          # ML model inference
+
+
+class RunStatus(str, Enum):
+    """Extraction run status."""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    NEEDS_REVIEW = "needs_review"
+
+
+class ReviewStatus(str, Enum):
+    """Review item status."""
+    PENDING = "pending"
+    APPROVED = "approved"
+    CORRECTED = "corrected"
+    REJECTED = "rejected"
+
+
+class ModelStatus(str, Enum):
+    """Model version status."""
+    TRAINING = "training"
+    READY = "ready"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+    FAILED = "failed"
+
+
+class JobStatus(str, Enum):
+    """Training/Export job status."""
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ExportStatus(str, Enum):
+    """Export job status."""
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    SUCCESS = "success"
+    FAILED = "failed"
+    VALIDATION_ERROR = "validation_error"
+
+
+# =============================================================================
+# SCHEMA INITIALIZATION
+# =============================================================================
+
+def init_extended_schema():
+    """Initialize extended database schema for ML-ready MVP."""
+    with get_connection() as conn:
+        # -----------------------------------------------------------------
+        # AUCTION TYPES
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auction_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                code TEXT NOT NULL UNIQUE,
+                parent_id INTEGER,
+                is_base BOOLEAN DEFAULT FALSE,
+                is_custom BOOLEAN DEFAULT FALSE,
+                is_active BOOLEAN DEFAULT TRUE,
+                description TEXT,
+                extractor_config TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (parent_id) REFERENCES auction_types(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auction_types_code ON auction_types(code)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_auction_types_parent ON auction_types(parent_id)
+        """)
+
+        # -----------------------------------------------------------------
+        # DOCUMENTS (uploaded files)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                auction_type_id INTEGER NOT NULL,
+                dataset_split TEXT NOT NULL CHECK (dataset_split IN ('train', 'test')),
+                filename TEXT NOT NULL,
+                file_path TEXT,
+                file_size INTEGER,
+                sha256 TEXT,
+                mime_type TEXT DEFAULT 'application/pdf',
+                page_count INTEGER,
+                has_ocr BOOLEAN DEFAULT FALSE,
+                raw_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                uploaded_by TEXT,
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_documents_auction_type ON documents(auction_type_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_documents_split ON documents(dataset_split)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_documents_sha256 ON documents(sha256)
+        """)
+
+        # -----------------------------------------------------------------
+        # EXTRACTION RUNS
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS extraction_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                document_id INTEGER NOT NULL,
+                auction_type_id INTEGER NOT NULL,
+                extractor_kind TEXT DEFAULT 'rule' CHECK (extractor_kind IN ('rule', 'ml')),
+                model_version_id INTEGER,
+                status TEXT DEFAULT 'pending',
+                extraction_score REAL,
+                outputs_json TEXT,
+                errors_json TEXT,
+                processing_time_ms INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (document_id) REFERENCES documents(id),
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id),
+                FOREIGN KEY (model_version_id) REFERENCES model_versions(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_extraction_runs_document ON extraction_runs(document_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_extraction_runs_auction_type ON extraction_runs(auction_type_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_extraction_runs_status ON extraction_runs(status)
+        """)
+
+        # -----------------------------------------------------------------
+        # FIELD MAPPINGS (per auction type)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS field_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                auction_type_id INTEGER NOT NULL,
+                source_key TEXT NOT NULL,
+                internal_key TEXT NOT NULL,
+                cd_key TEXT,
+                transform TEXT,
+                is_required BOOLEAN DEFAULT FALSE,
+                default_value TEXT,
+                validation_regex TEXT,
+                description TEXT,
+                display_order INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id),
+                UNIQUE(auction_type_id, source_key)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_mappings_auction_type ON field_mappings(auction_type_id)
+        """)
+
+        # -----------------------------------------------------------------
+        # REVIEW ITEMS (corrections and approvals)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS review_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                source_key TEXT NOT NULL,
+                internal_key TEXT,
+                cd_key TEXT,
+                predicted_value TEXT,
+                corrected_value TEXT,
+                is_match_ok BOOLEAN DEFAULT FALSE,
+                export_field BOOLEAN DEFAULT TRUE,
+                confidence REAL,
+                status TEXT DEFAULT 'pending',
+                reviewer TEXT,
+                review_notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES extraction_runs(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_review_items_run ON review_items(run_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_review_items_status ON review_items(status)
+        """)
+
+        # -----------------------------------------------------------------
+        # TRAINING EXAMPLES (generated from reviews)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS training_examples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                auction_type_id INTEGER NOT NULL,
+                document_id INTEGER,
+                input_text TEXT NOT NULL,
+                input_chunks_json TEXT,
+                labels_json TEXT NOT NULL,
+                source_review_item_ids TEXT,
+                quality_score REAL,
+                is_validated BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id),
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_training_examples_auction_type ON training_examples(auction_type_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_training_examples_validated ON training_examples(is_validated)
+        """)
+
+        # -----------------------------------------------------------------
+        # MODEL VERSIONS
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS model_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                auction_type_id INTEGER NOT NULL,
+                version_tag TEXT NOT NULL,
+                base_model TEXT NOT NULL,
+                adapter_type TEXT DEFAULT 'lora',
+                adapter_uri TEXT,
+                config_json TEXT,
+                metrics_json TEXT,
+                status TEXT DEFAULT 'training',
+                training_examples_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                trained_at TIMESTAMP,
+                promoted_at TIMESTAMP,
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_model_versions_auction_type ON model_versions(auction_type_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_model_versions_status ON model_versions(status)
+        """)
+
+        # -----------------------------------------------------------------
+        # TRAINING JOBS
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS training_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                auction_type_id INTEGER NOT NULL,
+                model_version_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'queued',
+                progress REAL DEFAULT 0.0,
+                current_step INTEGER DEFAULT 0,
+                total_steps INTEGER,
+                logs_uri TEXT,
+                config_json TEXT,
+                error_message TEXT,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (auction_type_id) REFERENCES auction_types(id),
+                FOREIGN KEY (model_version_id) REFERENCES model_versions(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_training_jobs_status ON training_jobs(status)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_training_jobs_model ON training_jobs(model_version_id)
+        """)
+
+        # -----------------------------------------------------------------
+        # EXPORT JOBS (to Central Dispatch)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS export_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uuid TEXT NOT NULL UNIQUE,
+                run_id INTEGER NOT NULL,
+                dispatch_id TEXT,
+                cd_listing_id TEXT,
+                status TEXT DEFAULT 'pending',
+                payload_json TEXT,
+                response_json TEXT,
+                error_json TEXT,
+                validation_errors_json TEXT,
+                retry_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                submitted_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES extraction_runs(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_export_jobs_run ON export_jobs(run_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_export_jobs_status ON export_jobs(status)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_export_jobs_dispatch_id ON export_jobs(dispatch_id)
+        """)
+
+        conn.commit()
+
+
+# =============================================================================
+# SEED DATA
+# =============================================================================
+
+def seed_base_auction_types():
+    """Seed the 3 base auction types + Other."""
+    base_types = [
+        {
+            "name": "Copart",
+            "code": "COPART",
+            "is_base": True,
+            "is_custom": False,
+            "description": "Copart vehicle auctions - Sales Receipt/Bill of Sale documents",
+            "extractor_config": json.dumps({
+                "extractor_class": "CopartExtractor",
+                "patterns": ["COPART", "SOLD THROUGH COPART", "copart.com"],
+            }),
+        },
+        {
+            "name": "IAA (Insurance Auto Auctions)",
+            "code": "IAA",
+            "is_base": True,
+            "is_custom": False,
+            "description": "IAA insurance auto auction documents",
+            "extractor_config": json.dumps({
+                "extractor_class": "IAAExtractor",
+                "patterns": ["IAA", "INSURANCE AUTO AUCTIONS"],
+            }),
+        },
+        {
+            "name": "Manheim",
+            "code": "MANHEIM",
+            "is_base": True,
+            "is_custom": False,
+            "description": "Manheim wholesale auto auction documents",
+            "extractor_config": json.dumps({
+                "extractor_class": "ManheimExtractor",
+                "patterns": ["MANHEIM", "MANHEIM AUCTIONS"],
+            }),
+        },
+        {
+            "name": "Other",
+            "code": "OTHER",
+            "is_base": True,
+            "is_custom": False,
+            "description": "Other/unknown auction types - base for custom subtypes",
+            "extractor_config": json.dumps({
+                "extractor_class": None,
+                "patterns": [],
+            }),
+        },
+    ]
+
+    with get_connection() as conn:
+        for auction_type in base_types:
+            # Check if already exists
+            existing = conn.execute(
+                "SELECT id FROM auction_types WHERE code = ?",
+                (auction_type["code"],)
+            ).fetchone()
+
+            if not existing:
+                conn.execute(
+                    """INSERT INTO auction_types
+                       (name, code, is_base, is_custom, description, extractor_config)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        auction_type["name"],
+                        auction_type["code"],
+                        auction_type["is_base"],
+                        auction_type["is_custom"],
+                        auction_type["description"],
+                        auction_type["extractor_config"],
+                    )
+                )
+
+        conn.commit()
+
+
+def seed_default_field_mappings():
+    """Seed default field mappings for base auction types."""
+    # Common fields for all auction types
+    common_fields = [
+        # Vehicle fields
+        ("vehicle_vin", "vin", "vehicles[0].vin", True, "Vehicle VIN (17 chars)"),
+        ("vehicle_year", "year", "vehicles[0].year", False, "Vehicle year"),
+        ("vehicle_make", "make", "vehicles[0].make", False, "Vehicle make"),
+        ("vehicle_model", "model", "vehicles[0].model", False, "Vehicle model"),
+        ("vehicle_color", "color", "vehicles[0].color", False, "Vehicle color"),
+        ("vehicle_lot", "lot_number", "vehicles[0].lotNumber", False, "Lot number"),
+        ("vehicle_is_inoperable", "is_inoperable", "vehicles[0].isInoperable", False, "Is inoperable"),
+        # Pickup fields
+        ("pickup_name", "pickup_name", "stops[0].locationName", False, "Pickup location name"),
+        ("pickup_address", "pickup_address", "stops[0].address", True, "Pickup address"),
+        ("pickup_city", "pickup_city", "stops[0].city", True, "Pickup city"),
+        ("pickup_state", "pickup_state", "stops[0].state", True, "Pickup state"),
+        ("pickup_zip", "pickup_postal_code", "stops[0].postalCode", True, "Pickup ZIP"),
+        ("pickup_phone", "pickup_phone", "stops[0].phone", False, "Pickup phone"),
+        # Reference fields
+        ("reference_id", "reference_id", "externalId", False, "Reference ID"),
+        ("gate_pass", "gate_pass", None, False, "Gate pass code"),
+        ("buyer_id", "buyer_id", None, False, "Buyer ID"),
+        ("buyer_name", "buyer_name", None, False, "Buyer name"),
+        # Dates
+        ("sale_date", "sale_date", None, False, "Sale date"),
+        ("available_date", "available_date", "availableDate", True, "Available date"),
+    ]
+
+    with get_connection() as conn:
+        # Get base auction types
+        auction_types = conn.execute(
+            "SELECT id, code FROM auction_types WHERE is_base = TRUE"
+        ).fetchall()
+
+        for at in auction_types:
+            auction_type_id = at["id"]
+            auction_code = at["code"]
+
+            for i, (source_key, internal_key, cd_key, is_required, description) in enumerate(common_fields):
+                # Check if exists
+                existing = conn.execute(
+                    "SELECT id FROM field_mappings WHERE auction_type_id = ? AND source_key = ?",
+                    (auction_type_id, source_key)
+                ).fetchone()
+
+                if not existing:
+                    conn.execute(
+                        """INSERT INTO field_mappings
+                           (auction_type_id, source_key, internal_key, cd_key, is_required, description, display_order)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (auction_type_id, source_key, internal_key, cd_key, is_required, description, i)
+                    )
+
+        conn.commit()
+
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
+@dataclass
+class AuctionType:
+    """Auction type entity."""
+    id: int
+    name: str
+    code: str
+    parent_id: Optional[int] = None
+    is_base: bool = False
+    is_custom: bool = False
+    is_active: bool = True
+    description: Optional[str] = None
+    extractor_config: Optional[Dict] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+@dataclass
+class Document:
+    """Uploaded document entity."""
+    id: int
+    uuid: str
+    auction_type_id: int
+    dataset_split: str
+    filename: str
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    sha256: Optional[str] = None
+    mime_type: str = "application/pdf"
+    page_count: Optional[int] = None
+    has_ocr: bool = False
+    raw_text: Optional[str] = None
+    created_at: Optional[str] = None
+    uploaded_by: Optional[str] = None
+
+
+@dataclass
+class ExtractionRun:
+    """Extraction run entity."""
+    id: int
+    uuid: str
+    document_id: int
+    auction_type_id: int
+    extractor_kind: str = "rule"
+    model_version_id: Optional[int] = None
+    status: str = "pending"
+    extraction_score: Optional[float] = None
+    outputs_json: Optional[Dict] = None
+    errors_json: Optional[List] = None
+    processing_time_ms: Optional[int] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+@dataclass
+class FieldMapping:
+    """Field mapping entity."""
+    id: int
+    auction_type_id: int
+    source_key: str
+    internal_key: str
+    cd_key: Optional[str] = None
+    transform: Optional[str] = None
+    is_required: bool = False
+    default_value: Optional[str] = None
+    validation_regex: Optional[str] = None
+    description: Optional[str] = None
+    display_order: int = 0
+    is_active: bool = True
+
+
+@dataclass
+class ReviewItem:
+    """Review item entity."""
+    id: int
+    run_id: int
+    source_key: str
+    internal_key: Optional[str] = None
+    cd_key: Optional[str] = None
+    predicted_value: Optional[str] = None
+    corrected_value: Optional[str] = None
+    is_match_ok: bool = False
+    export_field: bool = True
+    confidence: Optional[float] = None
+    status: str = "pending"
+    reviewer: Optional[str] = None
+    review_notes: Optional[str] = None
+    created_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    updated_at: Optional[str] = None  # alias for reviewed_at
+
+
+@dataclass
+class TrainingExample:
+    """Training example entity."""
+    id: int
+    uuid: str
+    auction_type_id: int
+    document_id: Optional[int] = None
+    input_text: str = ""
+    input_chunks_json: Optional[List] = None
+    labels_json: Dict = field(default_factory=dict)
+    source_review_item_ids: Optional[List[int]] = None
+    quality_score: Optional[float] = None
+    is_validated: bool = False
+    created_at: Optional[str] = None
+
+
+@dataclass
+class ModelVersion:
+    """Model version entity."""
+    id: int
+    uuid: str
+    auction_type_id: int
+    version_tag: str
+    base_model: str
+    adapter_type: str = "lora"
+    adapter_path: Optional[str] = None  # alias for adapter_uri
+    config_json: Optional[Dict] = None
+    metrics_json: Optional[Dict] = None
+    status: str = "training"
+    training_examples_count: int = 0
+    training_job_id: Optional[int] = None
+    created_at: Optional[str] = None
+    trained_at: Optional[str] = None
+    promoted_at: Optional[str] = None
+
+
+@dataclass
+class TrainingJob:
+    """Training job entity."""
+    id: int
+    uuid: str
+    auction_type_id: int
+    model_version_id: int = 0
+    status: str = "queued"
+    config_json: Optional[Dict] = None
+    metrics_json: Optional[Dict] = None
+    log_path: Optional[str] = None  # alias for logs_uri
+    error_message: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None  # alias for finished_at
+    created_at: Optional[str] = None
+
+
+@dataclass
+class ExportJob:
+    """Export job entity."""
+    id: int
+    uuid: str
+    run_id: int
+    target: str = "central_dispatch"
+    dispatch_id: Optional[str] = None
+    cd_listing_id: Optional[str] = None
+    status: str = "pending"
+    payload_json: Optional[Dict] = None
+    response_json: Optional[Dict] = None
+    error_json: Optional[Dict] = None
+    error_message: Optional[str] = None
+    validation_errors_json: Optional[List] = None
+    retry_count: int = 0
+    created_at: Optional[str] = None
+    submitted_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+# =============================================================================
+# REPOSITORY CLASSES
+# =============================================================================
+
+class AuctionTypeRepository:
+    """Repository for AuctionType operations."""
+
+    @staticmethod
+    def create(name: str, code: str, parent_id: int = None,
+               is_custom: bool = True, description: str = None,
+               extractor_config: Dict = None) -> int:
+        """Create a new auction type."""
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO auction_types
+                   (name, code, parent_id, is_base, is_custom, description, extractor_config)
+                   VALUES (?, ?, ?, FALSE, ?, ?, ?)""",
+                (name, code.upper(), parent_id, is_custom, description,
+                 json.dumps(extractor_config) if extractor_config else None)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[AuctionType]:
+        """Get auction type by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM auction_types WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                if data.get("extractor_config"):
+                    data["extractor_config"] = json.loads(data["extractor_config"])
+                return AuctionType(**data)
+            return None
+
+    @staticmethod
+    def get_by_code(code: str) -> Optional[AuctionType]:
+        """Get auction type by code."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM auction_types WHERE code = ?", (code.upper(),)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                if data.get("extractor_config"):
+                    data["extractor_config"] = json.loads(data["extractor_config"])
+                return AuctionType(**data)
+            return None
+
+    @staticmethod
+    def list_all(include_inactive: bool = False) -> List[AuctionType]:
+        """List all auction types."""
+        sql = "SELECT * FROM auction_types"
+        if not include_inactive:
+            sql += " WHERE is_active = TRUE"
+        sql += " ORDER BY is_base DESC, name ASC"
+
+        with get_connection() as conn:
+            rows = conn.execute(sql).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("extractor_config"):
+                    data["extractor_config"] = json.loads(data["extractor_config"])
+                result.append(AuctionType(**data))
+            return result
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update auction type."""
+        if not kwargs:
+            return False
+
+        if "extractor_config" in kwargs and isinstance(kwargs["extractor_config"], dict):
+            kwargs["extractor_config"] = json.dumps(kwargs["extractor_config"])
+
+        kwargs["updated_at"] = datetime.utcnow().isoformat()
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE auction_types SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def delete(id: int) -> bool:
+        """Soft delete (deactivate) auction type."""
+        with get_connection() as conn:
+            # Check if it's a base type
+            row = conn.execute(
+                "SELECT is_base FROM auction_types WHERE id = ?", (id,)
+            ).fetchone()
+            if row and row["is_base"]:
+                return False  # Cannot delete base types
+
+            conn.execute(
+                "UPDATE auction_types SET is_active = FALSE, updated_at = ? WHERE id = ?",
+                (datetime.utcnow().isoformat(), id)
+            )
+            conn.commit()
+            return True
+
+
+class DocumentRepository:
+    """Repository for Document operations."""
+
+    @staticmethod
+    def create(auction_type_id: int, dataset_split: str, filename: str,
+               file_path: str = None, file_size: int = None, sha256: str = None,
+               raw_text: str = None, uploaded_by: str = None) -> int:
+        """Create a new document."""
+        doc_uuid = str(uuid.uuid4())
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO documents
+                   (uuid, auction_type_id, dataset_split, filename, file_path, file_size, sha256, raw_text, uploaded_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (doc_uuid, auction_type_id, dataset_split, filename, file_path,
+                 file_size, sha256, raw_text, uploaded_by)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[Document]:
+        """Get document by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                return Document(**dict(row))
+            return None
+
+    @staticmethod
+    def get_by_sha256(sha256: str) -> Optional[Document]:
+        """Get document by SHA256 hash (for deduplication)."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM documents WHERE sha256 = ?", (sha256,)
+            ).fetchone()
+            if row:
+                return Document(**dict(row))
+            return None
+
+    @staticmethod
+    def list_by_auction_type(auction_type_id: int, dataset_split: str = None,
+                              limit: int = 100, offset: int = 0) -> List[Document]:
+        """List documents for an auction type."""
+        sql = "SELECT * FROM documents WHERE auction_type_id = ?"
+        params = [auction_type_id]
+
+        if dataset_split:
+            sql += " AND dataset_split = ?"
+            params.append(dataset_split)
+
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        with get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [Document(**dict(row)) for row in rows]
+
+    @staticmethod
+    def count_by_auction_type(auction_type_id: int) -> Dict[str, int]:
+        """Count documents by split for an auction type."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT dataset_split, COUNT(*) as count
+                   FROM documents WHERE auction_type_id = ? GROUP BY dataset_split""",
+                (auction_type_id,)
+            ).fetchall()
+            return {row["dataset_split"]: row["count"] for row in rows}
+
+
+class ExtractionRunRepository:
+    """Repository for ExtractionRun operations."""
+
+    @staticmethod
+    def create(document_id: int, auction_type_id: int,
+               extractor_kind: str = "rule", model_version_id: int = None) -> int:
+        """Create a new extraction run."""
+        run_uuid = str(uuid.uuid4())
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO extraction_runs
+                   (uuid, document_id, auction_type_id, extractor_kind, model_version_id, status)
+                   VALUES (?, ?, ?, ?, ?, 'pending')""",
+                (run_uuid, document_id, auction_type_id, extractor_kind, model_version_id)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[ExtractionRun]:
+        """Get extraction run by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM extraction_runs WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                if data.get("outputs_json"):
+                    data["outputs_json"] = json.loads(data["outputs_json"])
+                if data.get("errors_json"):
+                    data["errors_json"] = json.loads(data["errors_json"])
+                return ExtractionRun(**data)
+            return None
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update extraction run."""
+        if not kwargs:
+            return False
+
+        if "outputs_json" in kwargs and isinstance(kwargs["outputs_json"], dict):
+            kwargs["outputs_json"] = json.dumps(kwargs["outputs_json"])
+        if "errors_json" in kwargs and isinstance(kwargs["errors_json"], list):
+            kwargs["errors_json"] = json.dumps(kwargs["errors_json"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE extraction_runs SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def list_by_document(document_id: int) -> List[ExtractionRun]:
+        """List extraction runs for a document."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC",
+                (document_id,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("outputs_json"):
+                    data["outputs_json"] = json.loads(data["outputs_json"])
+                if data.get("errors_json"):
+                    data["errors_json"] = json.loads(data["errors_json"])
+                result.append(ExtractionRun(**data))
+            return result
+
+    @staticmethod
+    def list_needs_review(limit: int = 50) -> List[ExtractionRun]:
+        """List runs that need review."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM extraction_runs
+                   WHERE status IN ('completed', 'needs_review')
+                   ORDER BY created_at DESC LIMIT ?""",
+                (limit,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("outputs_json"):
+                    data["outputs_json"] = json.loads(data["outputs_json"])
+                result.append(ExtractionRun(**data))
+            return result
+
+
+class ReviewItemRepository:
+    """Repository for ReviewItem operations."""
+
+    @staticmethod
+    def create_batch(run_id: int, items: List[Dict]) -> List[int]:
+        """Create multiple review items for a run."""
+        ids = []
+        with get_connection() as conn:
+            for item in items:
+                cursor = conn.execute(
+                    """INSERT INTO review_items
+                       (run_id, source_key, internal_key, cd_key, predicted_value,
+                        corrected_value, is_match_ok, export_field, confidence)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (run_id, item.get("source_key"), item.get("internal_key"),
+                     item.get("cd_key"), item.get("predicted_value"),
+                     item.get("corrected_value"), item.get("is_match_ok", False),
+                     item.get("export_field", True), item.get("confidence"))
+                )
+                ids.append(cursor.lastrowid)
+            conn.commit()
+        return ids
+
+    @staticmethod
+    def get_by_run(run_id: int) -> List[ReviewItem]:
+        """Get all review items for a run."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM review_items WHERE run_id = ? ORDER BY id",
+                (run_id,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                data.setdefault("updated_at", data.get("reviewed_at"))
+                result.append(ReviewItem(**data))
+            return result
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[ReviewItem]:
+        """Get review item by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM review_items WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                data.setdefault("updated_at", data.get("reviewed_at"))
+                return ReviewItem(**data)
+            return None
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update review item."""
+        if not kwargs:
+            return False
+
+        kwargs["reviewed_at"] = datetime.utcnow().isoformat()
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE review_items SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def update_batch(items: List[Dict]) -> int:
+        """Update multiple review items."""
+        updated = 0
+        now = datetime.utcnow().isoformat()
+
+        with get_connection() as conn:
+            for item in items:
+                if "id" not in item:
+                    continue
+
+                conn.execute(
+                    """UPDATE review_items SET
+                       corrected_value = ?,
+                       is_match_ok = ?,
+                       export_field = ?,
+                       status = ?,
+                       reviewer = ?,
+                       review_notes = ?,
+                       reviewed_at = ?
+                       WHERE id = ?""",
+                    (item.get("corrected_value"), item.get("is_match_ok", False),
+                     item.get("export_field", True), item.get("status", "pending"),
+                     item.get("reviewer"), item.get("review_notes"), now, item["id"])
+                )
+                updated += 1
+            conn.commit()
+        return updated
+
+    @staticmethod
+    def submit_review(run_id: int, items: List[Dict], reviewer: str = None) -> Dict:
+        """Submit a complete review for a run."""
+        now = datetime.utcnow().isoformat()
+        updated = 0
+        approved = 0
+        corrected = 0
+
+        with get_connection() as conn:
+            for item in items:
+                status = "approved" if item.get("is_match_ok") else "corrected"
+                if item.get("corrected_value") and item.get("corrected_value") != item.get("predicted_value"):
+                    status = "corrected"
+                    corrected += 1
+                else:
+                    approved += 1
+
+                if "id" in item:
+                    conn.execute(
+                        """UPDATE review_items SET
+                           corrected_value = ?,
+                           is_match_ok = ?,
+                           export_field = ?,
+                           status = ?,
+                           reviewer = ?,
+                           reviewed_at = ?
+                           WHERE id = ?""",
+                        (item.get("corrected_value"), item.get("is_match_ok", False),
+                         item.get("export_field", True), status, reviewer, now, item["id"])
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO review_items
+                           (run_id, source_key, internal_key, cd_key, predicted_value,
+                            corrected_value, is_match_ok, export_field, status, reviewer, reviewed_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (run_id, item.get("source_key"), item.get("internal_key"),
+                         item.get("cd_key"), item.get("predicted_value"),
+                         item.get("corrected_value"), item.get("is_match_ok", False),
+                         item.get("export_field", True), status, reviewer, now)
+                    )
+                updated += 1
+
+            conn.commit()
+
+        return {
+            "run_id": run_id,
+            "total": updated,
+            "approved": approved,
+            "corrected": corrected,
+            "reviewed_at": now,
+        }
+
+
+class TrainingExampleRepository:
+    """Repository for TrainingExample operations."""
+
+    @staticmethod
+    def create(document_id: int, auction_type_id: int, run_id: int = None,
+               field_key: str = None, predicted_value: str = None,
+               gold_value: str = None, is_correct: bool = True,
+               source_text_snippet: str = None) -> int:
+        """Create a training example from review correction."""
+        example_uuid = str(uuid.uuid4())
+
+        # Build labels as a simple dict
+        labels = {field_key: gold_value} if field_key and gold_value else {}
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO training_examples
+                   (uuid, auction_type_id, document_id, input_text, labels_json,
+                    source_review_item_ids, is_validated)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (example_uuid, auction_type_id, document_id,
+                 source_text_snippet or "", json.dumps(labels),
+                 json.dumps([run_id]) if run_id else None, is_correct)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def create_from_review(run_id: int) -> Optional[int]:
+        """Create a training example from a completed review."""
+        with get_connection() as conn:
+            # Get the run details
+            run = conn.execute(
+                """SELECT er.*, d.raw_text, d.auction_type_id as doc_auction_type_id
+                   FROM extraction_runs er
+                   JOIN documents d ON er.document_id = d.id
+                   WHERE er.id = ?""",
+                (run_id,)
+            ).fetchone()
+
+            if not run:
+                return None
+
+            # Get reviewed items
+            items = conn.execute(
+                "SELECT * FROM review_items WHERE run_id = ? AND status IN ('approved', 'corrected')",
+                (run_id,)
+            ).fetchall()
+
+            if not items:
+                return None
+
+            # Build labels
+            labels = {}
+            review_item_ids = []
+            for item in items:
+                final_value = item["corrected_value"] if item["corrected_value"] else item["predicted_value"]
+                if final_value:
+                    labels[item["source_key"]] = final_value
+                    review_item_ids.append(item["id"])
+
+            # Create training example
+            example_uuid = str(uuid.uuid4())
+            cursor = conn.execute(
+                """INSERT INTO training_examples
+                   (uuid, auction_type_id, document_id, input_text, labels_json, source_review_item_ids)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (example_uuid, run["auction_type_id"], run["document_id"],
+                 run["raw_text"] or "", json.dumps(labels), json.dumps(review_item_ids))
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def list_by_auction_type(auction_type_id: int, validated_only: bool = False,
+                              limit: int = 1000) -> List[TrainingExample]:
+        """List training examples for an auction type."""
+        sql = "SELECT * FROM training_examples WHERE auction_type_id = ?"
+        params = [auction_type_id]
+
+        if validated_only:
+            sql += " AND is_validated = TRUE"
+
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        with get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("labels_json"):
+                    data["labels_json"] = json.loads(data["labels_json"])
+                if data.get("input_chunks_json"):
+                    data["input_chunks_json"] = json.loads(data["input_chunks_json"])
+                if data.get("source_review_item_ids"):
+                    data["source_review_item_ids"] = json.loads(data["source_review_item_ids"])
+                result.append(TrainingExample(**data))
+            return result
+
+    @staticmethod
+    def count_by_auction_type(auction_type_id: int) -> Dict[str, int]:
+        """Count training examples by auction type."""
+        with get_connection() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
+                (auction_type_id,)
+            ).fetchone()[0]
+            validated = conn.execute(
+                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = TRUE",
+                (auction_type_id,)
+            ).fetchone()[0]
+            return {"total": total, "validated": validated}
+
+
+class ModelVersionRepository:
+    """Repository for ModelVersion operations."""
+
+    @staticmethod
+    def create(auction_type_id: int, version_tag: str, base_model: str,
+               adapter_type: str = "lora", config: Dict = None,
+               training_job_id: int = None) -> int:
+        """Create a new model version."""
+        model_uuid = str(uuid.uuid4())
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO model_versions
+                   (uuid, auction_type_id, version_tag, base_model, adapter_type, config_json, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 'training')""",
+                (model_uuid, auction_type_id, version_tag, base_model, adapter_type,
+                 json.dumps(config) if config else None)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def _row_to_model(row) -> ModelVersion:
+        """Convert a database row to a ModelVersion object."""
+        data = dict(row)
+        if data.get("config_json"):
+            data["config_json"] = json.loads(data["config_json"])
+        if data.get("metrics_json"):
+            data["metrics_json"] = json.loads(data["metrics_json"])
+        # Handle field name differences
+        data.setdefault("adapter_path", data.get("adapter_uri"))
+        data.setdefault("training_job_id", None)
+        # Remove fields not in dataclass
+        data.pop("adapter_uri", None)
+        return ModelVersion(**data)
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[ModelVersion]:
+        """Get model version by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM model_versions WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                return ModelVersionRepository._row_to_model(row)
+            return None
+
+    @staticmethod
+    def get_active(auction_type_id: int) -> Optional[ModelVersion]:
+        """Get the active model version for an auction type."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM model_versions WHERE auction_type_id = ? AND status = 'active'",
+                (auction_type_id,)
+            ).fetchone()
+            if row:
+                return ModelVersionRepository._row_to_model(row)
+            return None
+
+    @staticmethod
+    def promote(id: int) -> bool:
+        """Promote a model version to active (and archive previous active)."""
+        now = datetime.utcnow().isoformat()
+
+        with get_connection() as conn:
+            # Get the model to promote
+            model = conn.execute(
+                "SELECT auction_type_id, status FROM model_versions WHERE id = ?", (id,)
+            ).fetchone()
+
+            if not model or model["status"] not in ("ready", "active"):
+                return False
+
+            # Archive current active
+            conn.execute(
+                """UPDATE model_versions SET status = 'archived'
+                   WHERE auction_type_id = ? AND status = 'active'""",
+                (model["auction_type_id"],)
+            )
+
+            # Promote new one
+            conn.execute(
+                "UPDATE model_versions SET status = 'active', promoted_at = ? WHERE id = ?",
+                (now, id)
+            )
+            conn.commit()
+            return True
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update model version."""
+        if not kwargs:
+            return False
+
+        if "config_json" in kwargs and isinstance(kwargs["config_json"], dict):
+            kwargs["config_json"] = json.dumps(kwargs["config_json"])
+        if "metrics_json" in kwargs and isinstance(kwargs["metrics_json"], dict):
+            kwargs["metrics_json"] = json.dumps(kwargs["metrics_json"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE model_versions SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def update_metrics(id: int, metrics: Dict) -> bool:
+        """Update model metrics."""
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE model_versions SET metrics_json = ?, status = 'ready', trained_at = ? WHERE id = ?",
+                (json.dumps(metrics), datetime.utcnow().isoformat(), id)
+            )
+            conn.commit()
+            return True
+
+    @staticmethod
+    def list_by_auction_type(auction_type_id: int) -> List[ModelVersion]:
+        """List all model versions for an auction type."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM model_versions WHERE auction_type_id = ? ORDER BY created_at DESC",
+                (auction_type_id,)
+            ).fetchall()
+            return [ModelVersionRepository._row_to_model(row) for row in rows]
+
+
+class ExportJobRepository:
+    """Repository for ExportJob operations."""
+
+    @staticmethod
+    def create(run_id: int, target: str = "central_dispatch", dispatch_id: str = None,
+               payload_json: Dict = None) -> int:
+        """Create a new export job."""
+        job_uuid = str(uuid.uuid4())
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO export_jobs
+                   (uuid, run_id, dispatch_id, payload_json, status)
+                   VALUES (?, ?, ?, ?, 'pending')""",
+                (job_uuid, run_id, dispatch_id, json.dumps(payload_json) if payload_json else None)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def _row_to_job(row) -> ExportJob:
+        """Convert a database row to an ExportJob object."""
+        data = dict(row)
+        for key in ["payload_json", "response_json", "error_json"]:
+            if data.get(key):
+                data[key] = json.loads(data[key])
+        if data.get("validation_errors_json"):
+            data["validation_errors_json"] = json.loads(data["validation_errors_json"])
+        # Handle field name differences
+        data.setdefault("target", "central_dispatch")
+        data.setdefault("error_message", None)
+        return ExportJob(**data)
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[ExportJob]:
+        """Get export job by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM export_jobs WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                return ExportJobRepository._row_to_job(row)
+            return None
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update export job."""
+        if not kwargs:
+            return False
+
+        if "payload_json" in kwargs and isinstance(kwargs["payload_json"], dict):
+            kwargs["payload_json"] = json.dumps(kwargs["payload_json"])
+        if "response_json" in kwargs and isinstance(kwargs["response_json"], dict):
+            kwargs["response_json"] = json.dumps(kwargs["response_json"])
+        if "error_json" in kwargs and isinstance(kwargs["error_json"], dict):
+            kwargs["error_json"] = json.dumps(kwargs["error_json"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE export_jobs SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def update_status(id: int, status: str, cd_listing_id: str = None,
+                      response: Dict = None, error: Dict = None,
+                      validation_errors: List = None) -> bool:
+        """Update export job status."""
+        now = datetime.utcnow().isoformat()
+
+        with get_connection() as conn:
+            updates = {"status": status}
+            if cd_listing_id:
+                updates["cd_listing_id"] = cd_listing_id
+            if response:
+                updates["response_json"] = json.dumps(response)
+            if error:
+                updates["error_json"] = json.dumps(error)
+            if validation_errors:
+                updates["validation_errors_json"] = json.dumps(validation_errors)
+
+            if status == "submitted":
+                updates["submitted_at"] = now
+            elif status in ("success", "failed", "validation_error"):
+                updates["completed_at"] = now
+
+            set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+            values = list(updates.values()) + [id]
+
+            conn.execute(f"UPDATE export_jobs SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def list_by_run(run_id: int) -> List[ExportJob]:
+        """List export jobs for a run."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM export_jobs WHERE run_id = ? ORDER BY created_at DESC",
+                (run_id,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                for key in ["payload_json", "response_json", "error_json"]:
+                    if data.get(key):
+                        data[key] = json.loads(data[key])
+                result.append(ExportJob(**data))
+            return result
+
+    @staticmethod
+    def list_pending(limit: int = 50) -> List[ExportJob]:
+        """List pending export jobs."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM export_jobs WHERE status = 'pending' ORDER BY created_at LIMIT ?",
+                (limit,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("payload_json"):
+                    data["payload_json"] = json.loads(data["payload_json"])
+                result.append(ExportJob(**data))
+            return result
+
+
+# =============================================================================
+# TRAINING JOB REPOSITORY
+# =============================================================================
+
+class TrainingJobRepository:
+    """Repository for TrainingJob operations."""
+
+    @staticmethod
+    def create(auction_type_id: int, config_json: dict = None) -> int:
+        """Create a new training job."""
+        job_uuid = str(uuid.uuid4())
+
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO training_jobs
+                   (uuid, auction_type_id, model_version_id, config_json, status)
+                   VALUES (?, ?, 0, ?, 'pending')""",
+                (job_uuid, auction_type_id, json.dumps(config_json) if config_json else None)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[TrainingJob]:
+        """Get training job by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM training_jobs WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                if data.get("config_json"):
+                    data["config_json"] = json.loads(data["config_json"])
+                # Handle field name differences
+                data.setdefault("log_path", data.get("logs_uri"))
+                data.setdefault("metrics_json", None)
+                data.setdefault("completed_at", data.get("finished_at"))
+                # Remove fields not in dataclass
+                for key in ["logs_uri", "finished_at", "progress", "current_step", "total_steps"]:
+                    data.pop(key, None)
+                return TrainingJob(**data)
+            return None
+
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update training job."""
+        if not kwargs:
+            return False
+
+        if "config_json" in kwargs and isinstance(kwargs["config_json"], dict):
+            kwargs["config_json"] = json.dumps(kwargs["config_json"])
+        if "metrics_json" in kwargs and isinstance(kwargs["metrics_json"], dict):
+            kwargs["metrics_json"] = json.dumps(kwargs["metrics_json"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE training_jobs SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+
+# =============================================================================
+# SCHEMA INITIALIZATION ALIAS
+# =============================================================================
+
+def init_schema():
+    """Initialize the extended database schema. Alias for init_extended_schema."""
+    init_extended_schema()
+    seed_default_field_mappings()
