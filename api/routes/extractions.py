@@ -267,9 +267,11 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         detected_type = AuctionTypeRepository.get_by_code(detected_source)
                         if detected_type:
                             # Update document to use detected auction type
-                            DocumentRepository.update(doc_id, auction_type_id=detected_type.id)
+                            DocumentRepository.update(document_id, auction_type_id=detected_type.id)
                             # Also update the extraction run's auction_type_id
                             auction_type_id = detected_type.id
+                            # Update the run as well
+                            ExtractionRunRepository.update(run_id, auction_type_id=detected_type.id)
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -322,11 +324,77 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                 ReviewItemRepository.create_batch(run_id, review_items)
 
     except Exception as e:
+        import traceback
+        error_details = {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }
         ExtractionRunRepository.update(
             run_id,
             status="failed",
-            errors_json=[{"error": str(e)}],
+            errors_json=[error_details],
+            completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
+
+        # Create empty review items for failed extractions so user can manually enter data
+        _create_empty_review_items(run_id, auction_type_id)
+
+
+def _create_empty_review_items(run_id: int, auction_type_id: int):
+    """Create empty review items for manual data entry."""
+    from api.database import get_connection
+
+    # Get field mappings for this auction type
+    with get_connection() as conn:
+        mappings = conn.execute(
+            "SELECT * FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE ORDER BY display_order",
+            (auction_type_id,)
+        ).fetchall()
+
+    if not mappings:
+        # Use default fields if no mappings exist
+        default_fields = [
+            ("vehicle_vin", "vin", "vehicles[0].vin", True),
+            ("vehicle_year", "year", "vehicles[0].year", False),
+            ("vehicle_make", "make", "vehicles[0].make", False),
+            ("vehicle_model", "model", "vehicles[0].model", False),
+            ("vehicle_color", "color", "vehicles[0].color", False),
+            ("vehicle_lot", "lot_number", "vehicles[0].lotNumber", False),
+            ("pickup_city", "pickup_city", "stops[0].city", True),
+            ("pickup_state", "pickup_state", "stops[0].state", True),
+            ("pickup_zip", "pickup_postal_code", "stops[0].postalCode", True),
+            ("buyer_id", "buyer_id", None, False),
+            ("buyer_name", "buyer_name", None, False),
+        ]
+
+        review_items = [
+            {
+                "source_key": source_key,
+                "internal_key": internal_key,
+                "cd_key": cd_key,
+                "predicted_value": None,
+                "is_match_ok": False,
+                "export_field": is_required,
+                "confidence": 0.0,
+            }
+            for source_key, internal_key, cd_key, is_required in default_fields
+        ]
+    else:
+        review_items = [
+            {
+                "source_key": m["source_key"],
+                "internal_key": m["internal_key"],
+                "cd_key": m["cd_key"],
+                "predicted_value": None,
+                "is_match_ok": False,
+                "export_field": m["is_required"],
+                "confidence": 0.0,
+            }
+            for m in mappings
+        ]
+
+    if review_items:
+        ReviewItemRepository.create_batch(run_id, review_items)
 
 
 # =============================================================================

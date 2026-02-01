@@ -18,8 +18,8 @@ class CopartExtractor(BaseExtractor):
     def indicators(self) -> list:
         return [
             'Copart',
-            'Sales Receipt/Bill of Sale',
             'SOLD THROUGH COPART',
+            'Sales Receipt/Bill of Sale',
             'MEMBER:',
             'PHYSICAL ADDRESS OF LOT',
             'LOT#',
@@ -29,14 +29,38 @@ class CopartExtractor(BaseExtractor):
     @property
     def indicator_weights(self) -> dict:
         return {
-            'Copart': 2.0,
-            'SOLD THROUGH COPART': 3.0,
-            'Sales Receipt/Bill of Sale': 1.5,
-            'MEMBER:': 1.0,
-            'PHYSICAL ADDRESS OF LOT': 1.5,
+            'Copart': 3.0,  # Strong but not as unique
+            'SOLD THROUGH COPART': 5.0,  # Very strong - unique to Copart
+            'Sales Receipt/Bill of Sale': 1.0,  # Generic, reduce weight
+            'MEMBER:': 1.5,
+            'PHYSICAL ADDRESS OF LOT': 2.0,  # Copart specific
             'LOT#': 1.0,
-            'copart.com': 2.0,
+            'copart.com': 4.0,  # Very strong - unique to Copart
         }
+
+    @property
+    def negative_indicators(self) -> list:
+        """Indicators that suggest this is NOT a Copart document."""
+        return [
+            'Insurance Auto Auctions',
+            'IAAI',
+            'Buyer Receipt',
+            'Manheim',
+        ]
+
+    def score(self, text: str) -> tuple:
+        """Override score to check for negative indicators."""
+        base_score, matched = super().score(text)
+
+        # Check for negative indicators - if found, reduce score significantly
+        text_lower = text.lower()
+        for neg in self.negative_indicators:
+            if neg.lower() in text_lower:
+                # Strong negative indicator found - this is likely not Copart
+                base_score *= 0.3  # Reduce score by 70%
+                break
+
+        return base_score, matched
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
         text = self.extract_text(pdf_path)

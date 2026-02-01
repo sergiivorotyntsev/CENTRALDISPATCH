@@ -848,6 +848,55 @@ class DocumentRepository:
             ).fetchall()
             return {row["dataset_split"]: row["count"] for row in rows}
 
+    @staticmethod
+    def update(id: int, **kwargs) -> bool:
+        """Update document."""
+        if not kwargs:
+            return False
+
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
+        values = list(kwargs.values()) + [id]
+
+        with get_connection() as conn:
+            conn.execute(f"UPDATE documents SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+            return True
+
+    @staticmethod
+    def delete(id: int) -> bool:
+        """Delete document and associated data."""
+        with get_connection() as conn:
+            # Delete related extraction runs first
+            conn.execute("DELETE FROM review_items WHERE run_id IN (SELECT id FROM extraction_runs WHERE document_id = ?)", (id,))
+            conn.execute("DELETE FROM extraction_runs WHERE document_id = ?", (id,))
+            conn.execute("DELETE FROM documents WHERE id = ?", (id,))
+            conn.commit()
+            return True
+
+    @staticmethod
+    def list_all(auction_type_id: int = None, dataset_split: str = None,
+                 is_test: bool = None, limit: int = 100, offset: int = 0) -> List[Document]:
+        """List all documents with optional filtering."""
+        sql = "SELECT * FROM documents WHERE 1=1"
+        params = []
+
+        if auction_type_id:
+            sql += " AND auction_type_id = ?"
+            params.append(auction_type_id)
+        if dataset_split:
+            sql += " AND dataset_split = ?"
+            params.append(dataset_split)
+        if is_test is not None:
+            sql += " AND is_test = ?"
+            params.append(is_test)
+
+        sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        with get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [Document(**dict(row)) for row in rows]
+
 
 class ExtractionRunRepository:
     """Repository for ExtractionRun operations."""

@@ -465,6 +465,70 @@ async def cancel_training_job(job_id: int):
 # ROUTES - TRAINING DATA STATS
 # =============================================================================
 
+class TrainingStatsOverview(BaseModel):
+    """Overview of training stats across all auction types."""
+    total_examples: int
+    total_validated: int
+    by_auction_type: dict
+
+
+@router.get("/training-stats/overview")
+async def get_training_stats_overview():
+    """Get training stats overview for the Test Lab dashboard."""
+    from api.database import get_connection
+
+    with get_connection() as conn:
+        # Get all auction types
+        auction_types = conn.execute(
+            "SELECT id, code FROM auction_types WHERE is_active = TRUE"
+        ).fetchall()
+
+        by_auction_type = {}
+        total_examples = 0
+        total_validated = 0
+
+        for at in auction_types:
+            at_id = at["id"]
+            at_code = at["code"]
+
+            # Count from training_examples
+            total = conn.execute(
+                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
+                (at_id,)
+            ).fetchone()[0]
+
+            validated = conn.execute(
+                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = TRUE",
+                (at_id,)
+            ).fetchone()[0]
+
+            # Also count reviewed items as training data
+            reviewed_count = conn.execute(
+                """SELECT COUNT(*)
+                   FROM review_items ri
+                   JOIN extraction_runs er ON ri.run_id = er.id
+                   WHERE er.auction_type_id = ? AND ri.is_match_ok = TRUE""",
+                (at_id,)
+            ).fetchone()[0]
+
+            total_for_type = total + reviewed_count
+            validated_for_type = validated + reviewed_count
+
+            by_auction_type[at_code] = {
+                "total": total_for_type,
+                "validated": validated_for_type,
+            }
+
+            total_examples += total_for_type
+            total_validated += validated_for_type
+
+    return {
+        "total_examples": total_examples,
+        "total_validated": total_validated,
+        "by_auction_type": by_auction_type,
+    }
+
+
 @router.get("/training-stats", response_model=List[TrainingDataStats])
 async def get_training_stats():
     """

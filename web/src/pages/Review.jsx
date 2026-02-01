@@ -231,9 +231,29 @@ function Review() {
 
         {/* Review Items Panel */}
         <div className={showPdf && pdfUrl ? 'w-1/2' : 'w-full'}>
+          {/* Failed extraction notice */}
+          {run.status === 'failed' && (
+            <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+              <h3 className="font-medium text-orange-800 mb-1">Manual Entry Required</h3>
+              <p className="text-sm text-orange-700">
+                Automatic extraction failed. Please enter the field values manually by looking at the document on the left.
+                Your corrections will help train the system to better recognize this document format in the future.
+              </p>
+              {run.errors && run.errors.length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-xs text-orange-600 cursor-pointer">View error details</summary>
+                  <pre className="mt-1 text-xs bg-orange-100 p-2 rounded overflow-auto max-h-24">
+                    {run.errors.map(e => e.error || JSON.stringify(e)).join('\n')}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+
           {items.length === 0 ? (
             <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
-              No review items found for this run.
+              <p className="mb-4">No review items found for this run.</p>
+              <p className="text-sm">This may indicate an issue with the extraction process. Please check the error details or try re-extracting the document.</p>
             </div>
           ) : (
             <div className="bg-white rounded-lg shadow overflow-hidden">

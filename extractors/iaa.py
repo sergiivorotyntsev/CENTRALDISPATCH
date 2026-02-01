@@ -45,22 +45,28 @@ class IAAExtractor(BaseExtractor):
     def indicators(self) -> list:
         return [
             'Insurance Auto Auctions',
+            'Insurance Auto Auctions Corp',
             'Buyer Receipt',
             'IAAI',
-            'IAA Doc',
+            'IAA',
             'Pick-Up Location',
             'StockNo',
+            'Sold At Branch',
+            'Receipt #',
         ]
 
     @property
     def indicator_weights(self) -> dict:
         return {
-            'Insurance Auto Auctions': 3.0,  # Strong indicator
-            'IAAI': 2.0,
-            'Buyer Receipt': 1.5,
-            'IAA Doc': 2.0,
-            'Pick-Up Location': 1.0,
-            'StockNo': 1.0,
+            'Insurance Auto Auctions': 5.0,  # Very strong - unique to IAA
+            'Insurance Auto Auctions Corp': 5.0,  # Very strong - unique to IAA
+            'Buyer Receipt': 2.0,  # Strong for IAA
+            'IAAI': 3.0,
+            'IAA': 2.5,  # Be careful - could match in other text
+            'Pick-Up Location': 1.5,  # IAA specific format
+            'StockNo': 1.5,  # IAA specific
+            'Sold At Branch': 2.0,  # IAA specific
+            'Receipt #': 1.0,
         }
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
