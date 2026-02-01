@@ -531,6 +531,8 @@ class Document:
     page_count: Optional[int] = None
     has_ocr: bool = False
     raw_text: Optional[str] = None
+    source: str = "upload"  # upload, email, batch, test_lab
+    is_test: bool = False
     created_at: Optional[str] = None
     uploaded_by: Optional[str] = None
 
