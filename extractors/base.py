@@ -162,6 +162,21 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def parse_address(text: str) -> Tuple[str, str, str]:
+        """
+        Parse city, state, zip from a text line.
+
+        For more robust address extraction from documents, use the shared
+        address_parser module functions like extract_pickup_address().
+
+        Returns: (city, state, zip_code)
+        """
+        # Import and use the shared parser for better handling of various formats
+        from extractors.address_parser import parse_city_state_zip
+        city, state, zip_code = parse_city_state_zip(text)
+        if city and state:
+            return city, state, zip_code or ""
+
+        # Fallback to basic pattern
         pattern = r'([A-Za-z\s]+)[,\s]+([A-Z]{2})[\s.,]+(\d{5}(?:-\d{4})?)'
         match = re.search(pattern, text)
         if match:

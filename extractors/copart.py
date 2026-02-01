@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime
 
 from extractors.base import BaseExtractor
+from extractors.address_parser import extract_pickup_address
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
 
 
@@ -137,83 +138,16 @@ class CopartExtractor(BaseExtractor):
         return invoice
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        # Try multiple patterns for address extraction
-        # Format in document: "PHYSICAL ADDRESS OF LOT:" then "5701 WHITESIDE RD" then "SANDSTON VA 23150"
-        patterns = [
-            # Pattern 1: Street on one line, city/state/zip on next line (common format)
-            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*\n?\s*([^\n]+)\n\s*([A-Za-z]+)\s+([A-Z]{2})\s+(\d{5})',
-            # Pattern 2: All on same lines with colon
-            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]+([^\n]+)\n\s*([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
-            # Pattern 3: Location/Address line
-            r'(?:LOCATION|LOT\s*ADDRESS)[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-            # Pattern 4: Pick-?up location
-            r'(?:PICK[\-\s]?UP|PICKUP)\s*(?:LOCATION|ADDRESS)?[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-        ]
-
-        street, city, state, postal = None, None, None, None
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-            if match:
-                groups = match.groups()
-                street = groups[0].strip()
-                city = groups[1].strip().rstrip(',')
-                state = groups[2].upper()
-                postal = groups[3]
-                break
-
-        # If standard patterns didn't work, try a more flexible approach
-        if not (city and state):
-            # Look for "PHYSICAL ADDRESS OF LOT" followed by any address-like text
-            alt_match = re.search(
-                r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*\n?\s*'
-                r'(\d+[^\n]+?)\s*\n\s*'  # Street with number
-                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+'  # City (one or two words)
-                r'([A-Z]{2})\s+'  # State
-                r'(\d{5})',  # ZIP
-                text, re.IGNORECASE | re.MULTILINE
-            )
-            if alt_match:
-                street = alt_match.group(1).strip()
-                city = alt_match.group(2).strip()
-                state = alt_match.group(3).upper()
-                postal = alt_match.group(4)
-
-        if not (city and state):
-            return None
-
-        # Try to extract phone number from nearby text
-        phone = None
-        phone_patterns = [
-            r'(?:PHONE|TEL|CONTACT)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(?:LOT\s*(?:PHONE|TEL))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})',  # General phone pattern
-        ]
-
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, text, re.IGNORECASE)
-            if phone_match:
-                phone = phone_match.group(1).strip()
-                # Normalize phone format
-                phone_digits = re.sub(r'\D', '', phone)
-                if len(phone_digits) == 10:
-                    phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
-                    break
-
-        # Determine lot name
-        lot_name = "Copart"
-        lot_name_match = re.search(r'(Copart\s+[A-Za-z\s\-]+)', text, re.IGNORECASE)
-        if lot_name_match:
-            lot_name = lot_name_match.group(1).strip()
-
-        return Address(
-            street=street,
-            city=city,
-            state=state,
-            postal_code=postal,
-            country="US",
-            name=lot_name,
-            phone=phone
+        """Extract pickup address using shared parser."""
+        # Use the shared address parser with Copart-specific labels
+        return extract_pickup_address(
+            text,
+            source="Copart",
+            custom_labels=[
+                r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT',
+                r'LOT\s*(?:LOCATION|ADDRESS)',
+                r'Copart\s+Location',
+            ]
         )
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:

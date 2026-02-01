@@ -4,6 +4,7 @@ from typing import Optional
 from datetime import datetime
 
 from extractors.base import BaseExtractor
+from extractors.address_parser import extract_pickup_address
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
 
 
@@ -146,75 +147,17 @@ class ManheimExtractor(BaseExtractor):
         return LocationType.ONSITE
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        # Try multiple patterns for pickup location
-        pickup_patterns = [
-            # Pattern with location name
-            r'Pickup\s*Location\s+Address\s+([A-Za-z\s\-]+)\n\s*(\d+[A-Za-z0-9\s\.\-]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)',
-            # Pattern without location name
-            r'Address[:\s]+(\d+[A-Za-z0-9\s\.\-]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)',
-            # Alternative pickup patterns
-            r'(?:PICKUP|Pick[\-\s]?Up)\s*(?:Location|Address)?[:\s]*([A-Za-z\s\-]+)\n\s*(\d+[A-Za-z0-9\s\.\-]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-            # Location line
-            r'Location[:\s]+([A-Za-z\s\-]+)\n([^\n]+)\n([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-        ]
-
-        name, street, city, state, postal = None, None, None, None, None
-
-        for pattern in pickup_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                groups = match.groups()
-                if len(groups) == 5:
-                    name = groups[0].strip()
-                    street = groups[1].strip()
-                    city = groups[2].strip().rstrip(',')
-                    state = groups[3].upper()
-                    postal = groups[4]
-                elif len(groups) == 4:
-                    street = groups[0].strip()
-                    city = groups[1].strip().rstrip(',')
-                    state = groups[2].upper()
-                    postal = groups[3]
-                break
-
-        if not (city and state):
-            return None
-
-        # Extract phone number
-        phone = None
-        phone_patterns = [
-            r'(?:PHONE|TEL|CONTACT|Ph)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(?:Location\s*(?:Phone|Tel))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(?:Call|Contact)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})',
-        ]
-
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, text, re.IGNORECASE)
-            if phone_match:
-                phone = phone_match.group(1).strip()
-                # Normalize phone format
-                phone_digits = re.sub(r'\D', '', phone)
-                if len(phone_digits) == 10:
-                    phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
-                    break
-
-        # Determine location name
-        if not name or len(name) < 3:
-            manheim_match = re.search(r'(Manheim\s+[A-Za-z\s\-]+)', text, re.IGNORECASE)
-            if manheim_match:
-                name = manheim_match.group(1).strip()
-            else:
-                name = "Manheim"
-
-        return Address(
-            name=name,
-            street=street,
-            city=city,
-            state=state,
-            postal_code=postal,
-            country="US",
-            phone=phone
+        """Extract pickup address using shared parser."""
+        # Use the shared address parser with Manheim-specific labels
+        return extract_pickup_address(
+            text,
+            source="Manheim",
+            custom_labels=[
+                r'Pickup\s*Location\s*Address',
+                r'Manheim\s*Location',
+                r'Vehicle\s*Location',
+                r'Release\s*Location',
+            ]
         )
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
