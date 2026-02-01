@@ -5,6 +5,10 @@
 .env.*
 !.env.example
 
+# Auth secrets (auto-generated in development)
+config/.jwt_secret
+config/auth.json
+
 # Google API credentials
 credentials.json
 token.json
