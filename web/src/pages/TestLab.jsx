@@ -51,7 +51,7 @@ function TestLab() {
 
   // Extracted fields from test result
   const [extractedFields, setExtractedFields] = useState(null)
-  const [loadingFields, setLoadingFieldsData] = useState(false)
+  const [loadingExtractedFields, setLoadingExtractedFields] = useState(false)
 
   // Training stats
   const [trainingStats, setTrainingStats] = useState(null)
@@ -419,7 +419,7 @@ function TestLab() {
   }
 
   async function loadExtractedFields(runId) {
-    setLoadingFieldsData(true)
+    setLoadingExtractedFields(true)
     try {
       const response = await fetch(`/api/extractions/${runId}`)
       if (response.ok) {
@@ -429,7 +429,7 @@ function TestLab() {
     } catch (err) {
       console.error('Failed to load extracted fields:', err)
     } finally {
-      setLoadingFieldsData(false)
+      setLoadingExtractedFields(false)
     }
   }
 
@@ -680,7 +680,7 @@ function TestLab() {
                       </div>
 
                       {/* Extracted Fields Display */}
-                      {loadingFieldsData ? (
+                      {loadingExtractedFields ? (
                         <div className="text-center py-8">
                           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
                           <p className="text-sm text-gray-500 mt-2">Loading extracted fields...</p>
