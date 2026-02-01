@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel
 from typing import List, Optional
 from pydantic import BaseModel
 
-from database import get_session, engine
+from api.training_db import get_session, engine, init_training_db
 from services.training_service import TrainingService
 from models.training import (
     FieldCorrectionCreate,
@@ -27,12 +27,7 @@ from models.training import (
 
 def init_training_schema():
     """Initialize training tables in the database."""
-    SQLModel.metadata.create_all(engine, tables=[
-        ExtractionRule.__table__,
-        FieldCorrection.__table__,
-        TrainingExample.__table__,
-        ExtractionPattern.__table__,
-    ])
+    init_training_db()
 
 
 router = APIRouter(prefix="/training", tags=["Training"])

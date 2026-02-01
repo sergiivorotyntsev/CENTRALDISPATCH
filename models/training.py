@@ -23,7 +23,7 @@ class ExtractionRule(SQLModel, table=True):
     __tablename__ = "extraction_rules"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    auction_type_id: int = Field(foreign_key="auction_types.id", index=True)
+    auction_type_id: int = Field(index=True)  # References auction_types in main DB
     field_key: str = Field(index=True)  # e.g., 'pickup_address', 'buyer_name'
 
     # Rule definition
@@ -79,9 +79,9 @@ class FieldCorrection(SQLModel, table=True):
     __tablename__ = "field_corrections"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    extraction_run_id: int = Field(foreign_key="extraction_runs.id", index=True)
-    auction_type_id: int = Field(foreign_key="auction_types.id", index=True)
-    document_id: int = Field(foreign_key="documents.id", index=True)
+    extraction_run_id: int = Field(index=True)  # References extraction_runs in main DB
+    auction_type_id: int = Field(index=True)  # References auction_types in main DB
+    document_id: int = Field(index=True)  # References documents in main DB
 
     field_key: str = Field(index=True)  # e.g., 'pickup_address'
 
@@ -115,8 +115,8 @@ class TrainingExample(SQLModel, table=True):
     __tablename__ = "training_examples"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    auction_type_id: int = Field(foreign_key="auction_types.id", index=True)
-    document_id: int = Field(foreign_key="documents.id", index=True)
+    auction_type_id: int = Field(index=True)  # References auction_types in main DB
+    document_id: int = Field(index=True)  # References documents in main DB
 
     # The complete corrected extraction data (JSON)
     corrected_fields: str = Field(default="{}", sa_column=Column(Text))
@@ -153,7 +153,7 @@ class ExtractionPattern(SQLModel, table=True):
     __tablename__ = "extraction_patterns"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    auction_type_id: int = Field(foreign_key="auction_types.id", index=True)
+    auction_type_id: int = Field(index=True)  # References auction_types in main DB
     field_key: str = Field(index=True)
 
     # Pattern type
