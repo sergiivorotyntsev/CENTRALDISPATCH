@@ -12,17 +12,16 @@ Features:
 """
 
 import asyncio
-import imaplib
 import email
-import time
-import uuid
+import imaplib
 import json
 import re
-from datetime import datetime, timedelta
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from email.header import decode_header
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
-from dataclasses import dataclass
+from typing import Any, Optional
 
 from api.database import get_connection
 
@@ -30,19 +29,21 @@ from api.database import get_connection
 @dataclass
 class EmailMessage:
     """Parsed email message."""
+
     message_id: str
     uid: str
     subject: str
     sender: str
     date: str
     has_pdf: bool
-    pdf_filenames: List[str]
+    pdf_filenames: list[str]
     raw_message: email.message.Message
 
 
 @dataclass
 class ProcessingResult:
     """Result of processing an email."""
+
     message_id: str
     status: str  # processed, skipped, failed
     rule_matched: Optional[str]
@@ -58,7 +59,7 @@ class EmailWorker:
     Polls configured IMAP inbox, applies rules, and processes PDFs.
     """
 
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] = None):
         """Initialize worker with config."""
         self.config = config or {}
         self.imap = None
@@ -69,15 +70,17 @@ class EmailWorker:
         self.upload_path = Path(self.config.get("upload_path", "uploads/email"))
         self.upload_path.mkdir(parents=True, exist_ok=True)
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """Load email config from settings."""
         from api.routes.settings import load_settings
+
         settings = load_settings()
         return settings.get("email", {})
 
-    def _load_rules(self) -> List[Dict[str, Any]]:
+    def _load_rules(self) -> list[dict[str, Any]]:
         """Load email processing rules."""
         from api.routes.settings import load_settings
+
         settings = load_settings()
         rules = settings.get("email_rules", [])
         # Sort by priority
@@ -93,8 +96,7 @@ class EmailWorker:
         password = config.get("password")
 
         if not all([server, email_addr, password]):
-            self._log_activity("SYSTEM", "connect", "failed",
-                             error="Email not configured")
+            self._log_activity("SYSTEM", "connect", "failed", error="Email not configured")
             return False
 
         try:
@@ -105,8 +107,9 @@ class EmailWorker:
                 # Microsoft/Gmail OAuth2
                 access_token = config.get("access_token")
                 if not access_token:
-                    self._log_activity("SYSTEM", "connect", "failed",
-                                     error="OAuth2 access token not configured")
+                    self._log_activity(
+                        "SYSTEM", "connect", "failed", error="OAuth2 access token not configured"
+                    )
                     return False
 
                 self.imap = imaplib.IMAP4_SSL(server, port)
@@ -168,7 +171,9 @@ class EmailWorker:
             if filename:
                 filename = self._decode_header_value(filename)
 
-            if content_type == "application/pdf" or (filename and filename.lower().endswith(".pdf")):
+            if content_type == "application/pdf" or (
+                filename and filename.lower().endswith(".pdf")
+            ):
                 if filename:
                     pdf_filenames.append(filename)
 
@@ -183,7 +188,7 @@ class EmailWorker:
             raw_message=msg,
         )
 
-    def _match_rule(self, msg: EmailMessage, rules: List[Dict]) -> Optional[Dict]:
+    def _match_rule(self, msg: EmailMessage, rules: list[dict]) -> Optional[dict]:
         """Match email against rules. Returns first matching rule."""
         for rule in rules:
             if not rule.get("enabled", True):
@@ -230,12 +235,10 @@ class EmailWorker:
             if part_filename:
                 part_filename = self._decode_header_value(part_filename)
 
-            if part_filename == filename or (
-                content_type == "application/pdf" and part_filename
-            ):
+            if part_filename == filename or (content_type == "application/pdf" and part_filename):
                 # Generate unique filename
                 timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                safe_filename = re.sub(r'[^\w.-]', '_', filename)
+                safe_filename = re.sub(r"[^\w.-]", "_", filename)
                 unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{safe_filename}"
 
                 file_path = self.upload_path / unique_filename
@@ -273,17 +276,18 @@ class EmailWorker:
 
         # Default to "OTHER" type
         with get_connection() as conn:
-            other = conn.execute(
-                "SELECT id FROM auction_types WHERE code = 'OTHER'"
-            ).fetchone()
+            other = conn.execute("SELECT id FROM auction_types WHERE code = 'OTHER'").fetchone()
             return other["id"] if other else 1
 
-    def _process_pdf(self, file_path: Path, auction_type_id: int) -> Tuple[Optional[int], Optional[int]]:
+    def _process_pdf(
+        self, file_path: Path, auction_type_id: int
+    ) -> tuple[Optional[int], Optional[int]]:
         """
         Process PDF file: create document and run extraction.
         Returns (document_id, run_id).
         """
         import hashlib
+
         import pdfplumber
 
         from api.models import DocumentRepository, ExtractionRunRepository
@@ -377,11 +381,24 @@ class EmailWorker:
                 )
             """)
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO email_activity_log
                 (id, timestamp, message_id, subject, sender, status, rule_matched, run_id, error)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (entry_id, timestamp, message_id, subject, sender, status, rule_matched, run_id, error))
+            """,
+                (
+                    entry_id,
+                    timestamp,
+                    message_id,
+                    subject,
+                    sender,
+                    status,
+                    rule_matched,
+                    run_id,
+                    error,
+                ),
+            )
             conn.commit()
 
     def _move_to_processed(self, uid: str):
@@ -400,7 +417,7 @@ class EmailWorker:
         except Exception:
             pass
 
-    def poll_once(self) -> List[ProcessingResult]:
+    def poll_once(self) -> list[ProcessingResult]:
         """
         Poll inbox once and process emails.
         Returns list of processing results.
@@ -421,7 +438,7 @@ class EmailWorker:
             if status != "OK":
                 return results
 
-            uids = messages[0].split()[:self.max_emails_per_poll]
+            uids = messages[0].split()[: self.max_emails_per_poll]
 
             for uid in uids:
                 uid_str = uid.decode() if isinstance(uid, bytes) else uid
@@ -441,37 +458,45 @@ class EmailWorker:
                     if not rule:
                         # No rule matched - skip
                         self._log_activity(
-                            msg.message_id, msg.subject, "skipped",
+                            msg.message_id,
+                            msg.subject,
+                            "skipped",
                             sender=msg.sender,
-                            error="No matching rule"
+                            error="No matching rule",
                         )
-                        results.append(ProcessingResult(
-                            message_id=msg.message_id,
-                            status="skipped",
-                            rule_matched=None,
-                            document_id=None,
-                            run_id=None,
-                            error="No matching rule"
-                        ))
+                        results.append(
+                            ProcessingResult(
+                                message_id=msg.message_id,
+                                status="skipped",
+                                rule_matched=None,
+                                document_id=None,
+                                run_id=None,
+                                error="No matching rule",
+                            )
+                        )
                         continue
 
                     action = rule.get("action", "process")
 
                     if action == "ignore":
                         self._log_activity(
-                            msg.message_id, msg.subject, "skipped",
+                            msg.message_id,
+                            msg.subject,
+                            "skipped",
                             sender=msg.sender,
                             rule_matched=rule.get("name"),
-                            error="Rule action: ignore"
+                            error="Rule action: ignore",
                         )
-                        results.append(ProcessingResult(
-                            message_id=msg.message_id,
-                            status="skipped",
-                            rule_matched=rule.get("name"),
-                            document_id=None,
-                            run_id=None,
-                            error="Rule action: ignore"
-                        ))
+                        results.append(
+                            ProcessingResult(
+                                message_id=msg.message_id,
+                                status="skipped",
+                                rule_matched=rule.get("name"),
+                                document_id=None,
+                                run_id=None,
+                                error="Rule action: ignore",
+                            )
+                        )
                         self._move_to_processed(uid)
                         continue
 
@@ -488,6 +513,7 @@ class EmailWorker:
                                     try:
                                         with open(file_path, "rb") as f:
                                             import pdfplumber
+
                                             with pdfplumber.open(f) as pdf:
                                                 text = ""
                                                 for page in pdf.pages[:3]:
@@ -501,51 +527,60 @@ class EmailWorker:
                                 doc_id, run_id = self._process_pdf(file_path, auction_type_id)
 
                                 self._log_activity(
-                                    msg.message_id, msg.subject, "processed",
+                                    msg.message_id,
+                                    msg.subject,
+                                    "processed",
                                     sender=msg.sender,
                                     rule_matched=rule.get("name"),
                                     run_id=run_id,
                                 )
-                                results.append(ProcessingResult(
-                                    message_id=msg.message_id,
-                                    status="processed",
-                                    rule_matched=rule.get("name"),
-                                    document_id=doc_id,
-                                    run_id=run_id,
-                                    error=None
-                                ))
+                                results.append(
+                                    ProcessingResult(
+                                        message_id=msg.message_id,
+                                        status="processed",
+                                        rule_matched=rule.get("name"),
+                                        document_id=doc_id,
+                                        run_id=run_id,
+                                        error=None,
+                                    )
+                                )
 
                         self._move_to_processed(uid)
                     else:
                         # No PDF or unsupported action
                         self._log_activity(
-                            msg.message_id, msg.subject, "skipped",
+                            msg.message_id,
+                            msg.subject,
+                            "skipped",
                             sender=msg.sender,
                             rule_matched=rule.get("name"),
-                            error="No PDF attachment" if not msg.has_pdf else f"Unsupported action: {action}"
-                        )
-                        results.append(ProcessingResult(
-                            message_id=msg.message_id,
-                            status="skipped",
-                            rule_matched=rule.get("name"),
-                            document_id=None,
-                            run_id=None,
                             error="No PDF attachment"
-                        ))
+                            if not msg.has_pdf
+                            else f"Unsupported action: {action}",
+                        )
+                        results.append(
+                            ProcessingResult(
+                                message_id=msg.message_id,
+                                status="skipped",
+                                rule_matched=rule.get("name"),
+                                document_id=None,
+                                run_id=None,
+                                error="No PDF attachment",
+                            )
+                        )
 
                 except Exception as e:
-                    self._log_activity(
-                        uid_str, "", "failed",
-                        error=str(e)
+                    self._log_activity(uid_str, "", "failed", error=str(e))
+                    results.append(
+                        ProcessingResult(
+                            message_id=uid_str,
+                            status="failed",
+                            rule_matched=None,
+                            document_id=None,
+                            run_id=None,
+                            error=str(e),
+                        )
                     )
-                    results.append(ProcessingResult(
-                        message_id=uid_str,
-                        status="failed",
-                        rule_matched=None,
-                        document_id=None,
-                        run_id=None,
-                        error=str(e)
-                    ))
 
         finally:
             self._disconnect()
