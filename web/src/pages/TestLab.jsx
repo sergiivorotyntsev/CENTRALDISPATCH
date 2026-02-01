@@ -5,7 +5,9 @@ function TestLab() {
   const [file, setFile] = useState(null)
   const [dragActive, setDragActive] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [loadingStep, setLoadingStep] = useState('')
   const [error, setError] = useState(null)
+  const [requestId, setRequestId] = useState(null)
 
   // Results
   const [classification, setClassification] = useState(null)
@@ -13,6 +15,11 @@ function TestLab() {
   const [cdPreview, setCdPreview] = useState(null)
   const [sheetsPreview, setSheetsPreview] = useState(null)
   const [dryRunResult, setDryRunResult] = useState(null)
+
+  // Run tracking
+  const [documentId, setDocumentId] = useState(null)
+  const [runId, setRunId] = useState(null)
+  const [runStatus, setRunStatus] = useState(null)
 
   const handleDrag = useCallback((e) => {
     e.preventDefault()
@@ -61,18 +68,25 @@ function TestLab() {
     if (!fileToClassify) return
 
     setLoading(true)
+    setLoadingStep('Classifying document...')
+    setRequestId(Date.now().toString(36))
     try {
       const result = await api.classifyPdf(fileToClassify)
       setClassification(result)
 
-      // If classification successful, auto-extract
-      if (result.source && result.source !== 'UNKNOWN') {
+      // If classification successful (not unknown and has sufficient text), auto-extract
+      if (result.source && result.source !== 'UNKNOWN' && !result.needs_ocr) {
         await handleExtract(fileToClassify)
+      } else if (result.needs_ocr) {
+        setError(`Document needs OCR: Only ${result.text_length} characters extracted. This appears to be a scanned PDF.`)
+      } else if (result.source === 'UNKNOWN') {
+        setError('Could not detect auction source. Confidence too low or text insufficient.')
       }
     } catch (err) {
-      setError(err.message)
+      setError(`Classification failed: ${err.message}`)
     } finally {
       setLoading(false)
+      setLoadingStep('')
     }
   }
 
@@ -80,13 +94,28 @@ function TestLab() {
     if (!fileToExtract) return
 
     setLoading(true)
+    setLoadingStep('Extracting data...')
     try {
       const result = await api.uploadPdf(fileToExtract)
       setExtraction(result)
+
+      // Capture run info if available
+      if (result.document_id) setDocumentId(result.document_id)
+      if (result.run_id) setRunId(result.run_id)
+      if (result.run_status) setRunStatus(result.run_status)
+
+      // Check for warnings in extraction
+      if (result.extraction?.warnings?.length > 0) {
+        const warningMsg = result.extraction.warnings.join('; ')
+        if (result.extraction.warnings.some(w => w.includes('failed'))) {
+          setError(`Extraction warning: ${warningMsg}`)
+        }
+      }
     } catch (err) {
-      setError(err.message)
+      setError(`Extraction failed: ${err.message}`)
     } finally {
       setLoading(false)
+      setLoadingStep('')
     }
   }
 
@@ -140,6 +169,10 @@ function TestLab() {
     setSheetsPreview(null)
     setDryRunResult(null)
     setError(null)
+    setDocumentId(null)
+    setRunId(null)
+    setRunStatus(null)
+    setRequestId(null)
   }
 
   return (
@@ -148,7 +181,19 @@ function TestLab() {
 
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-          <strong>Error:</strong> {error}
+          <div className="flex justify-between items-start">
+            <div>
+              <strong>Error:</strong> {error}
+            </div>
+            {requestId && (
+              <span className="text-xs text-red-400">Request: {requestId}</span>
+            )}
+          </div>
+          {classification?.needs_ocr && (
+            <div className="mt-2 text-sm">
+              <strong>Suggestion:</strong> This PDF appears to be a scanned image. OCR processing is required but not yet implemented.
+            </div>
+          )}
         </div>
       )}
 
@@ -195,7 +240,28 @@ function TestLab() {
       {loading && (
         <div className="mb-6 flex items-center justify-center py-8">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-          <span className="ml-3 text-gray-600">Processing...</span>
+          <span className="ml-3 text-gray-600">{loadingStep || 'Processing...'}</span>
+        </div>
+      )}
+
+      {/* Run Status Banner */}
+      {runId && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-medium text-blue-800">Run Created</span>
+              <span className="ml-2 text-sm text-blue-600">ID: {runId}</span>
+              {documentId && <span className="ml-2 text-sm text-blue-600">| Doc: {documentId}</span>}
+            </div>
+            <span className={`px-2 py-1 rounded text-xs font-medium ${
+              runStatus === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+              runStatus === 'completed' ? 'bg-green-100 text-green-800' :
+              runStatus === 'failed' ? 'bg-red-100 text-red-800' :
+              'bg-gray-100 text-gray-800'
+            }`}>
+              {runStatus || 'pending'}
+            </span>
+          </div>
         </div>
       )}
 
@@ -237,6 +303,34 @@ function TestLab() {
                 <div className="flex flex-wrap gap-2">
                   {classification.matched_patterns.map((pattern, i) => (
                     <span key={i} className="badge badge-info">{pattern}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* OCR Warning */}
+            {classification.needs_ocr && (
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                <p className="text-sm text-yellow-800">
+                  <strong>OCR Required:</strong> This document appears to be a scanned PDF with insufficient text
+                  ({classification.text_length} characters). OCR processing is needed for extraction.
+                </p>
+              </div>
+            )}
+
+            {/* All Scores (debug view) */}
+            {classification.all_scores && (
+              <div className="mt-4">
+                <p className="text-sm text-gray-500 mb-2">All Extractor Scores</p>
+                <div className="flex flex-wrap gap-2">
+                  {classification.all_scores.map((s, i) => (
+                    <span key={i} className={`px-2 py-1 rounded text-xs ${
+                      s.score >= 60 ? 'bg-green-100 text-green-800' :
+                      s.score >= 30 ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {s.source}: {s.score}%
+                    </span>
                   ))}
                 </div>
               </div>
