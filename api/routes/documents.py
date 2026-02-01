@@ -92,12 +92,13 @@ class DocumentStatsResponse(BaseModel):
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(..., description="PDF document to upload"),
-    auction_type_id: int = Form(..., description="Auction type ID"),
+    auction_type_id: Optional[int] = Form(None, description="Auction type ID (optional, auto-detect if not provided)"),
     dataset_split: str = Form("train", description="Dataset split: train or test"),
     uploaded_by: Optional[str] = Form(None, description="Uploader identifier"),
     auto_extract: bool = Form(True, description="Automatically run extraction after upload"),
     source: str = Form("upload", description="Source: upload, email, batch, test_lab"),
     is_test: bool = Form(False, description="Mark as test document (blocks export)"),
+    auto_classify: bool = Form(True, description="Auto-detect auction type from document"),
 ):
     """
     Upload a document for extraction and training.
@@ -106,6 +107,8 @@ async def upload_document(
     Duplicate detection is performed using SHA256 hash.
 
     Parameters:
+    - auction_type_id: Optional. If not provided, document will be auto-classified.
+    - auto_classify: If true (default), auto-detect auction type from document content.
     - source: upload (manual), email (ingestion), batch (bulk), test_lab (sandbox)
     - is_test: If true, document cannot be exported to Central Dispatch
 
@@ -115,10 +118,12 @@ async def upload_document(
     """
     from api.models import ExtractionRunRepository
 
-    # Validate auction type
-    auction_type = AuctionTypeRepository.get_by_id(auction_type_id)
-    if not auction_type:
-        raise HTTPException(status_code=400, detail="Invalid auction_type_id")
+    # We'll validate auction_type after classification if needed
+    auction_type = None
+    if auction_type_id:
+        auction_type = AuctionTypeRepository.get_by_id(auction_type_id)
+        if not auction_type:
+            raise HTTPException(status_code=400, detail="Invalid auction_type_id")
 
     # Validate dataset split
     if dataset_split not in ("train", "test"):
@@ -147,7 +152,8 @@ async def upload_document(
     # Check for duplicate
     existing = DocumentRepository.get_by_sha256(sha256)
     if existing:
-        # For duplicates, still return run info if exists
+        # For duplicates, get the existing auction type and run info
+        existing_auction_type = AuctionTypeRepository.get_by_id(existing.auction_type_id)
         from api.database import get_connection
         with get_connection() as conn:
             run_row = conn.execute(
@@ -155,14 +161,41 @@ async def upload_document(
                 (existing.id,)
             ).fetchone()
 
+        # If auto_extract is enabled and no successful run exists, create a new extraction run
+        new_run_id = None
+        new_run_status = None
+        if auto_extract:
+            # Check if we should re-extract (no run, or last run failed)
+            should_reextract = not run_row or run_row["status"] in ("failed", "manual_required")
+            if should_reextract:
+                from api.models import ExtractionRunRepository
+                new_run_id = ExtractionRunRepository.create(
+                    document_id=existing.id,
+                    auction_type_id=existing.auction_type_id,
+                    extractor_kind="rule",
+                )
+                # Run extraction
+                try:
+                    from api.routes.extractions import run_extraction
+                    run_extraction(new_run_id, existing.id, existing.auction_type_id, "rule", None)
+                    run = ExtractionRunRepository.get_by_id(new_run_id)
+                    new_run_status = run.status if run else "failed"
+                except Exception as e:
+                    ExtractionRunRepository.update(
+                        new_run_id,
+                        status="failed",
+                        error_message=str(e),
+                    )
+                    new_run_status = "failed"
+
         return DocumentUploadResponse(
             document=DocumentResponse(
                 **existing.__dict__,
-                auction_type_code=auction_type.code,
+                auction_type_code=existing_auction_type.code if existing_auction_type else None,
             ),
             is_duplicate=True,
-            run_id=run_row["id"] if run_row else None,
-            run_status=run_row["status"] if run_row else None,
+            run_id=new_run_id or (run_row["id"] if run_row else None),
+            run_status=new_run_status or (run_row["status"] if run_row else None),
         )
 
     # Validate PDF structure BEFORE saving (P0 requirement)
@@ -202,6 +235,37 @@ async def upload_document(
     text_length = len(raw_text) if raw_text else 0
     needs_ocr = text_length < 100
 
+    # Auto-classify document if auction_type not provided
+    detected_source = None
+    classification_score = None
+    if auto_classify and not auction_type_id and raw_text and text_length >= 100:
+        try:
+            from extractors import ExtractorManager
+            manager = ExtractorManager()
+            classification = manager.classify(str(file_path))
+            if classification:
+                detected_source = classification.source.value
+                classification_score = round(classification.score * 100, 1)
+                # Map detected source to auction type
+                detected_type = AuctionTypeRepository.get_by_code(detected_source.upper())
+                if detected_type:
+                    auction_type_id = detected_type.id
+                    auction_type = detected_type
+        except Exception as e:
+            # Classification failed, continue without it
+            pass
+
+    # If still no auction type, use "OTHER" as fallback
+    if not auction_type_id:
+        other_type = AuctionTypeRepository.get_by_code("OTHER")
+        if other_type:
+            auction_type_id = other_type.id
+            auction_type = other_type
+        else:
+            # Create "OTHER" if doesn't exist
+            auction_type_id = 4  # Default to ID 4
+            auction_type = AuctionTypeRepository.get_by_id(4)
+
     # Create document record with all fields
     doc_id = DocumentRepository.create(
         auction_type_id=auction_type_id,
@@ -222,8 +286,7 @@ async def upload_document(
     # Auto-create extraction run
     run_id = None
     run_status = None
-    detected_source = None
-    classification_score = None
+    # Keep detected_source and classification_score from earlier auto-classification
 
     if auto_extract:
         # Create extraction run
@@ -242,13 +305,15 @@ async def upload_document(
             )
             run_status = "manual_required"
         else:
-            # Run classification first
+            # Run classification if not already done
             try:
-                from extractors import ExtractorManager
-                manager = ExtractorManager()
-                classification = manager.classify(str(file_path))
-                detected_source = classification.source.value
-                classification_score = round(classification.score * 100, 1)
+                if not detected_source:
+                    from extractors import ExtractorManager
+                    manager = ExtractorManager()
+                    classification = manager.classify(str(file_path))
+                    if classification:
+                        detected_source = classification.source.value
+                        classification_score = round(classification.score * 100, 1)
 
                 # Run extraction
                 from api.routes.extractions import run_extraction
@@ -269,7 +334,7 @@ async def upload_document(
     return DocumentUploadResponse(
         document=DocumentResponse(
             **doc.__dict__,
-            auction_type_code=auction_type.code,
+            auction_type_code=auction_type.code if auction_type else None,
         ),
         is_duplicate=False,
         raw_text_preview=raw_text[:500] if raw_text else None,

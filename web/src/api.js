@@ -134,8 +134,12 @@ export const api = {
   uploadDocument: async (file, auctionTypeId, datasetSplit = 'train') => {
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('auction_type_id', auctionTypeId)
+    // Only add auction_type_id if provided (null means auto-detect)
+    if (auctionTypeId !== null && auctionTypeId !== undefined) {
+      formData.append('auction_type_id', auctionTypeId)
+    }
     formData.append('dataset_split', datasetSplit)
+    formData.append('auto_classify', 'true')  // Enable auto-classification
     return request('/documents/upload', {
       method: 'POST',
       body: formData,

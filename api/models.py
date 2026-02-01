@@ -890,10 +890,18 @@ class ExtractionRunRepository:
         if not kwargs:
             return False
 
+        # Custom JSON serializer for datetime objects
+        def json_serializer(obj):
+            if hasattr(obj, 'isoformat'):
+                return obj.isoformat()
+            elif hasattr(obj, '__str__'):
+                return str(obj)
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
         if "outputs_json" in kwargs and isinstance(kwargs["outputs_json"], dict):
-            kwargs["outputs_json"] = json.dumps(kwargs["outputs_json"])
+            kwargs["outputs_json"] = json.dumps(kwargs["outputs_json"], default=json_serializer)
         if "errors_json" in kwargs and isinstance(kwargs["errors_json"], list):
-            kwargs["errors_json"] = json.dumps(kwargs["errors_json"])
+            kwargs["errors_json"] = json.dumps(kwargs["errors_json"], default=json_serializer)
 
         set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
         values = list(kwargs.values()) + [id]

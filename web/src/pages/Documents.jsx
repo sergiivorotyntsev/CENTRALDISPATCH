@@ -20,7 +20,8 @@ function Documents() {
   const [showUpload, setShowUpload] = useState(false)
   const [uploadFile, setUploadFile] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const [selectedAuctionType, setSelectedAuctionType] = useState('')
+  const [selectedAuctionType, setSelectedAuctionType] = useState('auto') // Default to auto-detect
+  const [uploadResult, setUploadResult] = useState(null)
 
   // Fetch documents
   const fetchDocuments = useCallback(async () => {
@@ -50,9 +51,7 @@ function Documents() {
       try {
         const result = await api.listAuctionTypes()
         setAuctionTypes(result.items || [])
-        if (result.items?.length > 0) {
-          setSelectedAuctionType(result.items[0].id.toString())
-        }
+        // Keep 'auto' as default, don't auto-select first type
       } catch (err) {
         console.error('Failed to fetch auction types:', err)
       }
@@ -66,28 +65,66 @@ function Documents() {
 
   // Handle upload
   async function handleUpload() {
-    if (!uploadFile || !selectedAuctionType) return
+    if (!uploadFile) return
 
     setUploading(true)
+    setUploadResult(null)
     try {
-      await api.uploadDocument(uploadFile, parseInt(selectedAuctionType), 'train')
+      // If auto-detect, pass null for auction_type_id
+      const auctionTypeId = selectedAuctionType === 'auto' ? null : parseInt(selectedAuctionType)
+      const result = await api.uploadDocument(uploadFile, auctionTypeId, 'train')
+
+      // Show upload result with classification info
+      setUploadResult({
+        success: true,
+        document: result.document,
+        detectedSource: result.detected_source,
+        classificationScore: result.classification_score,
+        isDuplicate: result.is_duplicate,
+        needsOcr: result.needs_ocr,
+        runStatus: result.run_status,
+      })
+
       setUploadFile(null)
-      setShowUpload(false)
       fetchDocuments()
     } catch (err) {
       setError(`Upload failed: ${err.message}`)
+      setUploadResult({ success: false, error: err.message })
     } finally {
       setUploading(false)
     }
   }
 
+  // Extraction state
+  const [extractingDocId, setExtractingDocId] = useState(null)
+  const [extractionResult, setExtractionResult] = useState(null)
+
   // Run extraction on document
   async function handleRunExtraction(docId) {
+    setExtractingDocId(docId)
+    setExtractionResult(null)
     try {
-      await api.runExtraction(docId)
+      const result = await api.runExtraction(docId)
+      setExtractionResult({
+        success: true,
+        docId,
+        runId: result.id,
+        status: result.status,
+        message: result.status === 'needs_review'
+          ? 'Extraction complete! Review the results in Runs & Logs.'
+          : result.status === 'failed'
+          ? 'Extraction failed. Check the error in Runs & Logs.'
+          : 'Extraction started.'
+      })
       fetchDocuments() // Refresh to show updated status
     } catch (err) {
-      setError(`Extraction failed: ${err.message}`)
+      setExtractionResult({
+        success: false,
+        docId,
+        message: `Extraction failed: ${err.message}`
+      })
+    } finally {
+      setExtractingDocId(null)
     }
   }
 
@@ -118,6 +155,31 @@ function Documents() {
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
           <strong>Error:</strong> {error}
           <button onClick={() => setError(null)} className="ml-4 text-sm underline">Dismiss</button>
+        </div>
+      )}
+
+      {/* Extraction Result Notification */}
+      {extractionResult && (
+        <div className={`mb-6 p-4 rounded-lg ${
+          extractionResult.success
+            ? 'bg-green-50 border border-green-200 text-green-700'
+            : 'bg-red-50 border border-red-200 text-red-700'
+        }`}>
+          <strong>{extractionResult.success ? 'Success:' : 'Error:'}</strong> {extractionResult.message}
+          {extractionResult.success && extractionResult.runId && (
+            <a
+              href={`/runs?run=${extractionResult.runId}`}
+              className="ml-4 text-sm underline"
+            >
+              View Results →
+            </a>
+          )}
+          <button
+            onClick={() => setExtractionResult(null)}
+            className="ml-4 text-sm underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -179,7 +241,7 @@ function Documents() {
       {/* Upload Modal */}
       {showUpload && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4">
             <h2 className="text-xl font-bold mb-4">Upload Document</h2>
 
             <div className="mb-4">
@@ -189,10 +251,16 @@ function Documents() {
                 onChange={(e) => setSelectedAuctionType(e.target.value)}
                 className="form-select w-full"
               >
+                <option value="auto">🔍 Auto-detect (Recommended)</option>
                 {auctionTypes.map((at) => (
                   <option key={at.id} value={at.id}>{at.name}</option>
                 ))}
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {selectedAuctionType === 'auto'
+                  ? 'System will automatically detect the auction type from document content'
+                  : 'Manual override - use when auto-detection fails'}
+              </p>
             </div>
 
             <div className="mb-4">
@@ -200,7 +268,10 @@ function Documents() {
               <input
                 type="file"
                 accept=".pdf"
-                onChange={(e) => setUploadFile(e.target.files[0])}
+                onChange={(e) => {
+                  setUploadFile(e.target.files[0])
+                  setUploadResult(null)
+                }}
                 className="form-input w-full"
               />
               {uploadFile && (
@@ -208,24 +279,55 @@ function Documents() {
               )}
             </div>
 
+            {/* Upload Result */}
+            {uploadResult && (
+              <div className={`mb-4 p-3 rounded-lg ${uploadResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                {uploadResult.success ? (
+                  <div>
+                    <p className="font-medium text-green-800">
+                      {uploadResult.isDuplicate ? '⚠️ Duplicate detected' : '✅ Upload successful!'}
+                    </p>
+                    {uploadResult.detectedSource && (
+                      <p className="text-sm text-green-700 mt-1">
+                        Detected: <strong>{uploadResult.detectedSource}</strong>
+                        {uploadResult.classificationScore && ` (${uploadResult.classificationScore}% confidence)`}
+                      </p>
+                    )}
+                    <p className="text-sm text-green-700">
+                      Status: <span className={`px-2 py-0.5 rounded text-xs ${
+                        uploadResult.runStatus === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+                        uploadResult.runStatus === 'failed' ? 'bg-red-100 text-red-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>{uploadResult.runStatus || 'pending'}</span>
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-red-800">❌ {uploadResult.error}</p>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {
                   setShowUpload(false)
                   setUploadFile(null)
+                  setUploadResult(null)
                 }}
                 className="btn btn-secondary"
                 disabled={uploading}
               >
-                Cancel
+                {uploadResult?.success ? 'Close' : 'Cancel'}
               </button>
-              <button
-                onClick={handleUpload}
-                className="btn btn-primary"
-                disabled={!uploadFile || !selectedAuctionType || uploading}
-              >
-                {uploading ? 'Uploading...' : 'Upload'}
-              </button>
+              {!uploadResult?.success && (
+                <button
+                  onClick={handleUpload}
+                  className="btn btn-primary"
+                  disabled={!uploadFile || uploading}
+                >
+                  {uploading ? 'Uploading...' : 'Upload'}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -302,12 +404,24 @@ function Documents() {
                     {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '-'}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end space-x-2">
+                    <div className="flex justify-end items-center space-x-2">
+                      {extractionResult?.docId === doc.id && (
+                        <span className={`text-xs px-2 py-1 rounded ${
+                          extractionResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {extractionResult.success ? '✓' : '✗'}
+                        </span>
+                      )}
                       <button
                         onClick={() => handleRunExtraction(doc.id)}
-                        className="text-sm text-blue-600 hover:text-blue-800"
+                        disabled={extractingDocId === doc.id}
+                        className={`text-sm ${
+                          extractingDocId === doc.id
+                            ? 'text-gray-400 cursor-not-allowed'
+                            : 'text-blue-600 hover:text-blue-800'
+                        }`}
                       >
-                        Extract
+                        {extractingDocId === doc.id ? 'Extracting...' : 'Extract'}
                       </button>
                       <button
                         onClick={() => handleDelete(doc.id)}
