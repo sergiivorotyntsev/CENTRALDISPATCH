@@ -4,6 +4,7 @@ import Settings from './pages/Settings'
 import TestLab from './pages/TestLab'
 import Runs from './pages/Runs'
 import Documents from './pages/Documents'
+import Review from './pages/Review'
 
 function App() {
   const navItems = [
@@ -54,6 +55,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/runs" element={<Runs />} />
+          <Route path="/review/:runId" element={<Review />} />
           <Route path="/test-lab" element={<TestLab />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

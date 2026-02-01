@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api'
 
 function Runs() {
@@ -146,6 +147,8 @@ function Runs() {
                 className="form-select"
               >
                 <option value="">All</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="approved">Approved</option>
                 <option value="ok">OK</option>
                 <option value="failed">Failed</option>
                 <option value="error">Error</option>
@@ -364,14 +367,25 @@ function Runs() {
                   </div>
                 )}
 
-                {(selectedRun.status === 'failed' || selectedRun.status === 'error') && (
-                  <button
-                    onClick={() => handleRetryRun(selectedRun.id)}
-                    className="btn btn-sm btn-primary w-full"
-                  >
-                    Retry Run
-                  </button>
-                )}
+                {/* Action Buttons */}
+                <div className="flex space-x-2">
+                  {selectedRun.status === 'needs_review' && (
+                    <Link
+                      to={`/review/${selectedRun.id}`}
+                      className="btn btn-sm btn-primary flex-1 text-center"
+                    >
+                      Review
+                    </Link>
+                  )}
+                  {(selectedRun.status === 'failed' || selectedRun.status === 'error') && (
+                    <button
+                      onClick={() => handleRetryRun(selectedRun.id)}
+                      className="btn btn-sm btn-secondary flex-1"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
 
                 {/* Logs */}
                 <div className="border-t border-gray-200 pt-4">
@@ -423,8 +437,11 @@ function StatusBadge({ status }) {
     ok: 'badge-success',
     completed: 'badge-success',
     success: 'badge-success',
+    approved: 'badge-success',
+    exported: 'badge-success',
     failed: 'badge-error',
     error: 'badge-error',
+    needs_review: 'badge-warning',
     pending: 'badge-warning',
     processing: 'badge-info',
   }
