@@ -122,6 +122,49 @@ export const api = {
     const query = new URLSearchParams(params).toString()
     return request(`/runs/logs/search${query ? `?${query}` : ''}`)
   },
+
+  // Documents
+  listDocuments: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/documents/${query ? `?${query}` : ''}`)
+  },
+  getDocument: (id) => request(`/documents/${id}`),
+  getDocumentText: (id) => request(`/documents/${id}/text`),
+  deleteDocument: (id) => request(`/documents/${id}`, { method: 'DELETE' }),
+  uploadDocument: async (file, auctionTypeId, datasetSplit = 'train') => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('auction_type_id', auctionTypeId)
+    formData.append('dataset_split', datasetSplit)
+    return request('/documents/upload', {
+      method: 'POST',
+      body: formData,
+    })
+  },
+  getDocumentStats: () => request('/documents/stats/by-auction-type'),
+
+  // Extractions
+  listExtractions: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/extractions/${query ? `?${query}` : ''}`)
+  },
+  getExtraction: (id) => request(`/extractions/${id}`),
+  runExtraction: (documentId, forceMl = false) => request('/extractions/run', {
+    method: 'POST',
+    body: JSON.stringify({ document_id: documentId, force_ml: forceMl }),
+  }),
+  listNeedsReview: (limit = 50) => request(`/extractions/needs-review?limit=${limit}`),
+
+  // Reviews
+  getReviewItems: (runId) => request(`/reviews/${runId}/items`),
+  submitReview: (data) => request('/reviews/submit', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+
+  // Auction Types
+  listAuctionTypes: () => request('/auction-types/'),
+  getAuctionType: (id) => request(`/auction-types/${id}`),
 }
 
 export default api

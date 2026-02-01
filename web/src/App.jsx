@@ -3,13 +3,15 @@ import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import TestLab from './pages/TestLab'
 import Runs from './pages/Runs'
+import Documents from './pages/Documents'
 
 function App() {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: DashboardIcon },
-    { path: '/settings', label: 'Settings', icon: SettingsIcon },
-    { path: '/test-lab', label: 'Test Lab', icon: TestLabIcon },
+    { path: '/documents', label: 'Documents', icon: DocumentsIcon },
     { path: '/runs', label: 'Runs & Logs', icon: RunsIcon },
+    { path: '/test-lab', label: 'Test Lab', icon: TestLabIcon },
+    { path: '/settings', label: 'Settings', icon: SettingsIcon },
   ]
 
   return (
@@ -50,9 +52,10 @@ function App() {
       <div className="flex-1 overflow-auto">
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/test-lab" element={<TestLab />} />
+          <Route path="/documents" element={<Documents />} />
           <Route path="/runs" element={<Runs />} />
+          <Route path="/test-lab" element={<TestLab />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </div>
     </div>
@@ -89,6 +92,14 @@ function RunsIcon({ className }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+    </svg>
+  )
+}
+
+function DocumentsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
     </svg>
   )
 }
