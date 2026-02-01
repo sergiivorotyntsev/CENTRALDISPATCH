@@ -8,6 +8,10 @@ credentials.json
 token.json
 *.pickle
 
+# Auth secrets (NEVER commit!)
+config/.jwt_secret
+*.jwt_secret
+
 # Python
 __pycache__/
 *.py[cod]
