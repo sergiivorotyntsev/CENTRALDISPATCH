@@ -13,6 +13,10 @@ function Review() {
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
 
+  // PDF viewer state
+  const [showPdf, setShowPdf] = useState(true)
+  const [pdfUrl, setPdfUrl] = useState(null)
+
   // Track changes
   const [corrections, setCorrections] = useState({})
 
@@ -25,6 +29,11 @@ function Review() {
     try {
       const runData = await api.getExtraction(runId)
       setRun(runData.run)
+
+      // Set PDF URL for viewer if document_id is available
+      if (runData.run?.document_id) {
+        setPdfUrl(`/api/documents/${runData.run.document_id}/file`)
+      }
 
       const itemsData = await api.getReviewItems(runId)
       setItems(itemsData.items || [])
@@ -127,6 +136,14 @@ function Review() {
           </p>
         </div>
         <div className="flex space-x-3">
+          {pdfUrl && (
+            <button
+              onClick={() => setShowPdf(!showPdf)}
+              className={`btn ${showPdf ? 'btn-primary' : 'btn-secondary'}`}
+            >
+              {showPdf ? 'Hide PDF' : 'Show PDF'}
+            </button>
+          )}
           <button
             onClick={() => navigate('/runs')}
             className="btn btn-secondary"
@@ -184,119 +201,152 @@ function Review() {
         </div>
       </div>
 
-      {/* Review Items */}
-      {items.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
-          No review items found for this run.
-        </div>
-      ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b border-gray-200">
-            <h2 className="font-medium text-gray-900">Extracted Fields ({items.length})</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Review each field and correct any errors. Mark as correct or edit the value.
-            </p>
+      {/* Split Layout: PDF Viewer + Review Items */}
+      <div className={`flex gap-6 ${showPdf && pdfUrl ? '' : 'flex-col'}`}>
+        {/* PDF Viewer Panel */}
+        {showPdf && pdfUrl && (
+          <div className="w-1/2 flex-shrink-0">
+            <div className="bg-white rounded-lg shadow overflow-hidden sticky top-6">
+              <div className="p-3 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+                <h2 className="font-medium text-gray-900 text-sm">Original Document</h2>
+                <a
+                  href={pdfUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary-600 hover:text-primary-800"
+                >
+                  Open in new tab
+                </a>
+              </div>
+              <div className="h-[calc(100vh-280px)]">
+                <iframe
+                  src={pdfUrl}
+                  className="w-full h-full border-0"
+                  title="Document PDF"
+                />
+              </div>
+            </div>
           </div>
+        )}
 
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Predicted</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Corrected</th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Correct?</th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Export</th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {items.map((item) => (
-                <tr key={item.id} className={corrections[item.id]?.is_match_ok ? 'bg-green-50' : ''}>
-                  <td className="px-6 py-4">
-                    <div>
-                      <p className="font-medium text-gray-900">{item.source_key}</p>
-                      {item.cd_key && (
-                        <p className="text-xs text-gray-500">CD: {item.cd_key}</p>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="font-mono text-sm">{item.predicted_value || '-'}</span>
-                    {item.confidence && (
-                      <span className="ml-2 text-xs text-gray-400">
-                        ({(item.confidence * 100).toFixed(0)}%)
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    <input
-                      type="text"
-                      value={corrections[item.id]?.corrected_value || ''}
-                      onChange={(e) => updateCorrection(item.id, 'corrected_value', e.target.value)}
-                      className="form-input w-full text-sm"
-                      placeholder="Enter corrected value"
-                    />
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={corrections[item.id]?.is_match_ok || false}
-                      onChange={(e) => updateCorrection(item.id, 'is_match_ok', e.target.checked)}
-                      className="h-4 w-4 text-primary-600 rounded"
-                    />
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={corrections[item.id]?.export_field !== false}
-                      onChange={(e) => updateCorrection(item.id, 'export_field', e.target.checked)}
-                      className="h-4 w-4 text-blue-600 rounded"
-                    />
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <button
-                      onClick={() => markCorrect(item.id, item.predicted_value)}
-                      className="text-sm text-green-600 hover:text-green-800"
-                    >
-                      Mark OK
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {/* Review Items Panel */}
+        <div className={showPdf && pdfUrl ? 'w-1/2' : 'w-full'}>
+          {items.length === 0 ? (
+            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+              No review items found for this run.
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="font-medium text-gray-900">Extracted Fields ({items.length})</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Review each field and correct any errors. Mark as correct or edit the value.
+                </p>
+              </div>
 
-      {/* Quick Actions */}
-      <div className="mt-6 flex justify-between items-center">
-        <div className="text-sm text-gray-500">
-          {items.length} fields | {Object.values(corrections).filter(c => c.is_match_ok).length} marked correct
-        </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={() => {
-              const updated = {}
-              items.forEach(item => {
-                updated[item.id] = {
-                  ...corrections[item.id],
-                  is_match_ok: true,
-                  corrected_value: item.predicted_value || '',
-                }
-              })
-              setCorrections(updated)
-            }}
-            className="btn btn-secondary text-sm"
-          >
-            Mark All Correct
-          </button>
-          <button
-            onClick={handleSubmit}
-            className="btn btn-primary"
-            disabled={saving || items.length === 0}
-          >
-            {saving ? 'Submitting...' : 'Submit Review'}
-          </button>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Predicted</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Corrected</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">OK?</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Export</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {items.map((item) => (
+                      <tr key={item.id} className={corrections[item.id]?.is_match_ok ? 'bg-green-50' : ''}>
+                        <td className="px-4 py-3">
+                          <div>
+                            <p className="font-medium text-gray-900 text-sm">{item.source_key}</p>
+                            {item.cd_key && (
+                              <p className="text-xs text-gray-500">CD: {item.cd_key}</p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="font-mono text-xs break-all">{item.predicted_value || '-'}</span>
+                          {item.confidence && (
+                            <span className="ml-1 text-xs text-gray-400">
+                              ({(item.confidence * 100).toFixed(0)}%)
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <input
+                            type="text"
+                            value={corrections[item.id]?.corrected_value || ''}
+                            onChange={(e) => updateCorrection(item.id, 'corrected_value', e.target.value)}
+                            className="form-input w-full text-xs"
+                            placeholder="Enter corrected value"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={corrections[item.id]?.is_match_ok || false}
+                            onChange={(e) => updateCorrection(item.id, 'is_match_ok', e.target.checked)}
+                            className="h-4 w-4 text-primary-600 rounded"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={corrections[item.id]?.export_field !== false}
+                            onChange={(e) => updateCorrection(item.id, 'export_field', e.target.checked)}
+                            className="h-4 w-4 text-blue-600 rounded"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => markCorrect(item.id, item.predicted_value)}
+                            className="text-xs text-green-600 hover:text-green-800"
+                          >
+                            Mark OK
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Quick Actions */}
+          <div className="mt-6 flex justify-between items-center">
+            <div className="text-sm text-gray-500">
+              {items.length} fields | {Object.values(corrections).filter(c => c.is_match_ok).length} marked correct
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  const updated = {}
+                  items.forEach(item => {
+                    updated[item.id] = {
+                      ...corrections[item.id],
+                      is_match_ok: true,
+                      corrected_value: item.predicted_value || '',
+                    }
+                  })
+                  setCorrections(updated)
+                }}
+                className="btn btn-secondary text-sm"
+              >
+                Mark All Correct
+              </button>
+              <button
+                onClick={handleSubmit}
+                className="btn btn-primary"
+                disabled={saving || items.length === 0}
+              >
+                {saving ? 'Submitting...' : 'Submit Review'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

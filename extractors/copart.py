@@ -50,11 +50,15 @@ class CopartExtractor(BaseExtractor):
         if member_match:
             invoice.buyer_id = member_match.group(1)
 
-        # Extract buyer name (usually appears after SOLD TO or BUYER:)
+        # Extract buyer name (usually appears after MEMBER number on next line)
         buyer_name_patterns = [
+            # Pattern 1: Name on line after MEMBER number (most common in Copart)
+            r'MEMBER[:\s]*\d+\s*\n([A-Z][A-Z\s\-\.]+(?:INC|LLC|CORP|CO)?)\s*\n',
+            # Pattern 2: SOLD TO format
             r'SOLD\s*TO[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
+            # Pattern 3: BUYER format
             r'BUYER[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
-            r'MEMBER\s*:\s*\d+\s*\n\s*([A-Z][A-Za-z\s\-\.]+?)(?:\n|\d)',
+            # Pattern 4: Bill To format
             r'Bill\s*To[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n)',
         ]
         for pattern in buyer_name_patterns:
@@ -110,19 +114,22 @@ class CopartExtractor(BaseExtractor):
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
         # Try multiple patterns for address extraction
+        # Format in document: "PHYSICAL ADDRESS OF LOT:" then "5701 WHITESIDE RD" then "SANDSTON VA 23150"
         patterns = [
-            # Pattern 1: Standard Copart format
+            # Pattern 1: Street on one line, city/state/zip on next line (common format)
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*\n?\s*([^\n]+)\n\s*([A-Za-z]+)\s+([A-Z]{2})\s+(\d{5})',
+            # Pattern 2: All on same lines with colon
             r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]+([^\n]+)\n\s*([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
-            # Pattern 2: Location/Address line
+            # Pattern 3: Location/Address line
             r'(?:LOCATION|LOT\s*ADDRESS)[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-            # Pattern 3: Pick-?up location
+            # Pattern 4: Pick-?up location
             r'(?:PICK[\-\s]?UP|PICKUP)\s*(?:LOCATION|ADDRESS)?[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
         ]
 
         street, city, state, postal = None, None, None, None
 
         for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 groups = match.groups()
                 street = groups[0].strip()
@@ -130,6 +137,23 @@ class CopartExtractor(BaseExtractor):
                 state = groups[2].upper()
                 postal = groups[3]
                 break
+
+        # If standard patterns didn't work, try a more flexible approach
+        if not (city and state):
+            # Look for "PHYSICAL ADDRESS OF LOT" followed by any address-like text
+            alt_match = re.search(
+                r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*\n?\s*'
+                r'(\d+[^\n]+?)\s*\n\s*'  # Street with number
+                r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+'  # City (one or two words)
+                r'([A-Z]{2})\s+'  # State
+                r'(\d{5})',  # ZIP
+                text, re.IGNORECASE | re.MULTILINE
+            )
+            if alt_match:
+                street = alt_match.group(1).strip()
+                city = alt_match.group(2).strip()
+                state = alt_match.group(3).upper()
+                postal = alt_match.group(4)
 
         if not (city and state):
             return None

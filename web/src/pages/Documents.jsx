@@ -416,13 +416,13 @@ function Documents() {
                   Document
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Auction Type
+                  Auction
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Extraction Status
+                  Order ID
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Size
+                  Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Created
@@ -435,6 +435,10 @@ function Documents() {
             <tbody className="bg-white divide-y divide-gray-200">
               {documents.map((doc) => {
                 const extraction = docExtractions[doc.id]
+                // Get auction_source and order_id from extraction outputs
+                const outputs = extraction?.outputs || {}
+                const auctionSource = outputs.auction_source || doc.auction_type_code || 'Unknown'
+                const orderId = outputs.order_id || '-'
                 return (
                   <tr
                     key={doc.id}
@@ -448,8 +452,18 @@ function Documents() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">
-                        {doc.auction_type_code || 'Unknown'}
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${
+                        auctionSource === 'COPART' ? 'bg-blue-100 text-blue-800' :
+                        auctionSource === 'IAA' ? 'bg-purple-100 text-purple-800' :
+                        auctionSource === 'MANHEIM' ? 'bg-green-100 text-green-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {auctionSource}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="font-mono text-sm text-gray-700">
+                        {orderId}
                       </span>
                     </td>
                     <td className="px-6 py-4">
@@ -478,9 +492,6 @@ function Documents() {
                           Not Processed
                         </span>
                       )}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : '-'}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500">
                       {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '-'}

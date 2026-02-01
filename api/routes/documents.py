@@ -10,6 +10,7 @@ import tempfile
 from typing import Optional, List
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from api.models import (
@@ -433,6 +434,31 @@ async def get_document_text(id: int):
         "raw_text": doc.raw_text,
         "page_count": doc.page_count,
     }
+
+
+@router.get("/{id}/file")
+async def get_document_file(id: int):
+    """
+    Get the PDF file for viewing/downloading.
+
+    Returns the original PDF document for display in a PDF viewer.
+    """
+    doc = DocumentRepository.get_by_id(id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="Document file path not found")
+
+    if not os.path.exists(doc.file_path):
+        raise HTTPException(status_code=404, detail="Document file not found on disk")
+
+    return FileResponse(
+        doc.file_path,
+        media_type="application/pdf",
+        filename=doc.filename,
+        headers={"Content-Disposition": f"inline; filename=\"{doc.filename}\""}
+    )
 
 
 @router.get("/stats/by-auction-type", response_model=List[DocumentStatsResponse])

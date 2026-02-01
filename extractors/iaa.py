@@ -6,6 +6,33 @@ from datetime import datetime
 from extractors.base import BaseExtractor
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
 
+# US State name to abbreviation mapping
+STATE_ABBREVS = {
+    'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
+    'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'florida': 'FL', 'georgia': 'GA',
+    'hawaii': 'HI', 'idaho': 'ID', 'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA',
+    'kansas': 'KS', 'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+    'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS', 'missouri': 'MO',
+    'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+    'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH',
+    'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+    'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT', 'vermont': 'VT',
+    'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV', 'wisconsin': 'WI', 'wyoming': 'WY',
+    'district of columbia': 'DC',
+}
+
+
+def normalize_state(state_str: str) -> str:
+    """Convert state name to two-letter abbreviation."""
+    if not state_str:
+        return ""
+    state_str = state_str.strip()
+    # Already an abbreviation
+    if len(state_str) == 2 and state_str.upper().isalpha():
+        return state_str.upper()
+    # Look up full name
+    return STATE_ABBREVS.get(state_str.lower(), state_str.upper()[:2])
+
 
 class IAAExtractor(BaseExtractor):
     """Extractor for IAA Buyer Receipt documents."""
@@ -120,49 +147,83 @@ class IAAExtractor(BaseExtractor):
         return invoice
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
+        # IAA format example:
+        # Pick-Up Location:
+        # Flint
+        # 3088 S. Dye Rd
+        # Flint Michigan 48507
+        # (810) 720-0981
+
+        name, street, city, state, postal, phone = None, None, None, None, None, None
+
         # Try multiple patterns for pickup location
         patterns = [
-            # Pattern 1: Standard IAA format
-            r'Pick-Up Location[:\s]*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
-            # Pattern 2: Alternative format
-            r'(?:PICKUP|Pick[\-\s]?Up)\s*(?:Location|Address)?[:\s]*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
-            # Pattern 3: Location only
-            r'Location[:\s]+([A-Za-z\s\-]+)\n([^\n]+)\n([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
+            # Pattern 1: With full state name (e.g., "Flint Michigan 48507")
+            r'Pick-Up Location[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{5})',
+            # Pattern 2: Standard format with state abbreviation
+            r'Pick-Up Location[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
+            # Pattern 3: Alternative format
+            r'(?:PICKUP|Pick[\-\s]?Up)\s*(?:Location|Address)?[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+),?\s*([A-Za-z]{2,})\s+(\d{5})',
         ]
 
-        name, street, city, state, postal = None, None, None, None, None
-
         for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
             if match:
                 groups = match.groups()
                 name = groups[0].strip()
                 street = groups[1].strip()
                 city = groups[2].strip().rstrip(',')
-                state = groups[3].upper()
+                state = normalize_state(groups[3])  # Convert full state name to abbrev
                 postal = groups[4]
                 break
+
+        # If patterns didn't match, try more flexible approach
+        if not (city and state):
+            # Look for "Pick-Up Location:" section
+            pickup_section = re.search(
+                r'Pick-Up Location[:\s]*\n(.+?)(?:\n\n|\nStock|\nInvoice)',
+                text, re.IGNORECASE | re.DOTALL
+            )
+            if pickup_section:
+                lines = [l.strip() for l in pickup_section.group(1).strip().split('\n') if l.strip()]
+                if len(lines) >= 3:
+                    name = lines[0]  # "Flint"
+                    street = lines[1]  # "3088 S. Dye Rd"
+                    # Parse city/state/zip from line 3: "Flint Michigan 48507"
+                    addr_line = lines[2]
+                    addr_match = re.match(r'([A-Za-z\s]+?)\s+([A-Za-z]+)\s+(\d{5})', addr_line)
+                    if addr_match:
+                        city = addr_match.group(1).strip()
+                        state = normalize_state(addr_match.group(2))
+                        postal = addr_match.group(3)
+                    # Check for phone on line 4
+                    if len(lines) >= 4:
+                        phone_match = re.search(r'\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4}', lines[3])
+                        if phone_match:
+                            phone = phone_match.group(0)
 
         if not (city and state):
             return None
 
-        # Extract phone number
-        phone = None
-        phone_patterns = [
-            r'(?:PHONE|TEL|CONTACT|Ph)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(?:Location\s*(?:Phone|Tel))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-            r'(\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})',
-        ]
+        # Extract phone number if not found yet
+        if not phone:
+            phone_patterns = [
+                r'(?:PHONE|TEL|CONTACT|Ph)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
+                r'(?:Location\s*(?:Phone|Tel))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
+                r'(\(\d{3}\)\s*\d{3}[\s\-\.]\d{4})',  # (810) 720-0981 format
+            ]
 
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, text, re.IGNORECASE)
-            if phone_match:
-                phone = phone_match.group(1).strip()
-                # Normalize phone format
-                phone_digits = re.sub(r'\D', '', phone)
-                if len(phone_digits) == 10:
-                    phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
+            for pattern in phone_patterns:
+                phone_match = re.search(pattern, text, re.IGNORECASE)
+                if phone_match:
+                    phone = phone_match.group(1).strip()
                     break
+
+        # Normalize phone format
+        if phone:
+            phone_digits = re.sub(r'\D', '', phone)
+            if len(phone_digits) == 10:
+                phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
 
         # Try to get better location name
         if name and 'IAA' not in name.upper():

@@ -259,6 +259,18 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 
                 extraction_score = result.score
 
+                # Update document's auction_type_id if detected source differs
+                if result.source:
+                    detected_source = result.source.value  # e.g., "COPART", "IAA", "MANHEIM"
+                    if detected_source != auction_type.code:
+                        # Find the matching auction type by code
+                        detected_type = AuctionTypeRepository.get_by_code(detected_source)
+                        if detected_type:
+                            # Update document to use detected auction type
+                            DocumentRepository.update(doc_id, auction_type_id=detected_type.id)
+                            # Also update the extraction run's auction_type_id
+                            auction_type_id = detected_type.id
+
         processing_time_ms = int((time.time() - start_time) * 1000)
 
         # Determine status based on extraction quality
