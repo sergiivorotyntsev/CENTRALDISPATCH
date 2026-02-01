@@ -1,12 +1,13 @@
 """
 Pytest configuration and shared fixtures.
 """
+
 import os
 import sys
 import tempfile
-import pytest
 from pathlib import Path
-from unittest.mock import patch
+
+import pytest
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -33,6 +34,7 @@ def setup_test_environment():
 def app():
     """Create FastAPI test application."""
     from api.main import app
+
     return app
 
 
@@ -40,6 +42,7 @@ def app():
 def client(app):
     """Create test client."""
     from fastapi.testclient import TestClient
+
     return TestClient(app)
 
 
@@ -85,6 +88,7 @@ startxref
 def db_connection():
     """Get database connection for test assertions."""
     from api.models import get_connection
+
     with get_connection() as conn:
         yield conn
 

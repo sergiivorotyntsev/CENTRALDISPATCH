@@ -8,13 +8,13 @@ Usage:
     python tests/fixtures/generate_test_pdfs.py
 """
 
-import os
 from pathlib import Path
 
 # Try reportlab first, then fpdf2
 try:
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
+
     USE_REPORTLAB = True
 except ImportError:
     USE_REPORTLAB = False

@@ -1,17 +1,18 @@
 """Tests for configuration module."""
+
 import os
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from core.config import (
     AppConfig,
-    EmailConfig,
-    ClickUpConfig,
     CentralDispatchConfig,
-    StorageConfig,
+    ClickUpConfig,
     ConfigurationError,
-    load_config_from_env,
+    EmailConfig,
     _mask_secret,
+    load_config_from_env,
 )
 
 

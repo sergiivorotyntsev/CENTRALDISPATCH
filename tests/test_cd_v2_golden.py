@@ -9,25 +9,20 @@ These tests verify that:
 5. READY validation enforces CD V2 requirements
 """
 
-import pytest
 from datetime import date, timedelta
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock
 
 from schemas.sheets_schema_v3 import (
-    RowStatus,
-    ColumnClass,
-    generate_dispatch_id,
-    validate_row_for_ready,
-    apply_all_overrides,
-    get_final_value,
-    get_final_value_with_mapping,
     OVERRIDE_MAPPINGS,
+    RowStatus,
+    apply_all_overrides,
     can_transition_to,
-    get_column_names,
-    get_required_columns,
-    get_base_columns,
+    generate_dispatch_id,
     get_delivery_columns,
+    get_final_value_with_mapping,
     get_release_notes_columns,
+    get_required_columns,
+    validate_row_for_ready,
 )
 
 
@@ -375,7 +370,7 @@ class TestPayloadBuilder:
         # Check top-level structure
         assert payload["externalId"] == "DC-20260130-COPART-ABC12345"
         assert payload["trailerType"] == "OPEN"
-        assert payload["hasInOpVehicle"] == False
+        assert not payload["hasInOpVehicle"]
         assert payload["availableDate"] == "2026-01-30"
         assert payload["expirationDate"] == "2026-02-15"
 
@@ -416,7 +411,7 @@ class TestPayloadBuilder:
         assert vehicle["year"] == 2021
         assert vehicle["make"] == "Honda"
         assert vehicle["model"] == "Civic"
-        assert vehicle["isInoperable"] == False
+        assert not vehicle["isInoperable"]
         assert vehicle["lotNumber"] == "12345678"
 
         # Check marketplaces array
@@ -425,8 +420,8 @@ class TestPayloadBuilder:
 
         marketplace = payload["marketplaces"][0]
         assert marketplace["marketplaceId"] == 12345
-        assert marketplace["digitalOffersEnabled"] == True
-        assert marketplace["searchable"] == True
+        assert marketplace["digitalOffersEnabled"]
+        assert marketplace["searchable"]
 
     def test_override_applied_in_payload(self):
         """Test that overrides are applied in payload."""
@@ -466,10 +461,6 @@ class TestUpsertLogicRules:
             "vehicle_vin": "EXISTINGVIN123456",  # Has value
             "vehicle_make": "",  # Empty
         }
-        new_data = {
-            "vehicle_vin": "NEWVIN1234567890X",  # Should NOT overwrite
-            "vehicle_make": "Honda",  # Should fill
-        }
 
         # Simulate fill-only logic
         is_fill_only = existing_data["row_status"] != RowStatus.NEW.value
@@ -479,22 +470,18 @@ class TestUpsertLogicRules:
         should_update_vin = is_fill_only and not existing_data["vehicle_vin"]
         should_update_make = is_fill_only and not existing_data["vehicle_make"]
 
-        assert should_update_vin == False  # Has value, don't overwrite
-        assert should_update_make == True  # Empty, can fill
+        assert not should_update_vin  # Has value, don't overwrite
+        assert should_update_make  # Empty, can fill
 
     def test_lock_all_concept(self):
         """Test lock_all concept."""
         # When lock_all=TRUE, only SYSTEM/AUDIT columns are updatable
-        existing_data = {
-            "lock_all": "TRUE",
-            "vehicle_vin": "VIN12345",
-            "updated_at": "2026-01-29T10:00:00Z",
-        }
 
         # vehicle_vin is BASE class - should be blocked
         # updated_at is SYSTEM class - should be allowed
 
         from schemas.sheets_schema_v3 import get_system_audit_columns
+
         system_audit = set(get_system_audit_columns())
 
         assert "vehicle_vin" not in system_audit  # BASE, blocked by lock_all

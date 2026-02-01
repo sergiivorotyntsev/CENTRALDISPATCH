@@ -1,5 +1,4 @@
 """Tests for Gate Pass extractor."""
-import pytest
 
 from extractors.gate_pass import GatePassExtractor, GatePassInfo
 
@@ -111,7 +110,9 @@ class TestGatePassExtractor:
             results = GatePassExtractor.extract_from_text(text)
             # Filter out the common word codes
             valid_codes = [r.code for r in results if r.code not in {"CODE", "PASS", "PIN"}]
-            assert len(valid_codes) == 0 or all(len(c) >= 4 for c in valid_codes), f"Failed for: {text}"
+            assert len(valid_codes) == 0 or all(len(c) >= 4 for c in valid_codes), (
+                f"Failed for: {text}"
+            )
 
     def test_case_normalization(self):
         """Test that codes are normalized to uppercase."""
@@ -138,20 +139,13 @@ class TestGatePassInfo:
 
     def test_gate_pass_info_creation(self):
         """Test GatePassInfo creation."""
-        info = GatePassInfo(
-            code="ABC123",
-            raw_match="Gate Pass: ABC123",
-            source_hint="IAA"
-        )
+        info = GatePassInfo(code="ABC123", raw_match="Gate Pass: ABC123", source_hint="IAA")
         assert info.code == "ABC123"
         assert info.raw_match == "Gate Pass: ABC123"
         assert info.source_hint == "IAA"
 
     def test_gate_pass_info_optional_source(self):
         """Test GatePassInfo with no source hint."""
-        info = GatePassInfo(
-            code="XYZ789",
-            raw_match="Code: XYZ789"
-        )
+        info = GatePassInfo(code="XYZ789", raw_match="Code: XYZ789")
         assert info.code == "XYZ789"
         assert info.source_hint is None
