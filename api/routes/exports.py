@@ -276,16 +276,23 @@ def send_to_cd(payload: dict, sandbox: bool = True) -> tuple[bool, dict]:
 async def export_to_cd(
     data: CDExportRequest,
     background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="Force re-export even if already exported"),
 ):
     """
     Export extraction runs to Central Dispatch API V2.
 
     Set dry_run=true to preview payloads without sending.
     Set sandbox=true to use CD sandbox environment.
+    Set force=true to re-export already exported runs (creates new attempt).
+
+    IDEMPOTENCY: By default, already exported runs are skipped.
     """
+    from api.database import get_connection
+
     previews = []
     exported_count = 0
     failed_count = 0
+    skipped_count = 0
 
     for run_id in data.run_ids:
         run = ExtractionRunRepository.get_by_id(run_id)
@@ -299,6 +306,31 @@ async def export_to_cd(
             ))
             failed_count += 1
             continue
+
+        # IDEMPOTENCY CHECK: Skip if already exported (unless force=True)
+        if run.status == "exported" and not force:
+            # Check for successful export job
+            with get_connection() as conn:
+                existing_job = conn.execute(
+                    """SELECT id, status, created_at FROM export_jobs
+                       WHERE run_id = ? AND status = 'completed'
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (run_id,)
+                ).fetchone()
+
+            if existing_job:
+                previews.append(CDPayloadPreview(
+                    dispatch_id="",
+                    run_id=run_id,
+                    payload={},
+                    validation_errors=[
+                        f"Already exported (job #{existing_job['id']} on {existing_job['created_at']}). "
+                        "Use force=true to re-export."
+                    ],
+                    is_valid=False,
+                ))
+                skipped_count += 1
+                continue
 
         doc = DocumentRepository.get_by_id(run.document_id)
 
@@ -320,7 +352,7 @@ async def export_to_cd(
             # Actually send to CD
             success, response = send_to_cd(payload, sandbox=data.sandbox)
 
-            # Create export job record
+            # Create export job record (always creates new record for audit trail)
             job_id = ExportJobRepository.create(
                 run_id=run_id,
                 target="central_dispatch",
@@ -350,8 +382,13 @@ async def export_to_cd(
         message = f"Dry run: {len(previews)} payloads generated. Set dry_run=false to export."
         status = "preview"
     else:
-        message = f"Exported {exported_count} records. {failed_count} failed."
-        status = "completed" if failed_count == 0 else "partial"
+        parts = [f"Exported {exported_count}"]
+        if failed_count > 0:
+            parts.append(f"failed {failed_count}")
+        if skipped_count > 0:
+            parts.append(f"skipped {skipped_count} (already exported)")
+        message = ", ".join(parts) + "."
+        status = "completed" if failed_count == 0 and skipped_count == 0 else "partial"
 
     return CDExportResponse(
         status=status,

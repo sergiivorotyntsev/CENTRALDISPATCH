@@ -43,6 +43,7 @@ class DocumentResponse(BaseModel):
     mime_type: str = "application/pdf"
     page_count: Optional[int] = None
     has_ocr: bool = False
+    source: str = "upload"  # upload, email, batch, test_lab
     created_at: Optional[str] = None
     uploaded_by: Optional[str] = None
 

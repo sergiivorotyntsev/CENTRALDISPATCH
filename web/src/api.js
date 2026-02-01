@@ -226,6 +226,72 @@ export const api = {
     const query = new URLSearchParams(params).toString()
     return `${API_BASE}/integrations/extractions/export/csv${query ? `?${query}` : ''}`
   },
+
+  // Full Warehouse API (with hours, timezone, appointments)
+  listWarehouses: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/warehouses/${query ? `?${query}` : ''}`)
+  },
+  getWarehouse: (id) => request(`/warehouses/${id}`),
+  getWarehouseByCode: (code) => request(`/warehouses/code/${code}`),
+  createWarehouse: (data) => request('/warehouses/', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  updateWarehouse: (id, data) => request(`/warehouses/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  deleteWarehouseFull: (id, hard = false) => request(`/warehouses/${id}?hard=${hard}`, {
+    method: 'DELETE',
+  }),
+
+  // Templates / Field Mappings
+  listTemplates: () => request('/templates/'),
+  getTemplate: (auctionTypeId) => request(`/templates/${auctionTypeId}`),
+  createTemplateVersion: (auctionTypeId, data) => request(`/templates/${auctionTypeId}/versions`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  activateTemplateVersion: (auctionTypeId, versionTag) => request(`/templates/${auctionTypeId}/versions/${versionTag}/activate`, {
+    method: 'PUT',
+  }),
+  listFields: (auctionTypeId, includeInactive = false) => request(`/templates/${auctionTypeId}/fields?include_inactive=${includeInactive}`),
+  createField: (auctionTypeId, data) => request(`/templates/${auctionTypeId}/fields`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  updateField: (auctionTypeId, fieldId, data) => request(`/templates/${auctionTypeId}/fields/${fieldId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  deleteField: (auctionTypeId, fieldId, hard = false) => request(`/templates/${auctionTypeId}/fields/${fieldId}?hard=${hard}`, {
+    method: 'DELETE',
+  }),
+  reorderFields: (auctionTypeId, fieldIds) => request(`/templates/${auctionTypeId}/fields/reorder`, {
+    method: 'PUT',
+    body: JSON.stringify(fieldIds),
+  }),
+
+  // Email Worker
+  pollEmailNow: () => request('/email/poll', { method: 'POST' }),
+  startEmailWorker: () => request('/email/worker/start', { method: 'POST' }),
+  stopEmailWorker: () => request('/email/worker/stop', { method: 'POST' }),
+
+  // Exports
+  exportToCD: (runIds, dryRun = true, sandbox = true, force = false) => request(`/exports/central-dispatch?force=${force}`, {
+    method: 'POST',
+    body: JSON.stringify({ run_ids: runIds, dry_run: dryRun, sandbox }),
+  }),
+  previewCDPayload: (runId) => request(`/exports/central-dispatch/preview/${runId}`),
+  listExportJobs: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/exports/jobs${query ? `?${query}` : ''}`)
+  },
+  getExportJob: (jobId) => request(`/exports/jobs/${jobId}`),
+  retryExportJob: (jobId, sandbox = true) => request(`/exports/jobs/${jobId}/retry?sandbox=${sandbox}`, {
+    method: 'POST',
+  }),
 }
 
 export default api

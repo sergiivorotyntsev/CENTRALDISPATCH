@@ -35,7 +35,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from api.routes import settings, test, runs, health
 from api.routes import auction_types, documents, extractions, reviews, exports, models
-from api.routes import integrations
+from api.routes import integrations, warehouses, field_mappings
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
 
@@ -107,6 +107,61 @@ app.include_router(reviews.router)
 app.include_router(exports.router)
 app.include_router(models.router)
 app.include_router(integrations.router)
+app.include_router(warehouses.router)
+app.include_router(field_mappings.router)
+
+
+# =============================================================================
+# EMAIL WORKER ENDPOINTS
+# =============================================================================
+
+@app.post("/api/email/poll", tags=["Email"])
+async def poll_email_now():
+    """
+    Poll email inbox now (manual trigger).
+
+    Triggers an immediate poll of the configured email inbox.
+    Returns processing results.
+    """
+    from api.workers.email_worker import get_worker
+
+    worker = get_worker()
+    results = worker.poll_once()
+
+    return {
+        "status": "ok",
+        "processed": len([r for r in results if r.status == "processed"]),
+        "skipped": len([r for r in results if r.status == "skipped"]),
+        "failed": len([r for r in results if r.status == "failed"]),
+        "results": [
+            {
+                "message_id": r.message_id,
+                "status": r.status,
+                "rule_matched": r.rule_matched,
+                "document_id": r.document_id,
+                "run_id": r.run_id,
+                "error": r.error,
+            }
+            for r in results
+        ],
+    }
+
+
+@app.post("/api/email/worker/start", tags=["Email"])
+async def start_email_worker():
+    """Start the background email polling worker."""
+    from api.workers.email_worker import start_worker
+    await start_worker()
+    return {"status": "ok", "message": "Email worker started"}
+
+
+@app.post("/api/email/worker/stop", tags=["Email"])
+async def stop_email_worker():
+    """Stop the background email polling worker."""
+    from api.workers.email_worker import stop_worker
+    await stop_worker()
+    return {"status": "ok", "message": "Email worker stopped"}
+
 
 # Initialize database on startup
 @app.on_event("startup")
@@ -117,6 +172,12 @@ async def startup():
     init_schema()
     # Seed base auction types
     seed_base_auction_types()
+    # Initialize warehouses schema
+    from api.routes.warehouses import init_warehouses_schema
+    init_warehouses_schema()
+    # Initialize templates schema
+    from api.routes.field_mappings import init_template_schema
+    init_template_schema()
 
 
 # Serve frontend (simple HTML for now)
