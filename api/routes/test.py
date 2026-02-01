@@ -105,15 +105,34 @@ def get_status_from_score(score: float) -> str:
 
 # ----- Endpoints -----
 
-@router.post("/upload", response_model=ExtractionPreview)
+class UploadAndExtractResponse(BaseModel):
+    """Full response for upload with extraction and run creation."""
+    # Extraction preview data
+    extraction: ExtractionPreview
+
+    # Document and run info (when auto-created)
+    document_id: Optional[int] = None
+    run_id: Optional[int] = None
+    run_status: Optional[str] = None
+
+    # Invoice data for UI display (legacy format)
+    invoice: Optional[Dict[str, Any]] = None
+
+
+@router.post("/upload")
 async def upload_and_extract(
     file: UploadFile = File(...),
+    auto_save: bool = Form(default=False),
+    auction_type_id: Optional[int] = Form(default=None),
 ):
     """
     Upload a PDF and extract data.
 
     Returns extraction preview with confidence scores and warnings.
-    Does not save to any export target - use dry-run for that.
+
+    Options:
+    - auto_save: If true, saves document and creates extraction run
+    - auction_type_id: Required if auto_save=true, auction type for the document
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -134,6 +153,11 @@ async def upload_and_extract(
 
         # Classify first
         classification = manager.classify(tmp_path)
+        text = classification.text
+        text_length = len(text) if text else 0
+
+        # Check if OCR is needed
+        needs_ocr = text_length < 100
 
         # Extract
         result = manager.extract_with_result(tmp_path)
@@ -162,24 +186,29 @@ async def upload_and_extract(
                     color=v.color,
                 ))
 
-            if inv.pickup_location:
-                loc = inv.pickup_location
+            if inv.pickup_address:
+                loc = inv.pickup_address
                 pickup_location = PickupLocation(
                     name=loc.name,
-                    address=loc.address,
+                    address=loc.street,
                     city=loc.city,
                     state=loc.state,
-                    zip_code=loc.zip_code,
+                    zip_code=loc.postal_code,
                     phone=loc.phone,
                 )
 
-            gate_pass = inv.gate_pass
+            gate_pass = getattr(inv, 'gate_pass', None) or getattr(inv, 'release_id', None)
             buyer_id = inv.buyer_id
             reference_id = inv.reference_id
             total_amount = inv.total_amount
 
             # Check for warnings
-            if inv.has_missing_critical_fields():
+            has_critical_missing = (
+                not inv.pickup_address or
+                not inv.buyer_id or
+                not inv.vehicles
+            )
+            if has_critical_missing:
                 warnings.append("Missing critical fields - needs review")
 
             for v in inv.vehicles:
@@ -188,13 +217,19 @@ async def upload_and_extract(
         else:
             warnings.append("Extraction failed - no data extracted")
 
-        return ExtractionPreview(
+        # Determine auction source string
+        if needs_ocr or classification.score < 0.3:
+            auction_source = "UNKNOWN"
+        else:
+            auction_source = classification.source.value
+
+        extraction_preview = ExtractionPreview(
             status=get_status_from_score(result.score),
-            auction=classification.source.value,
+            auction=auction_source,
             confidence_score=round(result.score * 100, 1),
             matched_patterns=classification.matched_patterns,
-            text_length=result.text_length,
-            needs_ocr=result.needs_ocr,
+            text_length=text_length,
+            needs_ocr=needs_ocr,
             vehicles=vehicles,
             pickup_location=pickup_location,
             gate_pass=gate_pass,
@@ -206,12 +241,117 @@ async def upload_and_extract(
             attachment_name=file.filename,
         )
 
+        # Build invoice dict for legacy UI format
+        invoice_dict = None
+        if result.invoice:
+            inv = result.invoice
+            invoice_dict = {
+                "source": auction_source,
+                "reference_id": inv.reference_id,
+                "buyer_id": inv.buyer_id,
+                "total_amount": inv.total_amount,
+                "vehicles": [
+                    {
+                        "vin": v.vin,
+                        "year": v.year,
+                        "make": v.make,
+                        "model": v.model,
+                        "lot_number": v.lot_number,
+                        "mileage": v.mileage,
+                        "color": v.color,
+                        "is_operable": v.is_operable,
+                    }
+                    for v in inv.vehicles
+                ],
+                "pickup_address": {
+                    "name": inv.pickup_address.name,
+                    "street": inv.pickup_address.street,
+                    "city": inv.pickup_address.city,
+                    "state": inv.pickup_address.state,
+                    "postal_code": inv.pickup_address.postal_code,
+                    "phone": inv.pickup_address.phone,
+                } if inv.pickup_address else None,
+            }
+
+        # Optional: auto-save document and create run
+        document_id = None
+        run_id = None
+        run_status = None
+
+        if auto_save:
+            from api.models import (
+                DocumentRepository,
+                ExtractionRunRepository,
+                AuctionTypeRepository,
+            )
+
+            # Get auction type (use provided or try to match from classification)
+            at_id = auction_type_id
+            if not at_id:
+                # Try to find auction type by source code
+                at = AuctionTypeRepository.get_by_code(auction_source)
+                if at:
+                    at_id = at.id
+
+            if not at_id:
+                # Default to first active auction type
+                from api.database import get_connection
+                with get_connection() as conn:
+                    row = conn.execute(
+                        "SELECT id FROM auction_types WHERE is_active = TRUE LIMIT 1"
+                    ).fetchone()
+                    if row:
+                        at_id = row["id"]
+
+            if at_id:
+                # Save document
+                upload_path = Path(tmp_path).parent / f"{file_hash[:16]}_{file.filename}"
+                with open(upload_path, "wb") as f:
+                    f.write(content)
+
+                document_id = DocumentRepository.create(
+                    auction_type_id=at_id,
+                    dataset_split="train",
+                    filename=file.filename,
+                    file_path=str(upload_path),
+                    file_size=len(content),
+                    sha256=file_hash,
+                    raw_text=text,
+                    uploaded_by="test_lab",
+                )
+
+                # Create and run extraction
+                run_id = ExtractionRunRepository.create(
+                    document_id=document_id,
+                    auction_type_id=at_id,
+                    extractor_kind="rule",
+                )
+
+                # Run extraction
+                from api.routes.extractions import run_extraction
+                run_extraction(run_id, document_id, at_id, "rule", None)
+
+                # Get updated run status
+                run = ExtractionRunRepository.get_by_id(run_id)
+                run_status = run.status if run else None
+
+        return {
+            "extraction": extraction_preview.model_dump(),
+            "document_id": document_id,
+            "run_id": run_id,
+            "run_status": run_status,
+            "invoice": invoice_dict,
+        }
+
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
     finally:
         # Clean up temp file
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @router.post("/preview-cd", response_model=CDPayloadPreview)
@@ -252,7 +392,7 @@ async def preview_cd_payload(
         if not vehicle.vin or len(vehicle.vin) != 17:
             validation_errors.append("Invalid or missing VIN")
 
-        if not inv.pickup_location or not inv.pickup_location.city:
+        if not inv.pickup_address or not inv.pickup_address.city:
             validation_errors.append("Missing pickup location")
 
         # Build payload structure (based on CD Listings API V2)
@@ -265,9 +405,9 @@ async def preview_cd_payload(
                 "is_operable": vehicle.is_operable if vehicle.is_operable is not None else True,
             },
             "origin": {
-                "city": inv.pickup_location.city if inv.pickup_location else "",
-                "state": inv.pickup_location.state if inv.pickup_location else "",
-                "zip": inv.pickup_location.zip_code if inv.pickup_location else "",
+                "city": inv.pickup_address.city if inv.pickup_address else "",
+                "state": inv.pickup_address.state if inv.pickup_address else "",
+                "zip": inv.pickup_address.postal_code if inv.pickup_address else "",
             },
             "destination": {
                 "city": "",  # Needs warehouse routing
@@ -360,19 +500,19 @@ async def preview_sheets_row(
                     "vehicle_color": v.color,
                 })
 
-            if inv.pickup_location:
-                loc = inv.pickup_location
+            if inv.pickup_address:
+                loc = inv.pickup_address
                 row_dict.update({
                     "pickup_name": loc.name,
-                    "pickup_address": loc.address,
+                    "pickup_address": loc.street,
                     "pickup_city": loc.city,
                     "pickup_state": loc.state,
-                    "pickup_zip": loc.zip_code,
+                    "pickup_zip": loc.postal_code,
                     "pickup_phone": loc.phone,
                 })
 
             row_dict.update({
-                "gate_pass": inv.gate_pass,
+                "gate_pass": getattr(inv, 'gate_pass', None) or inv.release_id,
                 "buyer_id": inv.buyer_id,
                 "reference_id": inv.reference_id,
                 "total_amount": inv.total_amount,
@@ -453,14 +593,14 @@ async def dry_run(
                     color=v.color,
                 ))
 
-            if inv.pickup_location:
-                loc = inv.pickup_location
+            if inv.pickup_address:
+                loc = inv.pickup_address
                 pickup_location = PickupLocation(
                     name=loc.name,
-                    address=loc.address,
+                    address=loc.street,
                     city=loc.city,
                     state=loc.state,
-                    zip_code=loc.zip_code,
+                    zip_code=loc.postal_code,
                     phone=loc.phone,
                 )
 
@@ -473,7 +613,7 @@ async def dry_run(
             needs_ocr=result.needs_ocr,
             vehicles=vehicles,
             pickup_location=pickup_location,
-            gate_pass=result.invoice.gate_pass if result.invoice else None,
+            gate_pass=(getattr(result.invoice, 'gate_pass', None) or getattr(result.invoice, 'release_id', None)) if result.invoice else None,
             buyer_id=result.invoice.buyer_id if result.invoice else None,
             reference_id=result.invoice.reference_id if result.invoice else None,
             total_amount=result.invoice.total_amount if result.invoice else None,
@@ -496,8 +636,8 @@ async def dry_run(
                     "model": vehicle.model or "",
                 },
                 "origin": {
-                    "city": inv.pickup_location.city if inv.pickup_location else "",
-                    "state": inv.pickup_location.state if inv.pickup_location else "",
+                    "city": inv.pickup_address.city if inv.pickup_address else "",
+                    "state": inv.pickup_address.state if inv.pickup_address else "",
                 },
             }
 
@@ -546,14 +686,14 @@ async def dry_run(
 
         # Warehouse routing
         warehouse_routing = None
-        if include_warehouse and result.invoice and result.invoice.pickup_location:
+        if include_warehouse and result.invoice and result.invoice.pickup_address:
             # For now, just show what we'd route
-            loc = result.invoice.pickup_location
+            loc = result.invoice.pickup_address
             warehouse_routing = {
                 "pickup_location": {
                     "city": loc.city,
                     "state": loc.state,
-                    "zip": loc.zip_code,
+                    "zip": loc.postal_code,
                 },
                 "message": "Warehouse routing would be determined based on pickup location",
             }
@@ -578,7 +718,13 @@ async def classify_pdf(file: UploadFile = File(...)):
     """
     Classify a PDF to determine the auction source.
 
-    Returns classification scores from all extractors.
+    Returns classification result with:
+    - source: detected auction source (IAA, COPART, MANHEIM, UNKNOWN)
+    - score: confidence percentage (0-100)
+    - extractor: extractor name or None
+    - needs_ocr: true if text extraction failed (scanned PDF)
+    - text_length: number of characters extracted
+    - matched_patterns: list of patterns that matched
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="File must be a PDF")
@@ -593,19 +739,50 @@ async def classify_pdf(file: UploadFile = File(...)):
         from extractors import ExtractorManager
 
         manager = ExtractorManager()
+
+        # Get full classification with text
+        classification = manager.classify(tmp_path)
+        text_length = len(classification.text) if classification.text else 0
+
+        # Determine if OCR is needed (text too short for reliable extraction)
+        needs_ocr = text_length < 100
+
+        # Determine source - UNKNOWN if score too low or needs_ocr
+        if needs_ocr or classification.score < 0.3:
+            source = "UNKNOWN"
+            extractor_name = None
+            score = 0.0
+            matched_patterns = []
+        else:
+            source = classification.source.value
+            extractor_name = classification.extractor.__class__.__name__ if classification.extractor else None
+            score = classification.score
+            matched_patterns = classification.matched_patterns
+
+        # Get all scores for detailed view
         all_scores = manager.get_all_scores(tmp_path)
 
         return {
-            "filename": file.filename,
-            "scores": [
+            # Primary classification result (UI expects these)
+            "source": source,
+            "score": round(score * 100, 1),
+            "extractor": extractor_name,
+            "needs_ocr": needs_ocr,
+            "text_length": text_length,
+            "matched_patterns": matched_patterns,
+
+            # Detailed scores for all extractors
+            "all_scores": [
                 {
-                    "source": source.value,
-                    "score": round(score * 100, 1),
-                    "patterns": patterns,
+                    "source": s.value,
+                    "score": round(sc * 100, 1),
+                    "patterns": p,
                 }
-                for source, score, patterns in all_scores
+                for s, sc, p in all_scores
             ],
-            "best_match": all_scores[0][0].value if all_scores else None,
+
+            # File info
+            "filename": file.filename,
         }
 
     except Exception as e:
