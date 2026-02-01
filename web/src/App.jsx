@@ -1,12 +1,37 @@
-import { Routes, Route, NavLink } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
 import TestLab from './pages/TestLab'
 import Runs from './pages/Runs'
 import Documents from './pages/Documents'
 import Review from './pages/Review'
+import Login from './pages/Login'
 
-function App() {
+// Protected route wrapper
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return children
+}
+
+// Main layout with sidebar
+function MainLayout() {
+  const { user, logout } = useAuth()
+  const navigate = useNavigate()
+
   const navItems = [
     { path: '/', label: 'Dashboard', icon: DashboardIcon },
     { path: '/documents', label: 'Documents', icon: DocumentsIcon },
@@ -14,6 +39,11 @@ function App() {
     { path: '/test-lab', label: 'Test Lab', icon: TestLabIcon },
     { path: '/settings', label: 'Settings', icon: SettingsIcon },
   ]
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login')
+  }
 
   return (
     <div className="min-h-screen flex">
@@ -42,15 +72,29 @@ function App() {
           ))}
         </nav>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-gray-200 text-xs text-gray-500">
-          <p>API: <a href="/api/docs" target="_blank" className="text-primary-600 hover:underline">Swagger Docs</a></p>
-          <p className="mt-1">v1.0.0</p>
+        {/* User Info & Logout */}
+        <div className="p-4 border-t border-gray-200">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-sm font-medium text-gray-900">{user?.username}</p>
+              <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Logout"
+            >
+              <LogoutIcon className="w-5 h-5" />
+            </button>
+          </div>
+          <p className="text-xs text-gray-400">
+            <a href="/api/docs" target="_blank" className="hover:text-primary-600">API Docs</a>
+          </p>
         </div>
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto bg-gray-50">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/documents" element={<Documents />} />
@@ -61,6 +105,24 @@ function App() {
         </Routes>
       </div>
     </div>
+  )
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          path="/*"
+          element={
+            <ProtectedRoute>
+              <MainLayout />
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </AuthProvider>
   )
 }
 
@@ -102,6 +164,14 @@ function DocumentsIcon({ className }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+    </svg>
+  )
+}
+
+function LogoutIcon({ className }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
     </svg>
   )
 }

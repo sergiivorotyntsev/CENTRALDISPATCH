@@ -1,9 +1,20 @@
-// API client for the FastAPI backend
+// API client for the FastAPI backend with authentication
 
 const API_BASE = '/api'
 
+// Get auth token from localStorage
+function getToken() {
+  return localStorage.getItem('auth_token')
+}
+
+// Check if response is auth error
+function isAuthError(response) {
+  return response.status === 401 || response.status === 403
+}
+
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`
+  const token = getToken()
 
   const config = {
     headers: {
@@ -13,12 +24,26 @@ async function request(endpoint, options = {}) {
     ...options,
   }
 
+  // Add auth header if token exists
+  if (token) {
+    config.headers['Authorization'] = `Bearer ${token}`
+  }
+
   // Don't set Content-Type for FormData
   if (options.body instanceof FormData) {
     delete config.headers['Content-Type']
   }
 
   const response = await fetch(url, config)
+
+  // Handle auth errors
+  if (isAuthError(response)) {
+    // Clear token and redirect to login
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('auth_user')
+    window.location.href = '/login'
+    throw new Error('Session expired. Please login again.')
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: response.statusText }))
@@ -32,9 +57,18 @@ async function request(endpoint, options = {}) {
 
 // Health & Status
 export const api = {
-  // Health
-  getHealth: () => request('/health'),
-  getReady: () => request('/ready'),
+  // Health (no auth required)
+  getHealth: () => fetch(`${API_BASE}/health`).then(r => r.json()),
+  getReady: () => fetch(`${API_BASE}/ready`).then(r => r.json()),
+
+  // Auth
+  login: (username, password) => fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  }).then(r => r.json()),
+
+  getCurrentUser: () => request('/auth/me'),
 
   // Settings
   getSettingsStatus: () => request('/settings/status'),
