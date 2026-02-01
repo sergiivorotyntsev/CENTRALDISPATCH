@@ -12,9 +12,13 @@ function Runs() {
   const [filters, setFilters] = useState({
     status: '',
     auction_type_id: '',
+    source: '', // upload, email, batch, test_lab
     limit: 50,
     offset: 0,
   })
+
+  // Auction types
+  const [auctionTypes, setAuctionTypes] = useState([])
 
   // Selected run for detail view
   const [selectedRun, setSelectedRun] = useState(null)
@@ -25,6 +29,19 @@ function Runs() {
     loadRuns()
     loadStats()
   }, [filters])
+
+  useEffect(() => {
+    loadAuctionTypes()
+  }, [])
+
+  async function loadAuctionTypes() {
+    try {
+      const data = await api.listAuctionTypes()
+      setAuctionTypes(data.items || [])
+    } catch (err) {
+      console.error('Failed to load auction types:', err)
+    }
+  }
 
   async function loadRuns() {
     setLoading(true)
@@ -114,8 +131,8 @@ function Runs() {
   }
 
   function exportCsv() {
-    // Export not available for extractions yet
-    alert('Export feature coming soon')
+    const url = api.exportExtractionsCsv(filters)
+    window.open(url, '_blank')
   }
 
   function updateFilter(key, value) {
@@ -151,7 +168,7 @@ function Runs() {
       {/* Filters */}
       <div className="card mb-6">
         <div className="card-body">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="form-label">Status</label>
               <select
@@ -178,9 +195,23 @@ function Runs() {
                 className="form-select"
               >
                 <option value="">All Types</option>
-                <option value="1">Copart</option>
-                <option value="2">IAA</option>
-                <option value="3">Manheim</option>
+                {auctionTypes.map(at => (
+                  <option key={at.id} value={at.id}>{at.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Source</label>
+              <select
+                value={filters.source}
+                onChange={e => updateFilter('source', e.target.value)}
+                className="form-select"
+              >
+                <option value="">All Sources</option>
+                <option value="upload">Upload</option>
+                <option value="email">Email</option>
+                <option value="batch">Batch</option>
+                <option value="test_lab">Test Lab</option>
               </select>
             </div>
             <div>
@@ -194,6 +225,11 @@ function Runs() {
                 <option value={50}>50</option>
                 <option value={100}>100</option>
               </select>
+            </div>
+            <div className="flex items-end">
+              <button onClick={loadRuns} className="btn btn-secondary w-full">
+                Refresh
+              </button>
             </div>
           </div>
         </div>
@@ -341,6 +377,12 @@ function Runs() {
                   </div>
                 )}
 
+                {/* Timeline */}
+                <div className="border-t border-gray-200 pt-4">
+                  <h4 className="font-medium text-sm mb-3">Status Timeline</h4>
+                  <RunTimeline status={selectedRun.status} createdAt={selectedRun.created_at} />
+                </div>
+
                 {selectedRun.errors && selectedRun.errors.length > 0 && (
                   <div className="text-sm">
                     <p className="text-red-600 font-medium">Errors</p>
@@ -431,6 +473,88 @@ function Runs() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function RunTimeline({ status, createdAt }) {
+  // Define the pipeline stages
+  const stages = [
+    { key: 'received', label: 'Received', icon: '📥' },
+    { key: 'classified', label: 'Classified', icon: '🏷️' },
+    { key: 'extracted', label: 'Extracted', icon: '📝' },
+    { key: 'reviewed', label: 'Reviewed', icon: '✅' },
+    { key: 'exported', label: 'Exported', icon: '🚀' },
+  ]
+
+  // Determine current stage based on status
+  const getStageIndex = (status) => {
+    switch (status) {
+      case 'pending':
+      case 'processing':
+        return 0 // received
+      case 'needs_review':
+        return 2 // extracted (waiting for review)
+      case 'reviewed':
+      case 'approved':
+        return 3 // reviewed
+      case 'exported':
+        return 4 // exported (complete)
+      case 'failed':
+      case 'error':
+      case 'manual_required':
+        return -1 // failed at some point
+      default:
+        return 1 // classified
+    }
+  }
+
+  const currentIndex = getStageIndex(status)
+  const isFailed = status === 'failed' || status === 'error' || status === 'manual_required'
+
+  return (
+    <div className="relative">
+      {/* Progress line */}
+      <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200"></div>
+
+      {stages.map((stage, index) => {
+        const isCompleted = currentIndex >= index
+        const isCurrent = currentIndex === index
+        const isFailedStage = isFailed && index === 2 // typically fails at extraction
+
+        return (
+          <div key={stage.key} className="relative flex items-start mb-3 last:mb-0">
+            {/* Circle indicator */}
+            <div className={`relative z-10 flex items-center justify-center w-8 h-8 rounded-full text-sm ${
+              isFailedStage ? 'bg-red-100 text-red-600' :
+              isCompleted ? 'bg-green-100 text-green-600' :
+              'bg-gray-100 text-gray-400'
+            }`}>
+              {isFailedStage ? '❌' : stage.icon}
+            </div>
+
+            {/* Label */}
+            <div className="ml-3 flex-1">
+              <p className={`text-sm font-medium ${
+                isFailedStage ? 'text-red-600' :
+                isCompleted ? 'text-gray-900' : 'text-gray-400'
+              }`}>
+                {stage.label}
+              </p>
+              {isCurrent && createdAt && (
+                <p className="text-xs text-gray-500">
+                  {new Date(createdAt).toLocaleString()}
+                </p>
+              )}
+              {isFailedStage && (
+                <p className="text-xs text-red-500">
+                  {status === 'manual_required' ? 'OCR Required' : 'Failed'}
+                </p>
+              )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
