@@ -300,10 +300,13 @@ def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6)
                     break
                 continue
 
-            # Stop if we hit another section header (ALL CAPS ending with colon, or known keywords)
-            if re.match(r'^[A-Z][A-Z\s]{3,}:?\s*$', stripped):
+            # Stop if we hit another section header
+            # Must be: ALL CAPS + ending with colon (like "MEMBER:"), or specific field labels
+            if re.match(r'^[A-Z][A-Z\s]{2,}:\s*$', stripped):
+                # All caps followed by colon only
                 break
-            if re.match(r'^(MEMBER|LOT|VEHICLE|VIN|SALE|BUYER|SELLER|TOTAL|PAYMENT|RECEIPT|STOCK|INVOICE)', stripped, re.IGNORECASE):
+            if re.match(r'^(MEMBER|LOT#?|VEHICLE|VIN|SALE\s*DATE|BUYER|SELLER|TOTAL|PAYMENT|RECEIPT|STOCK|INVOICE)[:\s]*$', stripped, re.IGNORECASE):
+                # Known field labels
                 break
 
             result.append(stripped)

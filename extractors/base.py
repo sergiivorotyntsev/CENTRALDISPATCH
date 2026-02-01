@@ -2,8 +2,8 @@
 import re
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, List, Tuple, Dict, Any
 import pdfplumber
 
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
@@ -20,10 +20,37 @@ class ExtractionResult:
     text_length: int
     needs_ocr: bool = False
     matched_patterns: List[str] = None
+    learned_rules_applied: List[str] = None  # Track which learned rules were used
 
     def __post_init__(self):
         if self.matched_patterns is None:
             self.matched_patterns = []
+        if self.learned_rules_applied is None:
+            self.learned_rules_applied = []
+
+
+@dataclass
+class LearnedRule:
+    """A learned extraction rule for a specific field."""
+    field_key: str
+    rule_type: str  # 'label_below', 'label_inline', 'regex', 'position'
+    label_patterns: List[str]
+    exclude_patterns: List[str]
+    confidence: float
+
+    def matches_label(self, text: str) -> bool:
+        """Check if any label pattern matches in the text."""
+        for pattern in self.label_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return True
+        return False
+
+    def should_exclude(self, text: str) -> bool:
+        """Check if text matches any exclude pattern."""
+        for pattern in self.exclude_patterns:
+            if pattern.lower() in text.lower():
+                return True
+        return False
 
 
 class BaseExtractor(ABC):
@@ -35,10 +62,19 @@ class BaseExtractor(ABC):
     # Score threshold for confident detection
     SCORE_THRESHOLD = 0.6
 
+    # Learned rules cache
+    _learned_rules: Dict[str, LearnedRule] = None
+    _rules_loaded: bool = False
+
     @property
     @abstractmethod
     def source(self) -> AuctionSource:
         pass
+
+    @property
+    def auction_type_code(self) -> str:
+        """Return auction type code (e.g., 'COPART', 'IAA')."""
+        return self.source.value.upper() if self.source else "UNKNOWN"
 
     @property
     @abstractmethod
@@ -50,6 +86,113 @@ class BaseExtractor(ABC):
     def indicator_weights(self) -> dict:
         """Optional weights for indicators (default: equal weight)."""
         return {}
+
+    def load_learned_rules(self) -> Dict[str, LearnedRule]:
+        """
+        Load learned extraction rules from the training database.
+
+        Returns a dict of field_key -> LearnedRule
+        """
+        if self._rules_loaded and self._learned_rules is not None:
+            return self._learned_rules
+
+        self._learned_rules = {}
+
+        try:
+            # Try to load rules from database
+            from database import get_session
+            from services.training_service import TrainingService
+
+            with get_session() as session:
+                service = TrainingService(session)
+                rules_data = service.get_rules_for_extractor(self.auction_type_code)
+
+                for field_key, rule_info in rules_data.items():
+                    self._learned_rules[field_key] = LearnedRule(
+                        field_key=field_key,
+                        rule_type=rule_info.get('rule_type', 'label_below'),
+                        label_patterns=rule_info.get('label_patterns', []),
+                        exclude_patterns=rule_info.get('exclude_patterns', []),
+                        confidence=rule_info.get('confidence', 0.5),
+                    )
+
+                logger.info(f"Loaded {len(self._learned_rules)} learned rules for {self.auction_type_code}")
+        except Exception as e:
+            logger.warning(f"Could not load learned rules: {e}")
+            self._learned_rules = {}
+
+        self._rules_loaded = True
+        return self._learned_rules
+
+    def get_learned_rule(self, field_key: str) -> Optional[LearnedRule]:
+        """Get a learned rule for a specific field."""
+        rules = self.load_learned_rules()
+        return rules.get(field_key)
+
+    def extract_with_learned_rules(
+        self,
+        text: str,
+        field_key: str,
+        default_labels: List[str] = None,
+        default_extract_func = None
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Extract a field value using learned rules with fallback to defaults.
+
+        Args:
+            text: Document text to search
+            field_key: Field being extracted (e.g., 'pickup_address')
+            default_labels: Default label patterns if no learned rule
+            default_extract_func: Default extraction function
+
+        Returns:
+            (extracted_value, used_learned_rule)
+        """
+        rule = self.get_learned_rule(field_key)
+
+        if rule and rule.label_patterns:
+            # Use learned rule
+            value = self._extract_value_with_rule(text, rule)
+            if value:
+                logger.debug(f"Extracted {field_key} using learned rule: {value[:50]}...")
+                return value, True
+
+        # Fallback to default extraction
+        if default_extract_func:
+            value = default_extract_func(text)
+            return value, False
+
+        if default_labels:
+            # Try default labels
+            from extractors.address_parser import extract_lines_after_label
+            for label in default_labels:
+                lines = extract_lines_after_label(text, label)
+                if lines:
+                    return '\n'.join(lines[:3]), False
+
+        return None, False
+
+    def _extract_value_with_rule(self, text: str, rule: LearnedRule) -> Optional[str]:
+        """Extract a value using a learned rule."""
+        from extractors.address_parser import extract_lines_after_label
+
+        for label_pattern in rule.label_patterns:
+            try:
+                lines = extract_lines_after_label(text, label_pattern)
+                if lines:
+                    # Filter out excluded patterns
+                    filtered_lines = []
+                    for line in lines:
+                        if not rule.should_exclude(line):
+                            filtered_lines.append(line)
+
+                    if filtered_lines:
+                        return '\n'.join(filtered_lines[:3])
+            except Exception as e:
+                logger.warning(f"Error applying rule for {rule.field_key}: {e}")
+                continue
+
+        return None
 
     def score(self, text: str) -> Tuple[float, List[str]]:
         """
@@ -99,9 +242,19 @@ class BaseExtractor(ABC):
             logger.warning(f"Document has insufficient text ({len(text)} chars), may need OCR")
 
         invoice = None
+        learned_rules_applied = []
+
         if score >= self.SCORE_THRESHOLD:
             try:
+                # Load learned rules before extraction
+                self.load_learned_rules()
                 invoice = self.extract(pdf_path)
+
+                # Track which learned rules were applied
+                for field_key, rule in (self._learned_rules or {}).items():
+                    if rule.confidence > 0.5:
+                        learned_rules_applied.append(field_key)
+
             except Exception as e:
                 logger.error(f"Extraction failed: {e}")
 
@@ -112,6 +265,7 @@ class BaseExtractor(ABC):
             text_length=len(text),
             needs_ocr=needs_ocr,
             matched_patterns=matched,
+            learned_rules_applied=learned_rules_applied,
         )
 
     def extract_text(self, pdf_path: str) -> str:

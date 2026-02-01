@@ -1,15 +1,39 @@
 """IAA (Insurance Auto Auctions) document extractor."""
 import re
+import logging
 from typing import Optional
 from datetime import datetime
 
 from extractors.base import BaseExtractor
-from extractors.address_parser import extract_pickup_address, normalize_state
+from extractors.address_parser import extract_pickup_address, extract_lines_after_label, normalize_state
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
+
+logger = logging.getLogger(__name__)
 
 
 class IAAExtractor(BaseExtractor):
     """Extractor for IAA Buyer Receipt documents."""
+
+    # Default label patterns for fields (can be overridden by learned rules)
+    DEFAULT_LABELS = {
+        'pickup_address': [
+            r'Pick-?Up\s*Location',
+            r'Sold\s*At\s*Branch',
+            r'Branch\s*Location',
+            r'Pickup\s*Address',
+        ],
+        'buyer_name': [
+            r'Buyer\s*Name',
+            r'SOLD\s*TO',
+            r'Purchaser',
+            r'Bill\s*To',
+        ],
+        'seller_name': [
+            r'Seller',
+            r'Owner',
+            r'Consigner',
+        ],
+    }
 
     @property
     def source(self) -> AuctionSource:
@@ -48,6 +72,9 @@ class IAAExtractor(BaseExtractor):
         if not self.can_extract(text):
             return None
 
+        # Load learned rules before extraction
+        self.load_learned_rules()
+
         invoice = AuctionInvoice(source=self.source, buyer_id="", buyer_name="")
 
         # Extract receipt number
@@ -60,22 +87,11 @@ class IAAExtractor(BaseExtractor):
         if buyer_match:
             invoice.buyer_id = buyer_match.group(1)
 
-        # Extract buyer name (multiple patterns)
-        buyer_name_patterns = [
-            r'Buyer\s*Name[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|Buyer\s*#)',
-            r'SOLD\s*TO[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|\d)',
-            r'Purchaser[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|\d)',
-            r'Bill\s*To[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n)',
-        ]
-        for pattern in buyer_name_patterns:
-            name_match = re.search(pattern, text, re.IGNORECASE)
-            if name_match:
-                buyer_name = name_match.group(1).strip()
-                # Clean up - remove trailing numbers/dates, keep company suffixes
-                buyer_name = re.sub(r'\s+\d+.*$', '', buyer_name)
-                if len(buyer_name) > 2 and len(buyer_name) < 100:
-                    invoice.buyer_name = buyer_name
-                    break
+        # Extract buyer name using learned rules or defaults
+        invoice.buyer_name = self._extract_buyer_name(text)
+
+        # Extract seller name using learned rules or defaults
+        invoice.seller_name = self._extract_seller_name(text)
 
         # Extract sale date
         date_patterns = [
@@ -127,16 +143,145 @@ class IAAExtractor(BaseExtractor):
         return invoice
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        """Extract pickup address using shared parser."""
-        # Use the shared address parser with IAA-specific labels
+        """Extract pickup address using learned rules or shared parser."""
+        # First check for learned rules
+        rule = self.get_learned_rule('pickup_address')
+
+        if rule and rule.label_patterns:
+            logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
+            # Try learned patterns first
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern)
+                if lines:
+                    # Parse address from lines
+                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns)
+                    if addr:
+                        return addr
+
+        # Fallback to default extraction
         return extract_pickup_address(
             text,
             source="IAA",
-            custom_labels=[
-                r'Sold\s*At\s*Branch',
-                r'Branch\s*Location',
-            ]
+            custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
         )
+
+    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
+        """Parse address from extracted lines."""
+        if not lines:
+            return None
+
+        # Filter out excluded patterns
+        if exclude_patterns:
+            filtered_lines = []
+            for line in lines:
+                excluded = False
+                for pattern in exclude_patterns:
+                    if pattern.lower() in line.lower():
+                        excluded = True
+                        break
+                if not excluded:
+                    filtered_lines.append(line)
+            lines = filtered_lines
+
+        if not lines:
+            return None
+
+        # Try to parse address
+        street = lines[0] if lines else ""
+
+        # Look for city/state/zip in remaining lines
+        city, state, zip_code = "", "", ""
+        for line in lines[1:]:
+            parsed_city, parsed_state, parsed_zip = self.parse_address(line)
+            if parsed_city and parsed_state:
+                city, state, zip_code = parsed_city, parsed_state, parsed_zip
+                break
+
+        # Also check first line for city/state/zip format
+        if not city:
+            parsed_city, parsed_state, parsed_zip = self.parse_address(street)
+            if parsed_city and parsed_state:
+                city, state, zip_code = parsed_city, parsed_state, parsed_zip
+                street = ""
+
+        if street or (city and state):
+            return Address(
+                name="IAA",
+                street=street,
+                city=city,
+                state=state,
+                postal_code=zip_code,
+            )
+
+        return None
+
+    def _extract_buyer_name(self, text: str) -> str:
+        """Extract buyer name using learned rules or defaults."""
+        # Check for learned rule
+        rule = self.get_learned_rule('buyer_name')
+
+        if rule and rule.label_patterns:
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern, max_lines=3)
+                if lines:
+                    # Get the first non-excluded line that looks like a name
+                    for line in lines:
+                        if not rule.should_exclude(line):
+                            # Clean up the buyer name
+                            buyer_name = re.sub(r'\s+\d+.*$', '', line.strip())
+                            if (len(buyer_name) > 2 and len(buyer_name) < 100 and
+                                re.match(r'^[A-Z]', buyer_name)):
+                                return buyer_name
+
+        # Fallback: try default patterns
+        buyer_name_patterns = [
+            r'Buyer\s*Name[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|Buyer\s*#)',
+            r'SOLD\s*TO[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|\d)',
+            r'Purchaser[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n|\d)',
+            r'Bill\s*To[:\s]+([A-Za-z][A-Za-z\s\-\.]+?)(?:\n)',
+        ]
+        for pattern in buyer_name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                buyer_name = name_match.group(1).strip()
+                buyer_name = re.sub(r'\s+\d+.*$', '', buyer_name)
+                if len(buyer_name) > 2 and len(buyer_name) < 100:
+                    return buyer_name
+
+        return ""
+
+    def _extract_seller_name(self, text: str) -> str:
+        """Extract seller name using learned rules or defaults."""
+        # Check for learned rule
+        rule = self.get_learned_rule('seller_name')
+
+        if rule and rule.label_patterns:
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern, max_lines=3)
+                if lines:
+                    # Get the first non-excluded line
+                    for line in lines:
+                        if not rule.should_exclude(line):
+                            # Clean up the seller name
+                            seller = re.sub(r'\s+\d+.*$', '', line.strip())
+                            if len(seller) > 2 and len(seller) < 100:
+                                return seller
+
+        # Fallback: try default patterns
+        seller_patterns = [
+            r'Seller[:\s]*\n([A-Z][A-Za-z\s\-\.]+?)(?:\n|SOLD)',
+            r'Seller[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|SOLD)',
+            r'Owner[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n)',
+        ]
+        for pattern in seller_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                seller = match.group(1).strip()
+                seller = re.sub(r'\s+\d+.*$', '', seller)
+                if len(seller) > 2 and len(seller) < 100:
+                    return seller
+
+        return ""
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
         vehicle_pattern = r'(\d{3}-\d+)\s+(?:[A-Z]-\d+\s+)?(\d{4})\s+([A-Z]+)\s+([A-Z0-9\s]+?)\s+(White|Black|Silver|Gray|Grey|Red|Blue|Green|Brown|Gold|Beige|Tan)\s+([\d,]+)\s+([A-HJ-NPR-Z0-9]{17})'

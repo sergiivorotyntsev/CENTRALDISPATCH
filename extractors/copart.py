@@ -1,15 +1,35 @@
 """Copart document extractor."""
 import re
+import logging
 from typing import Optional
 from datetime import datetime
 
 from extractors.base import BaseExtractor
-from extractors.address_parser import extract_pickup_address
+from extractors.address_parser import extract_pickup_address, extract_lines_after_label
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
+
+logger = logging.getLogger(__name__)
 
 
 class CopartExtractor(BaseExtractor):
     """Extractor for Copart Sales Receipt/Bill of Sale documents."""
+
+    # Default label patterns for fields (can be overridden by learned rules)
+    DEFAULT_LABELS = {
+        'pickup_address': [
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT',
+            r'LOT\s*(?:LOCATION|ADDRESS)',
+        ],
+        'buyer_name': [
+            r'MEMBER',
+            r'SOLD\s*TO',
+            r'BUYER',
+        ],
+        'seller_name': [
+            r'SELLER',
+            r'SOLD\s*(?:BY|THROUGH)',
+        ],
+    }
 
     @property
     def source(self) -> AuctionSource:
@@ -68,6 +88,9 @@ class CopartExtractor(BaseExtractor):
         if not self.can_extract(text):
             return None
 
+        # Load learned rules before extraction
+        self.load_learned_rules()
+
         invoice = AuctionInvoice(source=self.source, buyer_id="", buyer_name="")
 
         # Extract buyer ID (MEMBER number)
@@ -75,8 +98,11 @@ class CopartExtractor(BaseExtractor):
         if member_match:
             invoice.buyer_id = member_match.group(1)
 
-        # Extract buyer name - look on lines BELOW the MEMBER line
+        # Extract buyer name using learned rules or defaults
         invoice.buyer_name = self._extract_buyer_name(text)
+
+        # Extract seller name using learned rules or defaults
+        invoice.seller_name = self._extract_seller_name(text)
 
         lot_match = re.search(r'LOT#[:\s]+(\d+)', text)
         if lot_match:
@@ -96,6 +122,7 @@ class CopartExtractor(BaseExtractor):
                 if invoice.sale_date:
                     break
 
+        # Extract pickup location using learned rules or defaults
         pickup_location = self._extract_pickup_location(text)
         if pickup_location:
             invoice.pickup_address = pickup_location
@@ -120,17 +147,102 @@ class CopartExtractor(BaseExtractor):
         return invoice
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        """Extract pickup address using shared parser."""
-        # Use the shared address parser with Copart-specific labels
+        """Extract pickup address using learned rules or shared parser."""
+        # First check for learned rules
+        rule = self.get_learned_rule('pickup_address')
+
+        if rule and rule.label_patterns:
+            logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
+            # Try learned patterns first
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern)
+                if lines:
+                    # Parse address from lines
+                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns)
+                    if addr:
+                        return addr
+
+        # Fallback to default extraction
         return extract_pickup_address(
             text,
             source="Copart",
-            custom_labels=[
-                r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT',
-                r'LOT\s*(?:LOCATION|ADDRESS)',
-                r'Copart\s+Location',
-            ]
+            custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
         )
+
+    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
+        """Parse address from extracted lines."""
+        if not lines:
+            return None
+
+        # Filter out excluded patterns
+        if exclude_patterns:
+            filtered_lines = []
+            for line in lines:
+                excluded = False
+                for pattern in exclude_patterns:
+                    if pattern.lower() in line.lower():
+                        excluded = True
+                        break
+                if not excluded:
+                    filtered_lines.append(line)
+            lines = filtered_lines
+
+        if not lines:
+            return None
+
+        # Try to parse address
+        street = lines[0] if lines else ""
+
+        # Look for city/state/zip in remaining lines
+        city, state, zip_code = "", "", ""
+        for line in lines[1:]:
+            parsed_city, parsed_state, parsed_zip = self.parse_address(line)
+            if parsed_city and parsed_state:
+                city, state, zip_code = parsed_city, parsed_state, parsed_zip
+                break
+
+        if street or (city and state):
+            return Address(
+                name="Copart",
+                street=street,
+                city=city,
+                state=state,
+                postal_code=zip_code,
+            )
+
+        return None
+
+    def _extract_seller_name(self, text: str) -> str:
+        """Extract seller name using learned rules or defaults."""
+        # Check for learned rule
+        rule = self.get_learned_rule('seller_name')
+
+        if rule and rule.label_patterns:
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern, max_lines=3)
+                if lines:
+                    # Get the first non-excluded line
+                    for line in lines:
+                        if not rule.should_exclude(line):
+                            # Clean up the seller name
+                            seller = re.sub(r'\s+\d+.*$', '', line.strip())
+                            if len(seller) > 2 and len(seller) < 100:
+                                return seller
+
+        # Fallback: try default patterns
+        seller_patterns = [
+            r'SELLER[:\s]*\n([A-Z][A-Za-z\s\-\.]+?)(?:\n|SOLD)',
+            r'SELLER[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|SOLD)',
+        ]
+        for pattern in seller_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                seller = match.group(1).strip()
+                seller = re.sub(r'\s+\d+.*$', '', seller)
+                if len(seller) > 2 and len(seller) < 100:
+                    return seller
+
+        return ""
 
     def _extract_buyer_name(self, text: str) -> str:
         """
