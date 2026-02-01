@@ -7,9 +7,10 @@ Endpoints for testing and managing email ingestion.
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from api.auth import User, require_admin, require_auth
 from api.database import get_connection
 from api.routes.integrations.utils import (
     TestConnectionResponse,
@@ -65,11 +66,12 @@ class EmailActivity(BaseModel):
 
 
 @router.post("/test", response_model=TestConnectionResponse)
-async def test_email_connection():
+async def test_email_connection(user: User = Depends(require_auth)):
     """
     Test email IMAP connection.
 
     Verifies IMAP server connection and authentication.
+    Requires authentication.
     """
     import imaplib
 
@@ -156,8 +158,8 @@ async def test_email_connection():
 
 
 @router.get("/rules", response_model=list[EmailRule])
-async def get_email_rules():
-    """Get configured email processing rules."""
+async def get_email_rules(user: User = Depends(require_auth)):
+    """Get configured email processing rules. Requires authentication."""
     from api.routes.settings import load_settings
 
     settings = load_settings()
@@ -166,8 +168,8 @@ async def get_email_rules():
 
 
 @router.put("/rules")
-async def update_email_rules(request: EmailRulesUpdate):
-    """Update email processing rules."""
+async def update_email_rules(request: EmailRulesUpdate, admin: User = Depends(require_admin)):
+    """Update email processing rules. Requires admin role."""
     from api.routes.settings import load_settings, save_settings
 
     settings = load_settings()
@@ -213,8 +215,9 @@ def init_email_activity_table():
 async def get_email_activity(
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None),
+    user: User = Depends(require_auth),
 ):
-    """Get email ingestion activity log."""
+    """Get email ingestion activity log. Requires authentication."""
     init_email_activity_table()
 
     sql = "SELECT * FROM email_activity_log WHERE 1=1"

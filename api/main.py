@@ -3,7 +3,8 @@
 Run with: uvicorn api.main:app --reload --port 8000
 
 Endpoints:
-- /api/settings - Configuration management
+- /api/auth - Authentication (login, register, etc.)
+- /api/settings - Configuration management (requires auth)
 - /api/test - Test/Sandbox (upload, preview, dry-run)
 - /api/runs - Run history and logs
 - /api/health - Health check
@@ -15,6 +16,7 @@ Endpoints:
 - /api/models - ML model versions and training
 """
 
+import os
 import sys
 import uuid
 from contextvars import ContextVar
@@ -49,6 +51,7 @@ from api.routes import (
     test,
     warehouses,
 )
+from api.routes.auth_routes import router as auth_router
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -95,15 +98,22 @@ app = FastAPI(
 # Request ID middleware - add first so it runs for all requests
 app.add_middleware(RequestIDMiddleware)
 
-# CORS for frontend
+# CORS configuration - use allowlist in production
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else ["*"]
+if CORS_ORIGINS == [""]:
+    CORS_ORIGINS = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to specific origins
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID"],  # Allow frontend to read request ID
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+# Include auth router first
+app.include_router(auth_router)
 
 # Include original routers
 app.include_router(health.router, prefix="/api", tags=["Health"])
@@ -195,6 +205,11 @@ async def startup():
     from api.routes.field_mappings import init_template_schema
 
     init_template_schema()
+
+    # Initialize auth - ensure admin user exists
+    from api.auth import ensure_admin_exists
+
+    ensure_admin_exists()
 
 
 # Serve frontend (simple HTML for now)

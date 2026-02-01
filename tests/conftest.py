@@ -7,27 +7,33 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Set environment variables BEFORE any imports that might use them
+TEST_DB_PATH = tempfile.mktemp(suffix=".db")
+TEST_AUTH_CONFIG_PATH = tempfile.mktemp(suffix=".json")
+
+os.environ["DATABASE_PATH"] = TEST_DB_PATH
+os.environ["DATA_DIR"] = tempfile.mkdtemp()
+os.environ["UPLOADS_DIR"] = tempfile.mkdtemp()
+os.environ["LOG_LEVEL"] = "WARNING"
+os.environ["JWT_SECRET_KEY"] = "test-secret-key-for-testing-only"
+os.environ["AUTH_CONFIG_PATH"] = TEST_AUTH_CONFIG_PATH
+
 import pytest
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Use a test database
-TEST_DB_PATH = tempfile.mktemp(suffix=".db")
-
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment():
-    """Set up test environment variables."""
-    os.environ["DATABASE_PATH"] = TEST_DB_PATH
-    os.environ["DATA_DIR"] = tempfile.mkdtemp()
-    os.environ["UPLOADS_DIR"] = tempfile.mkdtemp()
-    os.environ["LOG_LEVEL"] = "WARNING"
+    """Set up test environment variables (already set at module level)."""
     yield
     # Cleanup
     if os.path.exists(TEST_DB_PATH):
         os.remove(TEST_DB_PATH)
+    if os.path.exists(TEST_AUTH_CONFIG_PATH):
+        os.remove(TEST_AUTH_CONFIG_PATH)
 
 
 @pytest.fixture(scope="session")
@@ -44,6 +50,31 @@ def client(app):
     from fastapi.testclient import TestClient
 
     return TestClient(app)
+
+
+@pytest.fixture(scope="session")
+def auth_headers(app):
+    """Get authentication headers for API requests."""
+    from api.auth import UserRole, create_token, create_user
+
+    # Create test admin user
+    try:
+        create_user("test-admin", "test-password", UserRole.ADMIN)
+    except Exception:
+        pass  # User may already exist
+
+    token = create_token("test-admin", "admin")
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="session")
+def auth_client(app, auth_headers):
+    """Create authenticated test client."""
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    client.headers.update(auth_headers)
+    return client
 
 
 @pytest.fixture

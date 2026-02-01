@@ -250,14 +250,19 @@ class TestWarehousesEndpoint:
 class TestIntegrationsEndpoint:
     """Contract tests for /api/integrations/ endpoint."""
 
-    def test_audit_log_returns_200(self, client):
-        """Audit log should return 200."""
+    def test_audit_log_requires_auth(self, client):
+        """Audit log should return 401 without auth."""
         response = client.get("/api/integrations/audit-log")
+        assert response.status_code == 401
+
+    def test_audit_log_returns_200(self, auth_client):
+        """Audit log should return 200 with auth."""
+        response = auth_client.get("/api/integrations/audit-log")
         assert response.status_code == 200
 
-    def test_audit_log_response_is_list(self, client):
+    def test_audit_log_response_is_list(self, auth_client):
         """Audit log should return array."""
-        response = client.get("/api/integrations/audit-log")
+        response = auth_client.get("/api/integrations/audit-log")
         data = response.json()
         assert isinstance(data, list)
 

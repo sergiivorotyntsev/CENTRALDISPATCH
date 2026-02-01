@@ -8,9 +8,10 @@ import asyncio
 import time
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from api.auth import User, require_auth, require_operator
 from api.routes.integrations.utils import (
     TestConnectionResponse,
     log_integration_action,
@@ -52,11 +53,12 @@ class CDExportResponse(BaseModel):
 
 
 @router.post("/test", response_model=TestConnectionResponse)
-async def test_cd_connection():
+async def test_cd_connection(user: User = Depends(require_auth)):
     """
     Test Central Dispatch API connection.
 
     Verifies API credentials and marketplace access.
+    Requires authentication.
     """
     from api.routes.settings import load_settings
 
@@ -146,12 +148,13 @@ async def test_cd_connection():
 
 
 @router.post("/dry-run", response_model=CDDryRunResponse)
-async def cd_dry_run(data: CDDryRunRequest):
+async def cd_dry_run(data: CDDryRunRequest, user: User = Depends(require_operator)):
     """
     Validate an extraction run for CD export.
 
     Checks all required fields and validates format.
     Does not actually send to CD.
+    Requires operator role.
     """
     from api.routes.exports import build_cd_payload
 
@@ -186,11 +189,12 @@ async def cd_dry_run(data: CDDryRunRequest):
 
 
 @router.post("/export", response_model=CDExportResponse)
-async def cd_export_with_retry(data: CDExportRequest):
+async def cd_export_with_retry(data: CDExportRequest, user: User = Depends(require_operator)):
     """
     Export to Central Dispatch with automatic retry.
 
     Retries up to 3 times with exponential backoff on failure.
+    Requires operator role.
     """
     from api.models import ExportJobRepository, ExtractionRunRepository
     from api.routes.exports import build_cd_payload, send_to_cd

@@ -1,11 +1,18 @@
-"""Settings management endpoints."""
+"""Settings management endpoints.
+
+All endpoints require authentication:
+- GET endpoints: require_auth (any authenticated user)
+- PUT/POST endpoints: require_admin (admin role only)
+"""
 
 import json
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from api.auth import User, require_admin, require_auth
 
 router = APIRouter()
 
@@ -133,11 +140,12 @@ def mask_secret(value: str) -> str:
 
 
 @router.get("/status", response_model=SettingsStatus)
-async def get_settings_status():
+async def get_settings_status(user: User = Depends(require_auth)):
     """
     Get a summary of configuration status.
 
     Shows which integrations are configured without exposing secrets.
+    Requires authentication.
     """
     settings = load_settings()
 
@@ -171,9 +179,11 @@ async def get_settings_status():
 
 
 @router.get("/", response_model=AllSettings)
-async def get_all_settings():
+async def get_all_settings(user: User = Depends(require_auth)):
     """
     Get all settings (secrets masked).
+
+    Requires authentication.
     """
     settings = load_settings()
 
@@ -215,9 +225,11 @@ async def get_all_settings():
 
 
 @router.put("/export-targets")
-async def update_export_targets(targets: ExportTargets):
+async def update_export_targets(targets: ExportTargets, admin: User = Depends(require_admin)):
     """
     Update which export targets are enabled.
+
+    Requires admin role.
     """
     settings = load_settings()
 
@@ -236,9 +248,11 @@ async def update_export_targets(targets: ExportTargets):
 
 
 @router.put("/sheets")
-async def update_sheets_settings(sheets: SheetsSettings):
+async def update_sheets_settings(sheets: SheetsSettings, admin: User = Depends(require_admin)):
     """
     Update Google Sheets settings.
+
+    Requires admin role.
     """
     settings = load_settings()
 
@@ -262,9 +276,11 @@ async def update_sheets_settings(sheets: SheetsSettings):
 
 
 @router.put("/clickup")
-async def update_clickup_settings(clickup: ClickUpSettings):
+async def update_clickup_settings(clickup: ClickUpSettings, admin: User = Depends(require_admin)):
     """
     Update ClickUp settings.
+
+    Requires admin role.
     """
     settings = load_settings()
 
@@ -292,9 +308,11 @@ async def update_clickup_settings(clickup: ClickUpSettings):
 
 
 @router.put("/cd")
-async def update_cd_settings(cd: CDSettings):
+async def update_cd_settings(cd: CDSettings, admin: User = Depends(require_admin)):
     """
     Update Central Dispatch settings.
+
+    Requires admin role.
     """
     settings = load_settings()
 
@@ -322,9 +340,11 @@ async def update_cd_settings(cd: CDSettings):
 
 
 @router.put("/email")
-async def update_email_settings(email: EmailSettings):
+async def update_email_settings(email: EmailSettings, admin: User = Depends(require_admin)):
     """
     Update email ingestion settings.
+
+    Requires admin role.
     """
     settings = load_settings()
 
@@ -346,15 +366,15 @@ async def update_email_settings(email: EmailSettings):
 
 
 @router.get("/warehouses", response_model=list[WarehouseConfig])
-async def get_warehouses():
-    """Get all configured warehouses."""
+async def get_warehouses(user: User = Depends(require_auth)):
+    """Get all configured warehouses. Requires authentication."""
     settings = load_settings()
     return [WarehouseConfig(**w) for w in settings.get("warehouses", [])]
 
 
 @router.put("/warehouses")
-async def update_warehouses(warehouses: list[WarehouseConfig]):
-    """Update warehouse list."""
+async def update_warehouses(warehouses: list[WarehouseConfig], admin: User = Depends(require_admin)):
+    """Update warehouse list. Requires admin role."""
     settings = load_settings()
     settings["warehouses"] = [w.model_dump() for w in warehouses]
     save_settings(settings)
@@ -363,8 +383,8 @@ async def update_warehouses(warehouses: list[WarehouseConfig]):
 
 
 @router.post("/warehouses")
-async def add_warehouse(warehouse: WarehouseConfig):
-    """Add a new warehouse."""
+async def add_warehouse(warehouse: WarehouseConfig, admin: User = Depends(require_admin)):
+    """Add a new warehouse. Requires admin role."""
     settings = load_settings()
     warehouses = settings.get("warehouses", [])
 
@@ -382,8 +402,8 @@ async def add_warehouse(warehouse: WarehouseConfig):
 
 
 @router.delete("/warehouses/{warehouse_id}")
-async def delete_warehouse(warehouse_id: str):
-    """Delete a warehouse by ID."""
+async def delete_warehouse(warehouse_id: str, admin: User = Depends(require_admin)):
+    """Delete a warehouse by ID. Requires admin role."""
     settings = load_settings()
     warehouses = settings.get("warehouses", [])
 
@@ -400,12 +420,12 @@ async def delete_warehouse(warehouse_id: str):
 
 
 @router.post("/test-sheets")
-async def test_sheets_connection():
+async def test_sheets_connection(user: User = Depends(require_auth)):
     """
     Test Google Sheets connection.
 
     Attempts to connect to the configured spreadsheet and
-    verify read/write access.
+    verify read/write access. Requires authentication.
     """
     settings = load_settings()
     sheets_config = settings.get("sheets", {})

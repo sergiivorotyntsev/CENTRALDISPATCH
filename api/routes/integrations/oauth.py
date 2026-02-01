@@ -9,9 +9,10 @@ Supports:
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.auth import User, require_admin, require_auth
 from api.database import get_connection
 from api.routes.integrations.utils import (
     decrypt_secret,
@@ -240,11 +241,12 @@ async def refresh_microsoft_token(
 
 
 @router.post("/microsoft/init", response_model=OAuthInitResponse)
-async def init_microsoft_oauth():
+async def init_microsoft_oauth(admin: User = Depends(require_admin)):
     """
     Initialize Microsoft OAuth2 flow.
 
     Returns the authorization URL to redirect the user to.
+    Requires admin role.
     """
     import uuid
 
@@ -363,11 +365,12 @@ async def oauth_callback(
 
 
 @router.get("/token/microsoft")
-async def get_microsoft_token():
+async def get_microsoft_token(user: User = Depends(require_auth)):
     """
     Get current Microsoft OAuth token (refreshes if expired).
 
     Returns the access token for IMAP XOAUTH2 authentication.
+    Requires authentication.
     """
     from api.routes.settings import load_settings
 
@@ -428,8 +431,8 @@ async def get_microsoft_token():
 
 
 @router.delete("/token/microsoft")
-async def revoke_microsoft_token():
-    """Revoke and delete stored Microsoft OAuth token."""
+async def revoke_microsoft_token(admin: User = Depends(require_admin)):
+    """Revoke and delete stored Microsoft OAuth token. Requires admin role."""
     from api.routes.settings import load_settings
 
     settings = load_settings()

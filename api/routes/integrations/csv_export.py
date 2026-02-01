@@ -9,9 +9,10 @@ import io
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
+from api.auth import User, require_auth
 from api.database import get_connection
 from api.routes.integrations.utils import log_integration_action
 
@@ -23,11 +24,13 @@ async def export_extractions_csv(
     status: Optional[str] = Query(None),
     auction_type_id: Optional[int] = Query(None),
     limit: int = Query(1000, le=10000),
+    user: User = Depends(require_auth),
 ):
     """
     Export extraction runs as CSV.
 
     Includes all fields and review corrections.
+    Requires authentication.
     """
     sql = """
         SELECT

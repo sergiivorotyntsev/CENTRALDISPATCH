@@ -6,8 +6,9 @@ Endpoints for testing and managing Google Sheets connection.
 
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from api.auth import User, require_auth
 from api.routes.integrations.utils import (
     TestConnectionResponse,
     log_integration_action,
@@ -17,12 +18,13 @@ router = APIRouter(prefix="/sheets", tags=["Google Sheets"])
 
 
 @router.post("/test", response_model=TestConnectionResponse)
-async def test_sheets_connection():
+async def test_sheets_connection(user: User = Depends(require_auth)):
     """
     Test Google Sheets connection.
 
     Verifies service account credentials and spreadsheet access.
     Tests both read and write permissions.
+    Requires authentication.
     """
     from api.routes.settings import load_settings
 

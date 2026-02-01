@@ -11,8 +11,9 @@ Aggregates all integration routers:
 
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from api.auth import User, require_admin, require_auth
 from api.routes.integrations import cd, clickup, csv_export, email, oauth, sheets
 from api.routes.integrations.utils import (
     AuditLogEntry,
@@ -45,8 +46,9 @@ async def get_integration_audit_log(
     integration: Optional[str] = Query(None, description="Filter by integration"),
     status: Optional[str] = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(require_auth),
 ):
-    """Get integration audit log entries."""
+    """Get integration audit log entries. Requires authentication."""
     return get_audit_log(integration=integration, status=status, limit=limit)
 
 
@@ -80,8 +82,11 @@ class WarehouseResponse(BaseModel):
 
 
 @router.post("/warehouses", response_model=WarehouseResponse)
-async def add_warehouse_legacy(warehouse: WarehouseCreate):
-    """Add a new warehouse (legacy - use /api/warehouses instead)."""
+async def add_warehouse_legacy(
+    warehouse: WarehouseCreate,
+    admin: User = Depends(require_admin),
+):
+    """Add a new warehouse (legacy - use /api/warehouses instead). Requires admin."""
     from api.routes.settings import load_settings, save_settings
 
     settings = load_settings()
@@ -108,8 +113,11 @@ async def add_warehouse_legacy(warehouse: WarehouseCreate):
 
 
 @router.delete("/warehouses/{code}")
-async def delete_warehouse_legacy(code: str):
-    """Delete a warehouse by code (legacy - use /api/warehouses instead)."""
+async def delete_warehouse_legacy(
+    code: str,
+    admin: User = Depends(require_admin),
+):
+    """Delete a warehouse by code (legacy - use /api/warehouses instead). Requires admin."""
     from api.routes.settings import load_settings, save_settings
 
     settings = load_settings()

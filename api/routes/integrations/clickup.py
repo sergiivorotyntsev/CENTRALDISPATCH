@@ -6,9 +6,10 @@ Endpoints for testing and managing ClickUp connection.
 
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from api.auth import User, require_auth
 from api.routes.integrations.utils import (
     TestConnectionResponse,
     log_integration_action,
@@ -34,11 +35,12 @@ class ClickUpCustomFieldsResponse(BaseModel):
 
 
 @router.post("/test", response_model=TestConnectionResponse)
-async def test_clickup_connection():
+async def test_clickup_connection(user: User = Depends(require_auth)):
     """
     Test ClickUp API connection.
 
     Verifies API key is valid and can access the configured list.
+    Requires authentication.
     """
     from api.routes.settings import load_settings
 
@@ -111,11 +113,12 @@ async def test_clickup_connection():
 
 
 @router.get("/custom-fields/{list_id}", response_model=ClickUpCustomFieldsResponse)
-async def get_clickup_custom_fields(list_id: str):
+async def get_clickup_custom_fields(list_id: str, user: User = Depends(require_auth)):
     """
     Get custom fields for a ClickUp list.
 
     Useful for setting up field mappings.
+    Requires authentication.
     """
     from api.routes.settings import load_settings
 
