@@ -399,6 +399,63 @@ async def list_extraction_runs(
     return ExtractionRunListResponse(items=items, total=total)
 
 
+class ExtractionStatsResponse(BaseModel):
+    """Response model for extraction run statistics."""
+    total: int
+    last_24h: int
+    by_status: dict
+    by_auction_type: dict
+    needs_review_count: int
+
+
+@router.get("/stats", response_model=ExtractionStatsResponse)
+async def get_extraction_stats():
+    """
+    Get extraction run statistics.
+
+    Returns aggregate counts by status and auction type.
+    """
+    from api.database import get_connection
+    from datetime import datetime, timedelta
+
+    with get_connection() as conn:
+        # Total count
+        total = conn.execute("SELECT COUNT(*) FROM extraction_runs").fetchone()[0]
+
+        # Last 24h
+        yesterday = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        last_24h = conn.execute(
+            "SELECT COUNT(*) FROM extraction_runs WHERE created_at >= ?",
+            (yesterday,)
+        ).fetchone()[0]
+
+        # By status
+        status_rows = conn.execute(
+            "SELECT status, COUNT(*) as cnt FROM extraction_runs GROUP BY status"
+        ).fetchall()
+        by_status = {row["status"]: row["cnt"] for row in status_rows}
+
+        # By auction type
+        auction_rows = conn.execute("""
+            SELECT at.code, COUNT(*) as cnt
+            FROM extraction_runs er
+            JOIN auction_types at ON er.auction_type_id = at.id
+            GROUP BY at.code
+        """).fetchall()
+        by_auction_type = {row["code"]: row["cnt"] for row in auction_rows}
+
+        # Needs review count
+        needs_review_count = by_status.get("needs_review", 0)
+
+    return ExtractionStatsResponse(
+        total=total,
+        last_24h=last_24h,
+        by_status=by_status,
+        by_auction_type=by_auction_type,
+        needs_review_count=needs_review_count,
+    )
+
+
 @router.get("/needs-review", response_model=ExtractionRunListResponse)
 async def list_runs_needing_review(
     limit: int = Query(50, ge=1, le=500),

@@ -1,17 +1,42 @@
 """Health check endpoints."""
+import subprocess
+from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 from pathlib import Path
 
 router = APIRouter()
+
+# Version info - updated on build/deploy
+APP_VERSION = "1.1.0"
+BUILD_TIME = datetime.utcnow().isoformat() + "Z"
+
+
+def get_git_info() -> Dict[str, str]:
+    """Get git commit info for version tracking."""
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        git_branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        return {"sha": git_sha, "branch": git_branch}
+    except Exception:
+        return {"sha": "unknown", "branch": "unknown"}
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str
     version: str
+    git_sha: str
+    git_branch: str
+    build_time: str
     checks: Dict[str, Any]
 
 
@@ -69,9 +94,14 @@ async def health_check():
     except Exception as e:
         checks["export_targets"] = {"status": "error", "error": str(e)}
 
+    git_info = get_git_info()
+
     return HealthResponse(
         status=overall_status,
-        version="1.0.0",
+        version=APP_VERSION,
+        git_sha=git_info["sha"],
+        git_branch=git_info["branch"],
+        build_time=BUILD_TIME,
         checks=checks,
     )
 

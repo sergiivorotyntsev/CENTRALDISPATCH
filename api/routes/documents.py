@@ -64,6 +64,16 @@ class DocumentUploadResponse(BaseModel):
     is_duplicate: bool = False
     raw_text_preview: Optional[str] = None
 
+    # Extraction run info (auto-created on upload)
+    run_id: Optional[int] = None
+    run_status: Optional[str] = None
+    needs_ocr: bool = False
+    text_length: int = 0
+
+    # Classification info
+    detected_source: Optional[str] = None
+    classification_score: Optional[float] = None
+
 
 class DocumentStatsResponse(BaseModel):
     """Response model for document statistics."""
@@ -82,15 +92,22 @@ class DocumentStatsResponse(BaseModel):
 async def upload_document(
     file: UploadFile = File(..., description="PDF document to upload"),
     auction_type_id: int = Form(..., description="Auction type ID"),
-    dataset_split: str = Form(..., description="Dataset split: train or test"),
+    dataset_split: str = Form("train", description="Dataset split: train or test"),
     uploaded_by: Optional[str] = Form(None, description="Uploader identifier"),
+    auto_extract: bool = Form(True, description="Automatically run extraction after upload"),
 ):
     """
     Upload a document for extraction and training.
 
     The document is associated with an auction type and marked as train or test.
     Duplicate detection is performed using SHA256 hash.
+
+    IMPORTANT: This endpoint automatically creates an ExtractionRun after upload.
+    - If text_length >= 100: runs extraction, status = needs_review
+    - If text_length < 100: marks as manual_required (needs OCR)
     """
+    from api.models import ExtractionRunRepository
+
     # Validate auction type
     auction_type = AuctionTypeRepository.get_by_id(auction_type_id)
     if not auction_type:
@@ -114,16 +131,28 @@ async def upload_document(
     # Check for duplicate
     existing = DocumentRepository.get_by_sha256(sha256)
     if existing:
+        # For duplicates, still return run info if exists
+        from api.database import get_connection
+        with get_connection() as conn:
+            run_row = conn.execute(
+                "SELECT id, status FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC LIMIT 1",
+                (existing.id,)
+            ).fetchone()
+
         return DocumentUploadResponse(
             document=DocumentResponse(
                 **existing.__dict__,
                 auction_type_code=auction_type.code,
             ),
             is_duplicate=True,
+            run_id=run_row["id"] if run_row else None,
+            run_status=run_row["status"] if run_row else None,
         )
 
     # Validate PDF structure BEFORE saving (P0 requirement)
     import io
+    page_count = 0
+    raw_text = ""
     try:
         import pdfplumber
         with pdfplumber.open(io.BytesIO(content)) as pdf:
@@ -153,9 +182,9 @@ async def upload_document(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # Warn if no text extracted (might need OCR)
-    if not raw_text or len(raw_text.strip()) < 50:
-        print(f"Warning: PDF has minimal text ({len(raw_text) if raw_text else 0} chars), may need OCR")
+    # Determine if OCR is needed (text too short)
+    text_length = len(raw_text) if raw_text else 0
+    needs_ocr = text_length < 100
 
     # Create document record
     doc_id = DocumentRepository.create(
@@ -169,14 +198,63 @@ async def upload_document(
         uploaded_by=uploaded_by,
     )
 
-    # Update page count if extracted
-    if page_count > 0:
-        from api.database import get_connection
-        with get_connection() as conn:
-            conn.execute("UPDATE documents SET page_count = ? WHERE id = ?", (page_count, doc_id))
-            conn.commit()
+    # Update page count
+    from api.database import get_connection
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE documents SET page_count = ? WHERE id = ?",
+            (page_count, doc_id)
+        )
+        conn.commit()
 
     doc = DocumentRepository.get_by_id(doc_id)
+
+    # Auto-create extraction run
+    run_id = None
+    run_status = None
+    detected_source = None
+    classification_score = None
+
+    if auto_extract:
+        # Create extraction run
+        run_id = ExtractionRunRepository.create(
+            document_id=doc_id,
+            auction_type_id=auction_type_id,
+            extractor_kind="rule",
+        )
+
+        if needs_ocr:
+            # Mark as manual_required - can't extract without OCR
+            ExtractionRunRepository.update(
+                run_id,
+                status="manual_required",
+                error_message="Document has insufficient text for extraction. OCR processing required.",
+            )
+            run_status = "manual_required"
+        else:
+            # Run classification first
+            try:
+                from extractors import ExtractorManager
+                manager = ExtractorManager()
+                classification = manager.classify(str(file_path))
+                detected_source = classification.source.value
+                classification_score = round(classification.score * 100, 1)
+
+                # Run extraction
+                from api.routes.extractions import run_extraction
+                run_extraction(run_id, doc_id, auction_type_id, "rule", None)
+
+                # Get updated status
+                run = ExtractionRunRepository.get_by_id(run_id)
+                run_status = run.status if run else "failed"
+            except Exception as e:
+                # Mark as failed if extraction crashes
+                ExtractionRunRepository.update(
+                    run_id,
+                    status="failed",
+                    error_message=str(e),
+                )
+                run_status = "failed"
 
     return DocumentUploadResponse(
         document=DocumentResponse(
@@ -185,6 +263,12 @@ async def upload_document(
         ),
         is_duplicate=False,
         raw_text_preview=raw_text[:500] if raw_text else None,
+        run_id=run_id,
+        run_status=run_status,
+        needs_ocr=needs_ocr,
+        text_length=text_length,
+        detected_source=detected_source,
+        classification_score=classification_score,
     )
 
 

@@ -19,12 +19,19 @@ function Dashboard() {
     try {
       const [healthData, statsData, runsData] = await Promise.all([
         api.getHealth(),
-        api.getRunStats(),
-        api.listRuns({ limit: 20 }),
+        api.getExtractionStats(),
+        api.listExtractions({ limit: 20 }),
       ])
       setHealth(healthData)
-      setStats(statsData)
-      setRecentRuns(runsData.runs || [])
+      // Map extraction stats to expected format
+      setStats({
+        total: statsData.total || 0,
+        last_24h: statsData.last_24h || 0,
+        by_status: statsData.by_status || {},
+        by_auction: statsData.by_auction_type || {},
+        needs_review_count: statsData.needs_review_count || 0,
+      })
+      setRecentRuns(runsData.items || [])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -88,12 +95,13 @@ function Dashboard() {
       {/* Stats Overview */}
       <div className="mb-8">
         <h2 className="text-lg font-semibold text-gray-700 mb-4">Statistics</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
           <StatCard label="Total Runs" value={stats?.total || 0} />
           <StatCard label="Last 24h" value={stats?.last_24h || 0} />
-          <StatCard label="Success" value={stats?.by_status?.ok || 0} color="green" />
+          <StatCard label="Needs Review" value={stats?.needs_review_count || stats?.by_status?.needs_review || 0} color="yellow" />
+          <StatCard label="Approved" value={(stats?.by_status?.approved || 0) + (stats?.by_status?.reviewed || 0)} color="green" />
           <StatCard label="Failed" value={(stats?.by_status?.failed || 0) + (stats?.by_status?.error || 0)} color="red" />
-          <StatCard label="Pending" value={stats?.by_status?.pending || 0} color="yellow" />
+          <StatCard label="Manual Required" value={stats?.by_status?.manual_required || 0} color="blue" />
         </div>
       </div>
 
@@ -123,18 +131,18 @@ function Dashboard() {
               <tr>
                 <th>ID</th>
                 <th>Time</th>
-                <th>Source</th>
+                <th>Extractor</th>
                 <th>Auction</th>
                 <th>Status</th>
                 <th>Score</th>
-                <th>Details</th>
+                <th>Document</th>
               </tr>
             </thead>
             <tbody>
               {recentRuns.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="text-center text-gray-500 py-8">
-                    No runs yet. Upload a PDF in Test Lab to get started.
+                    No runs yet. Upload a PDF in Documents to get started.
                   </td>
                 </tr>
               ) : (
@@ -142,14 +150,14 @@ function Dashboard() {
                   <tr key={run.id}>
                     <td className="font-mono text-xs">{run.id}</td>
                     <td className="text-xs text-gray-500">
-                      {new Date(run.created_at).toLocaleString()}
+                      {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
                     </td>
                     <td>
-                      <span className="badge badge-gray">{run.source_type}</span>
+                      <span className="badge badge-gray">{run.extractor_kind || 'rule'}</span>
                     </td>
                     <td>
-                      {run.auction_detected ? (
-                        <span className="badge badge-info">{run.auction_detected}</span>
+                      {run.auction_type_code ? (
+                        <span className="badge badge-info">{run.auction_type_code}</span>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
@@ -158,19 +166,19 @@ function Dashboard() {
                       <StatusBadge status={run.status} />
                     </td>
                     <td>
-                      {run.extraction_score !== null ? (
+                      {run.extraction_score != null ? (
                         <span className={`font-medium ${
-                          run.extraction_score >= 60 ? 'text-green-600' :
-                          run.extraction_score >= 30 ? 'text-yellow-600' : 'text-red-600'
+                          run.extraction_score >= 0.6 ? 'text-green-600' :
+                          run.extraction_score >= 0.3 ? 'text-yellow-600' : 'text-red-600'
                         }`}>
-                          {run.extraction_score.toFixed(1)}%
+                          {(run.extraction_score * 100).toFixed(1)}%
                         </span>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="text-xs text-gray-500 truncate max-w-[200px]">
-                      {run.attachment_name || run.error_message || '-'}
+                      {run.document_filename || (run.errors && run.errors[0]?.error) || '-'}
                     </td>
                   </tr>
                 ))
@@ -234,15 +242,25 @@ function StatusBadge({ status }) {
     ok: 'badge-success',
     completed: 'badge-success',
     success: 'badge-success',
+    approved: 'badge-success',
+    reviewed: 'badge-success',
+    exported: 'badge-success',
     failed: 'badge-error',
     error: 'badge-error',
     pending: 'badge-warning',
+    needs_review: 'badge-warning',
     processing: 'badge-info',
+    manual_required: 'badge-info',
+  }
+
+  const labels = {
+    needs_review: 'Needs Review',
+    manual_required: 'Manual Required',
   }
 
   return (
     <span className={`badge ${styles[status] || 'badge-gray'}`}>
-      {status}
+      {labels[status] || status}
     </span>
   )
 }

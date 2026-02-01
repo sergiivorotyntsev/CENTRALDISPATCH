@@ -149,6 +149,7 @@ export const api = {
     return request(`/extractions/${query ? `?${query}` : ''}`)
   },
   getExtraction: (id) => request(`/extractions/${id}`),
+  getExtractionStats: () => request('/extractions/stats'),
   runExtraction: (documentId, forceMl = false) => request('/extractions/run', {
     method: 'POST',
     body: JSON.stringify({ document_id: documentId, force_ml: forceMl }),

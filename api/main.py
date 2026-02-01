@@ -16,21 +16,60 @@ Endpoints:
 """
 import os
 import sys
+import uuid
 from pathlib import Path
+from contextvars import ContextVar
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Context variable for request ID - accessible throughout the request lifecycle
+request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from api.routes import settings, test, runs, health
 from api.routes import auction_types, documents, extractions, reviews, exports, models
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
+
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware that adds a unique request ID to each request.
+
+    - Generates a UUID for each request
+    - Sets it in a context variable for access throughout the request
+    - Adds X-Request-ID header to responses
+    """
+    async def dispatch(self, request: Request, call_next):
+        # Check if client sent a request ID, otherwise generate one
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+
+        # Store in context variable for logging/debugging
+        request_id_var.set(request_id)
+
+        # Store on request state for easy access
+        request.state.request_id = request_id
+
+        # Process request
+        response = await call_next(request)
+
+        # Add request ID to response headers
+        response.headers["X-Request-ID"] = request_id
+
+        return response
+
+
+def get_request_id() -> str:
+    """Get the current request ID from context."""
+    return request_id_var.get()
+
 
 app = FastAPI(
     title="Vehicle Transport Automation",
@@ -40,6 +79,9 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
+# Request ID middleware - add first so it runs for all requests
+app.add_middleware(RequestIDMiddleware)
+
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
@@ -47,6 +89,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],  # Allow frontend to read request ID
 )
 
 # Include original routers

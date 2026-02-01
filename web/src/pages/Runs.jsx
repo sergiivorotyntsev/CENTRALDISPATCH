@@ -11,8 +11,7 @@ function Runs() {
   // Filters
   const [filters, setFilters] = useState({
     status: '',
-    source_type: '',
-    auction: '',
+    auction_type_id: '',
     limit: 50,
     offset: 0,
   })
@@ -32,13 +31,12 @@ function Runs() {
     try {
       const params = {}
       if (filters.status) params.status = filters.status
-      if (filters.source_type) params.source_type = filters.source_type
-      if (filters.auction) params.auction = filters.auction
+      if (filters.auction_type_id) params.auction_type_id = filters.auction_type_id
       params.limit = filters.limit
       params.offset = filters.offset
 
-      const data = await api.listRuns(params)
-      setRuns(data.runs || [])
+      const data = await api.listExtractions(params)
+      setRuns(data.items || [])
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -49,8 +47,13 @@ function Runs() {
 
   async function loadStats() {
     try {
-      const data = await api.getRunStats()
-      setStats(data)
+      const data = await api.getExtractionStats()
+      setStats({
+        total: data.total || 0,
+        by_status: data.by_status || {},
+        by_auction: data.by_auction_type || {},
+        needs_review_count: data.needs_review_count || 0,
+      })
     } catch (err) {
       console.error('Failed to load stats:', err)
     }
@@ -60,10 +63,25 @@ function Runs() {
     setSelectedRun(run)
     setLoadingLogs(true)
     try {
-      const logs = await api.getRunLogs(run.id)
+      // Get extraction details with review items
+      const details = await api.getExtraction(run.id)
+      setSelectedRun({
+        ...run,
+        ...details.run,
+        fields: details.fields || [],
+        raw_text_preview: details.raw_text_preview,
+      })
+      // Convert errors to log format
+      const logs = (run.errors || []).map((e, i) => ({
+        id: i,
+        run_id: run.id,
+        timestamp: run.created_at,
+        level: 'ERROR',
+        message: e.error || JSON.stringify(e),
+      }))
       setRunLogs(logs)
     } catch (err) {
-      console.error('Failed to load logs:', err)
+      console.error('Failed to load run details:', err)
       setRunLogs([])
     } finally {
       setLoadingLogs(false)
@@ -74,7 +92,7 @@ function Runs() {
     if (!confirm('Are you sure you want to delete this run?')) return
 
     try {
-      await api.deleteRun(runId)
+      // Extraction runs don't have a delete endpoint yet, so we just remove from UI
       setRuns(runs.filter(r => r.id !== runId))
       if (selectedRun?.id === runId) {
         setSelectedRun(null)
@@ -85,10 +103,10 @@ function Runs() {
     }
   }
 
-  async function handleRetryRun(runId) {
+  async function handleRerunExtraction(documentId) {
     try {
-      const result = await api.retryRun(runId)
-      alert(`Retry created: ${result.new_run_id}`)
+      const result = await api.runExtraction(documentId)
+      alert(`Re-extraction started: Run #${result.id}`)
       loadRuns()
     } catch (err) {
       setError(err.message)
@@ -96,13 +114,8 @@ function Runs() {
   }
 
   function exportCsv() {
-    const params = {}
-    if (filters.status) params.status = filters.status
-    if (filters.source_type) params.source_type = filters.source_type
-    if (filters.auction) params.auction = filters.auction
-    params.limit = 10000
-
-    window.open(api.exportRunsCsv(params), '_blank')
+    // Export not available for extractions yet
+    alert('Export feature coming soon')
   }
 
   function updateFilter(key, value) {
@@ -138,7 +151,7 @@ function Runs() {
       {/* Filters */}
       <div className="card mb-6">
         <div className="card-body">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="form-label">Status</label>
               <select
@@ -149,37 +162,25 @@ function Runs() {
                 <option value="">All</option>
                 <option value="needs_review">Needs Review</option>
                 <option value="approved">Approved</option>
-                <option value="ok">OK</option>
+                <option value="reviewed">Reviewed</option>
+                <option value="exported">Exported</option>
+                <option value="manual_required">Manual Required</option>
                 <option value="failed">Failed</option>
-                <option value="error">Error</option>
                 <option value="pending">Pending</option>
                 <option value="processing">Processing</option>
               </select>
             </div>
             <div>
-              <label className="form-label">Source</label>
+              <label className="form-label">Auction Type</label>
               <select
-                value={filters.source_type}
-                onChange={e => updateFilter('source_type', e.target.value)}
+                value={filters.auction_type_id}
+                onChange={e => updateFilter('auction_type_id', e.target.value)}
                 className="form-select"
               >
-                <option value="">All</option>
-                <option value="email">Email</option>
-                <option value="upload">Upload</option>
-                <option value="batch">Batch</option>
-              </select>
-            </div>
-            <div>
-              <label className="form-label">Auction</label>
-              <select
-                value={filters.auction}
-                onChange={e => updateFilter('auction', e.target.value)}
-                className="form-select"
-              >
-                <option value="">All</option>
-                <option value="COPART">Copart</option>
-                <option value="IAA">IAA</option>
-                <option value="MANHEIM">Manheim</option>
+                <option value="">All Types</option>
+                <option value="1">Copart</option>
+                <option value="2">IAA</option>
+                <option value="3">Manheim</option>
               </select>
             </div>
             <div>
@@ -217,11 +218,10 @@ function Runs() {
                     <tr>
                       <th>ID</th>
                       <th>Time</th>
-                      <th>Source</th>
+                      <th>Document</th>
                       <th>Auction</th>
                       <th>Status</th>
                       <th>Score</th>
-                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -233,14 +233,14 @@ function Runs() {
                       >
                         <td className="font-mono text-xs">{run.id}</td>
                         <td className="text-xs text-gray-500">
-                          {new Date(run.created_at).toLocaleString()}
+                          {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
+                        </td>
+                        <td className="text-xs truncate max-w-[150px]" title={run.document_filename}>
+                          {run.document_filename || `Doc #${run.document_id}`}
                         </td>
                         <td>
-                          <span className="badge badge-gray">{run.source_type}</span>
-                        </td>
-                        <td>
-                          {run.auction_detected ? (
-                            <span className="badge badge-info">{run.auction_detected}</span>
+                          {run.auction_type_code ? (
+                            <span className="badge badge-info">{run.auction_type_code}</span>
                           ) : (
                             <span className="text-gray-400">-</span>
                           )}
@@ -249,24 +249,14 @@ function Runs() {
                           <StatusBadge status={run.status} />
                         </td>
                         <td>
-                          {run.extraction_score !== null ? (
+                          {run.extraction_score != null ? (
                             <span className={`font-medium ${
-                              run.extraction_score >= 60 ? 'text-green-600' :
-                              run.extraction_score >= 30 ? 'text-yellow-600' : 'text-red-600'
+                              run.extraction_score >= 0.6 ? 'text-green-600' :
+                              run.extraction_score >= 0.3 ? 'text-yellow-600' : 'text-red-600'
                             }`}>
-                              {run.extraction_score.toFixed(1)}%
+                              {(run.extraction_score * 100).toFixed(1)}%
                             </span>
                           ) : '-'}
-                        </td>
-                        <td>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteRun(run.id); }}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -306,7 +296,7 @@ function Runs() {
           {selectedRun ? (
             <div className="card">
               <div className="card-header flex items-center justify-between">
-                <h3 className="font-medium">Run Details</h3>
+                <h3 className="font-medium">Extraction Details</h3>
                 <button
                   onClick={() => { setSelectedRun(null); setRunLogs([]); }}
                   className="text-gray-400 hover:text-gray-600"
@@ -327,43 +317,36 @@ function Runs() {
                     <StatusBadge status={selectedRun.status} />
                   </div>
                   <div>
-                    <p className="text-gray-500">Source</p>
-                    <p>{selectedRun.source_type}</p>
+                    <p className="text-gray-500">Extractor</p>
+                    <p>{selectedRun.extractor_kind || 'rule'}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Auction</p>
-                    <p>{selectedRun.auction_detected || '-'}</p>
+                    <p className="text-gray-500">Auction Type</p>
+                    <p>{selectedRun.auction_type_code || '-'}</p>
                   </div>
                   <div>
                     <p className="text-gray-500">Score</p>
-                    <p>{selectedRun.extraction_score?.toFixed(1)}%</p>
+                    <p>{selectedRun.extraction_score != null ? `${(selectedRun.extraction_score * 100).toFixed(1)}%` : '-'}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Warehouse</p>
-                    <p>{selectedRun.warehouse_id || '-'}</p>
+                    <p className="text-gray-500">Processing Time</p>
+                    <p>{selectedRun.processing_time_ms ? `${selectedRun.processing_time_ms}ms` : '-'}</p>
                   </div>
                 </div>
 
-                {selectedRun.attachment_name && (
+                {selectedRun.document_filename && (
                   <div className="text-sm">
-                    <p className="text-gray-500">File</p>
-                    <p className="truncate">{selectedRun.attachment_name}</p>
+                    <p className="text-gray-500">Document</p>
+                    <p className="truncate">{selectedRun.document_filename}</p>
                   </div>
                 )}
 
-                {selectedRun.clickup_task_url && (
+                {selectedRun.errors && selectedRun.errors.length > 0 && (
                   <div className="text-sm">
-                    <p className="text-gray-500">ClickUp Task</p>
-                    <a href={selectedRun.clickup_task_url} target="_blank" className="text-primary-600 hover:underline truncate block">
-                      {selectedRun.clickup_task_url}
-                    </a>
-                  </div>
-                )}
-
-                {selectedRun.error_message && (
-                  <div className="text-sm">
-                    <p className="text-red-600 font-medium">Error</p>
-                    <p className="text-red-600">{selectedRun.error_message}</p>
+                    <p className="text-red-600 font-medium">Errors</p>
+                    {selectedRun.errors.map((err, i) => (
+                      <p key={i} className="text-red-600">{err.error || JSON.stringify(err)}</p>
+                    ))}
                   </div>
                 )}
 
@@ -377,43 +360,63 @@ function Runs() {
                       Review
                     </Link>
                   )}
-                  {(selectedRun.status === 'failed' || selectedRun.status === 'error') && (
+                  {(selectedRun.status === 'failed' || selectedRun.status === 'manual_required') && selectedRun.document_id && (
                     <button
-                      onClick={() => handleRetryRun(selectedRun.id)}
+                      onClick={() => handleRerunExtraction(selectedRun.document_id)}
                       className="btn btn-sm btn-secondary flex-1"
                     >
-                      Retry
+                      Re-extract
                     </button>
                   )}
                 </div>
 
-                {/* Logs */}
-                <div className="border-t border-gray-200 pt-4">
-                  <h4 className="font-medium text-sm mb-2">Logs</h4>
-                  {loadingLogs ? (
-                    <div className="text-center py-4">
-                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto"></div>
-                    </div>
-                  ) : runLogs.length === 0 ? (
-                    <p className="text-sm text-gray-500">No logs available</p>
-                  ) : (
-                    <div className="space-y-2 max-h-64 overflow-auto">
-                      {runLogs.map(log => (
-                        <div key={log.id} className={`text-xs p-2 rounded ${
-                          log.level === 'ERROR' ? 'bg-red-50 text-red-700' :
-                          log.level === 'WARNING' ? 'bg-yellow-50 text-yellow-700' :
-                          'bg-gray-50 text-gray-700'
-                        }`}>
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium">{log.level}</span>
-                            <span className="text-gray-400">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                {/* Extracted Fields */}
+                {selectedRun.fields && selectedRun.fields.length > 0 && (
+                  <div className="border-t border-gray-200 pt-4">
+                    <h4 className="font-medium text-sm mb-2">Extracted Fields ({selectedRun.fields.length})</h4>
+                    <div className="space-y-2 max-h-48 overflow-auto">
+                      {selectedRun.fields.map((field, i) => (
+                        <div key={i} className="text-xs p-2 rounded bg-gray-50">
+                          <div className="flex justify-between">
+                            <span className="font-medium text-gray-700">{field.source_key}</span>
+                            {field.confidence && (
+                              <span className="text-gray-400">{(field.confidence * 100).toFixed(0)}%</span>
+                            )}
                           </div>
-                          <p className="mt-1">{log.message}</p>
+                          <p className="text-gray-600 truncate">{field.value || '-'}</p>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
+
+                {/* Logs/Errors */}
+                {runLogs.length > 0 && (
+                  <div className="border-t border-gray-200 pt-4">
+                    <h4 className="font-medium text-sm mb-2">Logs</h4>
+                    {loadingLogs ? (
+                      <div className="text-center py-4">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto"></div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-64 overflow-auto">
+                        {runLogs.map(log => (
+                          <div key={log.id} className={`text-xs p-2 rounded ${
+                            log.level === 'ERROR' ? 'bg-red-50 text-red-700' :
+                            log.level === 'WARNING' ? 'bg-yellow-50 text-yellow-700' :
+                            'bg-gray-50 text-gray-700'
+                          }`}>
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">{log.level}</span>
+                              <span className="text-gray-400">{log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}</span>
+                            </div>
+                            <p className="mt-1">{log.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -438,17 +441,24 @@ function StatusBadge({ status }) {
     completed: 'badge-success',
     success: 'badge-success',
     approved: 'badge-success',
+    reviewed: 'badge-success',
     exported: 'badge-success',
     failed: 'badge-error',
     error: 'badge-error',
     needs_review: 'badge-warning',
     pending: 'badge-warning',
     processing: 'badge-info',
+    manual_required: 'badge-info',
+  }
+
+  const labels = {
+    needs_review: 'Needs Review',
+    manual_required: 'Manual Required',
   }
 
   return (
     <span className={`badge ${styles[status] || 'badge-gray'}`}>
-      {status}
+      {labels[status] || status}
     </span>
   )
 }
