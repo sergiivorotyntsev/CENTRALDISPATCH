@@ -45,9 +45,27 @@ class CopartExtractor(BaseExtractor):
 
         invoice = AuctionInvoice(source=self.source, buyer_id="", buyer_name="")
 
+        # Extract buyer ID (MEMBER number)
         member_match = re.search(r'MEMBER[:\s]+(\d+)', text)
         if member_match:
             invoice.buyer_id = member_match.group(1)
+
+        # Extract buyer name (usually appears after SOLD TO or BUYER:)
+        buyer_name_patterns = [
+            r'SOLD\s*TO[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
+            r'BUYER[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
+            r'MEMBER\s*:\s*\d+\s*\n\s*([A-Z][A-Za-z\s\-\.]+?)(?:\n|\d)',
+            r'Bill\s*To[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n)',
+        ]
+        for pattern in buyer_name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                buyer_name = name_match.group(1).strip()
+                # Clean up - remove trailing numbers/dates
+                buyer_name = re.sub(r'\s+\d+.*$', '', buyer_name)
+                if len(buyer_name) > 2 and len(buyer_name) < 100:
+                    invoice.buyer_name = buyer_name
+                    break
 
         lot_match = re.search(r'LOT#[:\s]+(\d+)', text)
         if lot_match:
@@ -91,23 +109,64 @@ class CopartExtractor(BaseExtractor):
         return invoice
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
+        # Try multiple patterns for address extraction
         patterns = [
+            # Pattern 1: Standard Copart format
             r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]+([^\n]+)\n\s*([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
+            # Pattern 2: Location/Address line
+            r'(?:LOCATION|LOT\s*ADDRESS)[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
+            # Pattern 3: Pick-?up location
+            r'(?:PICK[\-\s]?UP|PICKUP)\s*(?:LOCATION|ADDRESS)?[:\s]+([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
         ]
+
+        street, city, state, postal = None, None, None, None
 
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 groups = match.groups()
-                return Address(
-                    street=groups[0].strip(),
-                    city=groups[1].strip(),
-                    state=groups[2],
-                    postal_code=groups[3],
-                    country="US",
-                    name="Copart"
-                )
-        return None
+                street = groups[0].strip()
+                city = groups[1].strip().rstrip(',')
+                state = groups[2].upper()
+                postal = groups[3]
+                break
+
+        if not (city and state):
+            return None
+
+        # Try to extract phone number from nearby text
+        phone = None
+        phone_patterns = [
+            r'(?:PHONE|TEL|CONTACT)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
+            r'(?:LOT\s*(?:PHONE|TEL))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
+            r'(\(?\d{3}\)?[\s\-\.]\d{3}[\s\-\.]\d{4})',  # General phone pattern
+        ]
+
+        for pattern in phone_patterns:
+            phone_match = re.search(pattern, text, re.IGNORECASE)
+            if phone_match:
+                phone = phone_match.group(1).strip()
+                # Normalize phone format
+                phone_digits = re.sub(r'\D', '', phone)
+                if len(phone_digits) == 10:
+                    phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
+                    break
+
+        # Determine lot name
+        lot_name = "Copart"
+        lot_name_match = re.search(r'(Copart\s+[A-Za-z\s\-]+)', text, re.IGNORECASE)
+        if lot_name_match:
+            lot_name = lot_name_match.group(1).strip()
+
+        return Address(
+            street=street,
+            city=city,
+            state=state,
+            postal_code=postal,
+            country="US",
+            name=lot_name,
+            phone=phone
+        )
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
         vehicle_patterns = [

@@ -160,12 +160,19 @@ export const api = {
   }),
   listNeedsReview: (limit = 50) => request(`/extractions/needs-review?limit=${limit}`),
 
-  // Reviews
-  getReviewItems: (runId) => request(`/reviews/${runId}/items`),
-  submitReview: (data) => request('/reviews/submit', {
+  // Reviews (endpoint is /api/review, not /api/reviews)
+  getReviewItems: async (runId) => {
+    // Backend returns { items: [...], run_id, ... } at /api/review/{run_id}
+    const response = await request(`/review/${runId}`)
+    return response  // Contains items array
+  },
+  submitReview: (data) => request('/review/submit', {
     method: 'POST',
     body: JSON.stringify(data),
   }),
+
+  // Get latest extraction run for a document
+  getDocumentExtractions: (documentId) => request(`/extractions/?document_id=${documentId}&limit=1`),
 
   // Auction Types
   listAuctionTypes: () => request('/auction-types/'),

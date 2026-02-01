@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import api from '../api'
 
 function Documents() {
+  const navigate = useNavigate()
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [auctionTypes, setAuctionTypes] = useState([])
+
+  // Track extraction runs per document
+  const [docExtractions, setDocExtractions] = useState({})
 
   // Filters
   const [filter, setFilter] = useState({
@@ -99,8 +104,60 @@ function Documents() {
   const [extractingDocId, setExtractingDocId] = useState(null)
   const [extractionResult, setExtractionResult] = useState(null)
 
-  // Run extraction on document
-  async function handleRunExtraction(docId) {
+  // Fetch latest extraction status for each document
+  const fetchDocExtractions = useCallback(async () => {
+    try {
+      const result = await api.listExtractions({ limit: 100 })
+      const extractionsByDoc = {}
+      for (const run of (result.items || [])) {
+        // Keep the latest extraction per document
+        if (!extractionsByDoc[run.document_id] || run.id > extractionsByDoc[run.document_id].id) {
+          extractionsByDoc[run.document_id] = run
+        }
+      }
+      setDocExtractions(extractionsByDoc)
+    } catch (err) {
+      console.error('Failed to fetch extractions:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchDocExtractions()
+  }, [fetchDocExtractions, documents])
+
+  // Navigate to extraction results / review
+  function handleViewExtraction(docId) {
+    const extraction = docExtractions[docId]
+    if (extraction) {
+      // Navigate to review page for this run
+      navigate(`/review/${extraction.id}`)
+    } else {
+      // No extraction yet - show message
+      setExtractionResult({
+        success: false,
+        docId,
+        message: 'No extraction found. Click Extract to process this document.'
+      })
+    }
+  }
+
+  // Run extraction on document (with check for existing)
+  async function handleRunExtraction(docId, forceNew = false) {
+    // Check if extraction already exists
+    const existingExtraction = docExtractions[docId]
+    if (existingExtraction && !forceNew) {
+      // Extraction exists - navigate to review instead
+      if (existingExtraction.status === 'needs_review') {
+        navigate(`/review/${existingExtraction.id}`)
+        return
+      } else if (existingExtraction.status === 'reviewed' || existingExtraction.status === 'approved') {
+        // Already reviewed - ask if they want to re-extract
+        if (!confirm('This document has already been processed. Run extraction again?')) {
+          return
+        }
+      }
+    }
+
     setExtractingDocId(docId)
     setExtractionResult(null)
     try {
@@ -111,12 +168,13 @@ function Documents() {
         runId: result.id,
         status: result.status,
         message: result.status === 'needs_review'
-          ? 'Extraction complete! Review the results in Runs & Logs.'
+          ? 'Extraction complete! Click to review results.'
           : result.status === 'failed'
-          ? 'Extraction failed. Check the error in Runs & Logs.'
+          ? 'Extraction failed. Check the error details.'
           : 'Extraction started.'
       })
-      fetchDocuments() // Refresh to show updated status
+      fetchDocuments()
+      fetchDocExtractions()
     } catch (err) {
       setExtractionResult({
         success: false,
@@ -361,7 +419,7 @@ function Documents() {
                   Auction Type
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Dataset
+                  Extraction Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Size
@@ -375,64 +433,111 @@ function Documents() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {documents.map((doc) => (
-                <tr key={doc.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div>
-                      <p className="font-medium text-gray-900">{doc.filename}</p>
-                      <p className="text-sm text-gray-500 font-mono">ID: {doc.id}</p>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">
-                      {doc.auction_type_code || 'Unknown'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 text-xs font-medium rounded ${
-                      doc.dataset_split === 'train'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-purple-100 text-purple-800'
-                    }`}>
-                      {doc.dataset_split}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : '-'}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '-'}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex justify-end items-center space-x-2">
-                      {extractionResult?.docId === doc.id && (
-                        <span className={`text-xs px-2 py-1 rounded ${
-                          extractionResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {extractionResult.success ? '✓' : '✗'}
+              {documents.map((doc) => {
+                const extraction = docExtractions[doc.id]
+                return (
+                  <tr
+                    key={doc.id}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => handleViewExtraction(doc.id)}
+                  >
+                    <td className="px-6 py-4">
+                      <div>
+                        <p className="font-medium text-gray-900">{doc.filename}</p>
+                        <p className="text-sm text-gray-500 font-mono">ID: {doc.id}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded">
+                        {doc.auction_type_code || 'Unknown'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      {extraction ? (
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-medium rounded ${
+                            extraction.status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+                            extraction.status === 'reviewed' || extraction.status === 'approved' ? 'bg-green-100 text-green-800' :
+                            extraction.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {extraction.status === 'needs_review' ? 'Needs Review' :
+                             extraction.status === 'reviewed' ? 'Reviewed' :
+                             extraction.status === 'approved' ? 'Approved' :
+                             extraction.status === 'failed' ? 'Failed' :
+                             extraction.status}
+                          </span>
+                          {extraction.extraction_score && (
+                            <span className="text-xs text-gray-500">
+                              {(extraction.extraction_score * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-600">
+                          Not Processed
                         </span>
                       )}
-                      <button
-                        onClick={() => handleRunExtraction(doc.id)}
-                        disabled={extractingDocId === doc.id}
-                        className={`text-sm ${
-                          extractingDocId === doc.id
-                            ? 'text-gray-400 cursor-not-allowed'
-                            : 'text-blue-600 hover:text-blue-800'
-                        }`}
-                      >
-                        {extractingDocId === doc.id ? 'Extracting...' : 'Extract'}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(doc.id)}
-                        className="text-sm text-red-600 hover:text-red-800"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : '-'}
+                    </td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end items-center space-x-2" onClick={(e) => e.stopPropagation()}>
+                        {extractionResult?.docId === doc.id && (
+                          <span className={`text-xs px-2 py-1 rounded ${
+                            extractionResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {extractionResult.success ? '✓' : '✗'}
+                          </span>
+                        )}
+                        {extraction ? (
+                          <>
+                            <button
+                              onClick={() => navigate(`/review/${extraction.id}`)}
+                              className="text-sm text-blue-600 hover:text-blue-800"
+                            >
+                              {extraction.status === 'needs_review' ? 'Review' : 'View'}
+                            </button>
+                            <button
+                              onClick={() => handleRunExtraction(doc.id, true)}
+                              disabled={extractingDocId === doc.id}
+                              className={`text-sm ${
+                                extractingDocId === doc.id
+                                  ? 'text-gray-400 cursor-not-allowed'
+                                  : 'text-orange-600 hover:text-orange-800'
+                              }`}
+                            >
+                              {extractingDocId === doc.id ? 'Extracting...' : 'Re-extract'}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handleRunExtraction(doc.id)}
+                            disabled={extractingDocId === doc.id}
+                            className={`text-sm ${
+                              extractingDocId === doc.id
+                                ? 'text-gray-400 cursor-not-allowed'
+                                : 'text-blue-600 hover:text-blue-800'
+                            }`}
+                          >
+                            {extractingDocId === doc.id ? 'Extracting...' : 'Extract'}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

@@ -5,6 +5,7 @@ Run and manage extraction runs on documents.
 """
 
 import time
+from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -20,6 +21,58 @@ from api.models import (
 )
 
 router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
+
+
+def generate_order_id(make: str, model: str, sale_date: datetime = None) -> str:
+    """
+    Generate custom Order ID in format: MMDD + MAKE(3) + MODEL(1) + SEQ
+
+    Example: February 1st + Jeep Grand Cherokee = 21JEEG1
+    - 21 = Month 2, Day 1 (concatenated, not padded)
+    - JEE = First 3 letters of Make (JEEP)
+    - G = First letter of Model (GRAND)
+    - 1 = Sequence number (incremented for duplicates)
+
+    Args:
+        make: Vehicle make (e.g., "Jeep", "Toyota")
+        model: Vehicle model (e.g., "Grand Cherokee", "Camry")
+        sale_date: Date to use (defaults to today)
+
+    Returns:
+        Order ID string like "21JEEG1"
+    """
+    if sale_date is None:
+        sale_date = datetime.now()
+
+    # Month + Day (as digits, e.g., February 1 = "21")
+    month = str(sale_date.month)  # 1-12, no zero padding
+    day = str(sale_date.day)      # 1-31, no zero padding
+    date_part = month + day
+
+    # Make: first 3 letters, uppercase
+    make_clean = ''.join(c for c in make.upper() if c.isalpha())[:3]
+    make_part = make_clean.ljust(3, 'X')  # Pad with X if too short
+
+    # Model: first letter, uppercase
+    model_clean = ''.join(c for c in model.upper() if c.isalpha())
+    model_part = model_clean[0] if model_clean else 'X'
+
+    # Base ID without sequence
+    base_id = f"{date_part}{make_part}{model_part}"
+
+    # Find next sequence number by checking existing runs
+    from api.database import get_connection
+    with get_connection() as conn:
+        # Count existing orders with same base
+        result = conn.execute(
+            """SELECT COUNT(*) FROM extraction_runs
+               WHERE outputs_json LIKE ?
+               AND date(created_at) = date(?)""",
+            (f'%"order_id": "{base_id}%', sale_date.strftime('%Y-%m-%d'))
+        ).fetchone()
+        seq = (result[0] if result else 0) + 1
+
+    return f"{base_id}{seq}"
 
 
 # =============================================================================
@@ -193,6 +246,16 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         "vehicle_mileage": v.mileage,
                         "vehicle_is_inoperable": v.is_inoperable,
                     })
+
+                    # Generate custom Order ID: MMDD + Make(3) + Model(1) + Seq
+                    # Example: 21JEEG1 for Feb 1, Jeep Grand Cherokee, order #1
+                    try:
+                        order_date = inv.sale_date or datetime.now()
+                        order_id = generate_order_id(v.make, v.model, order_date)
+                        outputs["order_id"] = order_id
+                    except Exception as e:
+                        # Don't fail extraction if order_id generation fails
+                        outputs["order_id"] = None
 
                 extraction_score = result.score
 
