@@ -58,7 +58,8 @@ class ReviewRunResponse(BaseModel):
 
 
 class ReviewItemUpdate(BaseModel):
-    """Update a single review item."""
+    """Update a single review item. Item_id is REQUIRED for proper binding."""
+    item_id: int = Field(..., description="Review item ID (required)")
     corrected_value: Optional[str] = Field(None, description="Corrected value (if different from predicted)")
     is_match_ok: bool = Field(..., description="True if predicted value is correct")
     export_field: bool = Field(True, description="Include this field in export")
@@ -201,9 +202,12 @@ async def submit_review(data: ReviewSubmitRequest):
     Submit review corrections for an extraction run.
 
     This endpoint:
-    1. Updates all review items with corrections
+    1. Updates review items by item_id (required for proper binding)
     2. Creates TrainingExamples from the corrected data
     3. Optionally marks the run as reviewed
+
+    Each item in the request MUST include item_id to identify which
+    review item to update. This prevents mismatches.
 
     TrainingExamples are used for future ML model training.
     """
@@ -215,23 +219,25 @@ async def submit_review(data: ReviewSubmitRequest):
     if not doc:
         raise HTTPException(status_code=400, detail="Document not found")
 
-    # Get existing review items
+    # Get existing review items indexed by ID
     existing_items = ReviewItemRepository.get_by_run(data.run_id)
     item_by_id = {item.id: item for item in existing_items}
 
     items_updated = 0
     training_examples_created = 0
+    errors = []
 
     # Get raw text snippet for training examples
     raw_text = doc.raw_text or ""
     text_snippet = raw_text[:500] if raw_text else None
 
-    # Process each update
-    for idx, update in enumerate(data.items):
-        if idx >= len(existing_items):
-            break
-
-        item = existing_items[idx]
+    # Process each update BY ITEM_ID (P0 requirement)
+    for update in data.items:
+        # Validate item_id exists and belongs to this run
+        item = item_by_id.get(update.item_id)
+        if not item:
+            errors.append(f"Item ID {update.item_id} not found in run {data.run_id}")
+            continue
 
         # Update review item
         ReviewItemRepository.update(
@@ -242,12 +248,12 @@ async def submit_review(data: ReviewSubmitRequest):
         )
         items_updated += 1
 
-        # Determine gold value
+        # Determine gold value for training
         gold_value = update.corrected_value if update.corrected_value else item.predicted_value
         is_correct = update.is_match_ok
 
-        # Create training example
-        if gold_value is not None:
+        # Create training example if we have data to train on
+        if gold_value is not None and update.export_field:
             TrainingExampleRepository.create(
                 document_id=doc.id,
                 auction_type_id=run.auction_type_id,
@@ -259,6 +265,10 @@ async def submit_review(data: ReviewSubmitRequest):
                 source_text_snippet=text_snippet,
             )
             training_examples_created += 1
+
+    # Return 400 if any item_id was invalid
+    if errors:
+        raise HTTPException(status_code=400, detail={"message": "Some items not found", "errors": errors})
 
     # Mark run as reviewed
     if data.mark_as_reviewed:

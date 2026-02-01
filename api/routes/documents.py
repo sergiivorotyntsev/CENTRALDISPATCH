@@ -122,27 +122,40 @@ async def upload_document(
             is_duplicate=True,
         )
 
-    # Save file
-    file_path = UPLOAD_DIR / f"{sha256[:16]}_{file.filename}"
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    # Extract raw text using pdfplumber
-    raw_text = None
-    page_count = 0
+    # Validate PDF structure BEFORE saving (P0 requirement)
+    import io
     try:
         import pdfplumber
-        with pdfplumber.open(file_path) as pdf:
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
             page_count = len(pdf.pages)
+            if page_count == 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid PDF: Document has no pages"
+                )
+            # Extract text to validate PDF is readable
             text_parts = []
             for page in pdf.pages:
                 text = page.extract_text()
                 if text:
                     text_parts.append(text)
             raw_text = "\n".join(text_parts)
+    except HTTPException:
+        raise
     except Exception as e:
-        # Log but don't fail
-        print(f"Warning: Could not extract text from PDF: {e}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid PDF: {str(e)}. Please upload a valid PDF document."
+        )
+
+    # Save file only after validation passed
+    file_path = UPLOAD_DIR / f"{sha256[:16]}_{file.filename}"
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Warn if no text extracted (might need OCR)
+    if not raw_text or len(raw_text.strip()) < 50:
+        print(f"Warning: PDF has minimal text ({len(raw_text) if raw_text else 0} chars), may need OCR")
 
     # Create document record
     doc_id = DocumentRepository.create(

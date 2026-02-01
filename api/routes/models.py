@@ -321,7 +321,7 @@ async def archive_model(model_id: int):
 # ROUTES - TRAINING JOBS
 # =============================================================================
 
-@router.post("/train", response_model=TrainingJobResponse, status_code=201)
+@router.post("/train", status_code=501)
 async def start_training(
     data: TrainingJobRequest,
     background_tasks: BackgroundTasks,
@@ -330,66 +330,33 @@ async def start_training(
     """
     Start a new training job.
 
-    This will train a PEFT/LoRA adapter for the specified auction type
-    using the collected training examples.
-    """
-    # Validate auction type
-    at = AuctionTypeRepository.get_by_id(data.auction_type_id)
-    if not at:
-        raise HTTPException(status_code=404, detail="Auction type not found")
+    NOTE: ML training is NOT IMPLEMENTED in MVP.
+    This endpoint is for data collection phase only.
 
-    # Check training data availability
+    The review workflow collects training examples that will be used
+    for future PEFT/LoRA fine-tuning once sufficient data is gathered.
+    """
+    # MVP: Return 501 Not Implemented with roadmap link
+    # Training is disabled - this is data collection phase only
     from api.database import get_connection
+
+    # Still provide stats about training data availability
     with get_connection() as conn:
         example_count = conn.execute(
             "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
             (data.auction_type_id,)
         ).fetchone()[0]
 
-    if example_count < 10:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Insufficient training data: {example_count} examples (need >= 10)"
-        )
-
-    # Build config
-    config = {
-        "base_model": data.base_model,
-        "epochs": data.epochs,
-        "learning_rate": data.learning_rate,
-        "batch_size": data.batch_size,
-        "version_tag": data.version_tag or f"v{int(time.time())}",
-    }
-
-    # Create job
-    job_id = TrainingJobRepository.create(
-        auction_type_id=data.auction_type_id,
-        config_json=config,
-    )
-
-    if sync:
-        # Run synchronously
-        run_training_job(job_id, data.auction_type_id, config)
-    else:
-        # Run in background
-        background_tasks.add_task(run_training_job, job_id, data.auction_type_id, config)
-
-    job = TrainingJobRepository.get_by_id(job_id)
-
-    return TrainingJobResponse(
-        id=job.id,
-        uuid=job.uuid,
-        auction_type_id=job.auction_type_id,
-        auction_type_code=at.code,
-        model_version_id=job.model_version_id,
-        status=job.status,
-        config_json=job.config_json,
-        metrics_json=job.metrics_json,
-        log_path=job.log_path,
-        error_message=job.error_message,
-        created_at=job.created_at,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "message": "ML training is not implemented in MVP",
+            "phase": "data_collection",
+            "training_examples_collected": example_count,
+            "minimum_required": 100,
+            "roadmap": "PEFT/LoRA fine-tuning will be implemented when sufficient training data is collected (100+ examples per auction type)",
+            "current_status": "Use the review workflow to collect and validate training examples. Rule-based extraction is active.",
+        }
     )
 
 

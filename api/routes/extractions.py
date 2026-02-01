@@ -198,10 +198,20 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
+        # Determine status based on extraction quality
+        # All successful extractions go to needs_review (P0 requirement)
+        # Only after human review can a run be marked as approved/exported
+        if not outputs:
+            run_status = "failed"
+        else:
+            # Check if any required fields are missing or low confidence
+            # For now, all successful extractions need review
+            run_status = "needs_review"
+
         # Update run with results
         ExtractionRunRepository.update(
             run_id,
-            status="completed" if outputs else "failed",
+            status=run_status,
             extraction_score=extraction_score,
             outputs_json=outputs,
             processing_time_ms=processing_time_ms,
