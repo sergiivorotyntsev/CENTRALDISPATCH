@@ -7,18 +7,18 @@ Features:
 4. Validate payload using configurable rules
 5. Export records from Google Sheets with READY_FOR_CD status
 """
+
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Optional
 
 import yaml
-from tenacity import retry, stop_after_attempt, wait_exponential
 
-from services.central_dispatch import CentralDispatchClient, APIError
-from services.sheets import SheetsClient, PickupRecord, PickupStatus
+from services.central_dispatch import CentralDispatchClient
+from services.sheets import PickupRecord, PickupStatus, SheetsClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +26,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CDFieldMapping:
     """Loaded field mapping configuration from YAML."""
+
     version: str
-    constants: Dict[str, Any]
-    variables: Dict[str, Dict[str, Any]]
-    derived: Dict[str, Dict[str, Any]]
-    templates: Dict[str, Any]
-    auction_overrides: Dict[str, Dict[str, Any]]
-    default_tags: List[Dict[str, Any]]
-    validation: Dict[str, Any]
-    sla: Dict[str, Any]
-    payment: Dict[str, Any]
-    error_handling: Dict[str, Any]
+    constants: dict[str, Any]
+    variables: dict[str, dict[str, Any]]
+    derived: dict[str, dict[str, Any]]
+    templates: dict[str, Any]
+    auction_overrides: dict[str, dict[str, Any]]
+    default_tags: list[dict[str, Any]]
+    validation: dict[str, Any]
+    sla: dict[str, Any]
+    payment: dict[str, Any]
+    error_handling: dict[str, Any]
 
 
 class CDFieldMapper:
@@ -44,9 +45,19 @@ class CDFieldMapper:
 
     DEFAULT_MAPPING_FILE = "cd_field_mapping.yaml"
     LUXURY_MAKES = {
-        "BMW", "MERCEDES", "MERCEDES-BENZ", "PORSCHE", "AUDI", "LEXUS",
-        "TESLA", "MASERATI", "FERRARI", "LAMBORGHINI", "BENTLEY",
-        "ROLLS-ROYCE", "ASTON MARTIN"
+        "BMW",
+        "MERCEDES",
+        "MERCEDES-BENZ",
+        "PORSCHE",
+        "AUDI",
+        "LEXUS",
+        "TESLA",
+        "MASERATI",
+        "FERRARI",
+        "LAMBORGHINI",
+        "BENTLEY",
+        "ROLLS-ROYCE",
+        "ASTON MARTIN",
     }
 
     def __init__(self, mapping_file: Optional[str] = None):
@@ -118,13 +129,13 @@ class CDFieldMapper:
                 return default
         return value if value is not None else default
 
-    def get_variable_config(self, section: str, field: str) -> Dict[str, Any]:
+    def get_variable_config(self, section: str, field: str) -> dict[str, Any]:
         """Get variable configuration for a field."""
         section_config = self.mapping.variables.get(section, {})
         return section_config.get(field, {})
 
     def extract_variable(
-        self, record: PickupRecord, source: str, warehouse: Optional[Dict] = None
+        self, record: PickupRecord, source: str, warehouse: Optional[dict] = None
     ) -> Any:
         """Extract a variable value from record or warehouse."""
         if source is None:
@@ -141,8 +152,8 @@ class CDFieldMapper:
     def calculate_derived(
         self,
         record: PickupRecord,
-        warehouse: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
+        warehouse: Optional[dict] = None,
+    ) -> dict[str, Any]:
         """Calculate all derived fields."""
         result = {}
 
@@ -197,7 +208,7 @@ class CDFieldMapper:
         # Handle Manheim offsite
         if source_key == "manheim":
             overrides = self.mapping.auction_overrides.get("manheim", {})
-            location_handling = overrides.get("location_type_handling", {})
+            overrides.get("location_type_handling", {})
             # Could be extended to detect offsite from record
 
         # Substitute placeholders
@@ -208,7 +219,7 @@ class CDFieldMapper:
             logger.warning(f"Template placeholder not found: {e}")
             return template
 
-    def get_auction_tags(self, auction_source: str) -> List[Dict[str, str]]:
+    def get_auction_tags(self, auction_source: str) -> list[dict[str, str]]:
         """Get tags specific to auction source."""
         if not auction_source:
             return []
@@ -220,9 +231,9 @@ class CDFieldMapper:
     def build_tags(
         self,
         record: PickupRecord,
-        warehouse: Optional[Dict] = None,
+        warehouse: Optional[dict] = None,
         extraction_score: Optional[float] = None,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """Build complete tags list."""
         tags = []
 
@@ -265,6 +276,7 @@ class CDFieldMapper:
 @dataclass
 class CDDefaults:
     """Default values for Central Dispatch listings."""
+
     trailer_type: str = "OPEN"
     payment_method: str = "CASH_CERTIFIED_FUNDS"
     payment_location: str = "DELIVERY"
@@ -291,9 +303,10 @@ class CDDefaults:
 @dataclass
 class CDRule:
     """Conditional rule for CD listings."""
+
     name: str
-    condition: Dict[str, Any]  # e.g., {"auction_source": "COPART"}
-    overrides: Dict[str, Any]  # Values to override
+    condition: dict[str, Any]  # e.g., {"auction_source": "COPART"}
+    overrides: dict[str, Any]  # Values to override
 
 
 class CDDefaultsLoader:
@@ -320,7 +333,7 @@ class CDDefaultsLoader:
     def __init__(self, config_file: Optional[str] = "cd_defaults.yaml"):
         self.config_file = config_file
         self.defaults = CDDefaults()
-        self.rules: List[CDRule] = []
+        self.rules: list[CDRule] = []
         self._load_config()
 
     def _load_config(self):
@@ -345,13 +358,15 @@ class CDDefaultsLoader:
 
         # Parse rules
         for rule_dict in config.get("rules", []):
-            self.rules.append(CDRule(
-                name=rule_dict.get("name", ""),
-                condition=rule_dict.get("condition", {}),
-                overrides=rule_dict.get("overrides", {}),
-            ))
+            self.rules.append(
+                CDRule(
+                    name=rule_dict.get("name", ""),
+                    condition=rule_dict.get("condition", {}),
+                    overrides=rule_dict.get("overrides", {}),
+                )
+            )
 
-    def apply_rules(self, record: PickupRecord) -> Dict[str, Any]:
+    def apply_rules(self, record: PickupRecord) -> dict[str, Any]:
         """Apply rules to a record and return overrides."""
         overrides = {}
 
@@ -363,7 +378,7 @@ class CDDefaultsLoader:
         return overrides
 
     @staticmethod
-    def _matches_condition(record: PickupRecord, condition: Dict[str, Any]) -> bool:
+    def _matches_condition(record: PickupRecord, condition: dict[str, Any]) -> bool:
         """Check if a record matches a rule condition."""
         for field_name, expected in condition.items():
             actual = getattr(record, field_name, None)
@@ -441,7 +456,7 @@ class CDPayloadValidator:
             self.year_min = year_config.get("min", self.year_min)
             self.year_max = year_config.get("max", self.year_max)
 
-    def validate(self, payload: Dict[str, Any]) -> List[str]:
+    def validate(self, payload: dict[str, Any]) -> list[str]:
         """Validate payload. Returns list of error messages."""
         errors = []
 
@@ -503,7 +518,7 @@ class CDPayloadValidator:
 
         return errors
 
-    def validate_record(self, record: PickupRecord) -> List[str]:
+    def validate_record(self, record: PickupRecord) -> list[str]:
         """Validate a PickupRecord before building payload."""
         errors = []
 
@@ -547,10 +562,10 @@ class CDExporter:
     def build_listing_payload(
         self,
         record: PickupRecord,
-        delivery_address: Dict[str, str],
+        delivery_address: dict[str, str],
         price: float,
         extraction_score: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build CD listing payload from a pickup record.
 
         Uses field mapping configuration for:
@@ -648,11 +663,13 @@ class CDExporter:
             },
             "stops": [pickup_stop, delivery_stop],
             "vehicles": [vehicle],
-            "marketplaces": [{
-                "marketplaceId": marketplace_id,
-                "searchable": marketplace_config.get("searchable", True),
-                "makeOffersEnabled": marketplace_config.get("make_offers_enabled", True),
-            }],
+            "marketplaces": [
+                {
+                    "marketplaceId": marketplace_id,
+                    "searchable": marketplace_config.get("searchable", True),
+                    "makeOffersEnabled": marketplace_config.get("make_offers_enabled", True),
+                }
+            ],
         }
 
         # Add external references
@@ -700,11 +717,11 @@ class CDExporter:
     def export_record(
         self,
         record: PickupRecord,
-        delivery_address: Dict[str, str],
+        delivery_address: dict[str, str],
         price: float,
         row_number: Optional[int] = None,
         extraction_score: Optional[float] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Export a single record to Central Dispatch.
 
         Args:
@@ -731,9 +748,7 @@ class CDExporter:
             return {"success": False, "error": error_msg}
 
         # Build payload
-        payload = self.build_listing_payload(
-            record, delivery_address, price, extraction_score
-        )
+        payload = self.build_listing_payload(record, delivery_address, price, extraction_score)
 
         # Validate payload
         payload_errors = self.validator.validate(payload)
@@ -793,9 +808,9 @@ class CDExporter:
 
     def export_pending_from_sheets(
         self,
-        delivery_address: Dict[str, str],
+        delivery_address: dict[str, str],
         default_price: float = 500.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Export all READY_FOR_CD records from Google Sheets."""
         if not self.sheets_client:
             return {"error": "Sheets client not configured"}
@@ -812,10 +827,12 @@ class CDExporter:
                 results["exported"] += 1
             else:
                 results["failed"] += 1
-                results["errors"].append({
-                    "vin": record.vin,
-                    "error": result.get("error"),
-                })
+                results["errors"].append(
+                    {
+                        "vin": record.vin,
+                        "error": result.get("error"),
+                    }
+                )
 
         return results
 
@@ -826,7 +843,8 @@ def _add_create_listing_raw():
     from services.central_dispatch import CentralDispatchClient
 
     if not hasattr(CentralDispatchClient, "create_listing_raw"):
-        def create_listing_raw(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+
+        def create_listing_raw(self, payload: dict[str, Any]) -> dict[str, Any]:
             """Create a listing from raw payload dict."""
             response = self._make_request("POST", "/listings", data=payload)
             if response.status_code == 201:

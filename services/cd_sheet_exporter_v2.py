@@ -18,14 +18,13 @@ Schema Version: 3
 
 import json
 import logging
-from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Any, Optional
 
 from schemas.sheets_schema_v3 import (
-    RowStatus,
-    validate_row_for_ready,
-    apply_all_overrides,
     OVERRIDE_MAPPINGS,
+    RowStatus,
+    apply_all_overrides,
+    validate_row_for_ready,
 )
 from services.sheets_exporter_v3 import SheetsExporterV3
 
@@ -79,6 +78,7 @@ class CDSheetExporterV2:
         """Get or create CD client."""
         if self._cd_client is None and self.cd_config.enabled:
             from services.central_dispatch import CentralDispatchClient
+
             self._cd_client = CentralDispatchClient(
                 client_id=self.cd_config.client_id,
                 client_secret=self.cd_config.client_secret,
@@ -86,7 +86,7 @@ class CDSheetExporterV2:
             )
         return self._cd_client
 
-    def _get_final_value(self, row: Dict[str, Any], base_field: str) -> Any:
+    def _get_final_value(self, row: dict[str, Any], base_field: str) -> Any:
         """
         Get final value for a field, considering overrides.
 
@@ -144,7 +144,7 @@ class CDSheetExporterV2:
         val_str = str(value).strip()
         return val_str if val_str else None
 
-    def row_to_cd_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def row_to_cd_payload(self, row: dict[str, Any]) -> dict[str, Any]:
         """
         Convert a sheet row to CD Listings API V2 payload.
 
@@ -501,7 +501,7 @@ class CDSheetExporterV2:
 
         return payload
 
-    def preview_payload(self, dispatch_id: str) -> Optional[Dict[str, Any]]:
+    def preview_payload(self, dispatch_id: str) -> Optional[dict[str, Any]]:
         """
         Preview the CD payload for a specific row.
 
@@ -517,7 +517,7 @@ class CDSheetExporterV2:
         self,
         dry_run: bool = False,
         limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Export READY and RETRY rows to Central Dispatch.
 

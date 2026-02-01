@@ -5,23 +5,21 @@ Endpoints for testing and managing ClickUp connection.
 """
 
 import time
-from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from api.routes.integrations.utils import (
-    log_integration_action,
-    mask_secret,
     TestConnectionResponse,
+    log_integration_action,
 )
-
 
 router = APIRouter(prefix="/clickup", tags=["ClickUp"])
 
 
 class ClickUpCustomField(BaseModel):
     """ClickUp custom field."""
+
     id: str
     name: str
     type: str
@@ -30,8 +28,9 @@ class ClickUpCustomField(BaseModel):
 
 class ClickUpCustomFieldsResponse(BaseModel):
     """Response with custom fields."""
+
     list_id: str
-    fields: List[ClickUpCustomField]
+    fields: list[ClickUpCustomField]
 
 
 @router.post("/test", response_model=TestConnectionResponse)
@@ -51,8 +50,7 @@ async def test_clickup_connection():
     list_id = clickup.get("list_id")
 
     if not api_key or not list_id:
-        log_integration_action("clickup", "test", "failed",
-                              error="ClickUp not configured")
+        log_integration_action("clickup", "test", "failed", error="ClickUp not configured")
         return TestConnectionResponse(
             status="error",
             message="ClickUp not configured. Set API key and list ID in settings.",
@@ -72,9 +70,13 @@ async def test_clickup_connection():
 
         if response.status_code == 200:
             data = response.json()
-            log_integration_action("clickup", "test", "success",
-                                  details={"list_name": data.get("name")},
-                                  duration_ms=duration_ms)
+            log_integration_action(
+                "clickup",
+                "test",
+                "success",
+                details={"list_name": data.get("name")},
+                duration_ms=duration_ms,
+            )
             return TestConnectionResponse(
                 status="ok",
                 message=f"Connected to list: {data.get('name')}",
@@ -88,9 +90,9 @@ async def test_clickup_connection():
             )
         else:
             error_msg = response.text[:200]
-            log_integration_action("clickup", "test", "failed",
-                                  error=error_msg,
-                                  duration_ms=duration_ms)
+            log_integration_action(
+                "clickup", "test", "failed", error=error_msg, duration_ms=duration_ms
+            )
             return TestConnectionResponse(
                 status="error",
                 message=f"ClickUp API error: {response.status_code}",
@@ -100,9 +102,7 @@ async def test_clickup_connection():
 
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
-        log_integration_action("clickup", "test", "failed",
-                              error=str(e),
-                              duration_ms=duration_ms)
+        log_integration_action("clickup", "test", "failed", error=str(e), duration_ms=duration_ms)
         return TestConnectionResponse(
             status="error",
             message=f"Connection failed: {str(e)}",
@@ -148,8 +148,12 @@ async def get_clickup_custom_fields(list_id: str):
                 for f in data.get("fields", [])
             ]
 
-            log_integration_action("clickup", "get_custom_fields", "success",
-                                  details={"list_id": list_id, "field_count": len(fields)})
+            log_integration_action(
+                "clickup",
+                "get_custom_fields",
+                "success",
+                details={"list_id": list_id, "field_count": len(fields)},
+            )
 
             return ClickUpCustomFieldsResponse(
                 list_id=list_id,
@@ -157,13 +161,11 @@ async def get_clickup_custom_fields(list_id: str):
             )
         else:
             raise HTTPException(
-                status_code=response.status_code,
-                detail=f"ClickUp API error: {response.text[:200]}"
+                status_code=response.status_code, detail=f"ClickUp API error: {response.text[:200]}"
             )
 
     except HTTPException:
         raise
     except Exception as e:
-        log_integration_action("clickup", "get_custom_fields", "failed",
-                              error=str(e))
+        log_integration_action("clickup", "get_custom_fields", "failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

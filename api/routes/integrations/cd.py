@@ -4,44 +4,46 @@ Central Dispatch Integration
 Endpoints for testing and exporting to Central Dispatch.
 """
 
-import time
 import asyncio
-from typing import Optional, List, Dict, Any
+import time
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from api.routes.integrations.utils import (
-    log_integration_action,
-    mask_secret,
     TestConnectionResponse,
+    log_integration_action,
 )
-
 
 router = APIRouter(prefix="/cd", tags=["Central Dispatch"])
 
 
 class CDDryRunRequest(BaseModel):
     """Request to validate an extraction for CD export."""
+
     run_id: int
 
 
 class CDDryRunResponse(BaseModel):
     """Response from CD dry run validation."""
+
     run_id: int
     is_valid: bool
-    payload: Dict[str, Any]
-    validation_errors: List[str]
-    warnings: List[str] = []
+    payload: dict[str, Any]
+    validation_errors: list[str]
+    warnings: list[str] = []
 
 
 class CDExportRequest(BaseModel):
     """Request to export to Central Dispatch."""
+
     run_id: int
 
 
 class CDExportResponse(BaseModel):
     """Response from CD export."""
+
     run_id: int
     status: str
     cd_listing_id: Optional[str] = None
@@ -68,14 +70,17 @@ async def test_cd_connection():
     use_sandbox = cd.get("sandbox", True)
 
     if not username or not password:
-        log_integration_action("cd", "test", "failed",
-                              error="CD credentials not configured")
+        log_integration_action("cd", "test", "failed", error="CD credentials not configured")
         return TestConnectionResponse(
             status="error",
             message="Central Dispatch not configured. Set username and password in settings.",
         )
 
-    base_url = "https://api.sandbox.centraldispatch.com" if use_sandbox else "https://api.centraldispatch.com"
+    base_url = (
+        "https://api.sandbox.centraldispatch.com"
+        if use_sandbox
+        else "https://api.centraldispatch.com"
+    )
 
     try:
         import httpx
@@ -94,9 +99,13 @@ async def test_cd_connection():
 
         if response.status_code == 200:
             data = response.json()
-            log_integration_action("cd", "test", "success",
-                                  details={"environment": "sandbox" if use_sandbox else "production"},
-                                  duration_ms=duration_ms)
+            log_integration_action(
+                "cd",
+                "test",
+                "success",
+                details={"environment": "sandbox" if use_sandbox else "production"},
+                duration_ms=duration_ms,
+            )
             return TestConnectionResponse(
                 status="ok",
                 message="Connected to Central Dispatch",
@@ -108,9 +117,9 @@ async def test_cd_connection():
                 duration_ms=duration_ms,
             )
         elif response.status_code == 401:
-            log_integration_action("cd", "test", "failed",
-                                  error="Invalid credentials",
-                                  duration_ms=duration_ms)
+            log_integration_action(
+                "cd", "test", "failed", error="Invalid credentials", duration_ms=duration_ms
+            )
             return TestConnectionResponse(
                 status="error",
                 message="Invalid credentials",
@@ -118,9 +127,7 @@ async def test_cd_connection():
             )
         else:
             error_msg = response.text[:200]
-            log_integration_action("cd", "test", "failed",
-                                  error=error_msg,
-                                  duration_ms=duration_ms)
+            log_integration_action("cd", "test", "failed", error=error_msg, duration_ms=duration_ms)
             return TestConnectionResponse(
                 status="error",
                 message=f"CD API error: {response.status_code}",
@@ -130,9 +137,7 @@ async def test_cd_connection():
 
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
-        log_integration_action("cd", "test", "failed",
-                              error=str(e),
-                              duration_ms=duration_ms)
+        log_integration_action("cd", "test", "failed", error=str(e), duration_ms=duration_ms)
         return TestConnectionResponse(
             status="error",
             message=f"Connection failed: {str(e)}",
@@ -160,12 +165,16 @@ async def cd_dry_run(data: CDDryRunRequest):
     if dropoff.get("address") == "TBD":
         warnings.append("Dropoff address is TBD - update before export")
 
-    log_integration_action("cd", "dry_run", "success" if not errors else "failed",
-                          details={
-                              "run_id": data.run_id,
-                              "errors": len(errors),
-                              "warnings": len(warnings),
-                          })
+    log_integration_action(
+        "cd",
+        "dry_run",
+        "success" if not errors else "failed",
+        details={
+            "run_id": data.run_id,
+            "errors": len(errors),
+            "warnings": len(warnings),
+        },
+    )
 
     return CDDryRunResponse(
         run_id=data.run_id,
@@ -183,9 +192,9 @@ async def cd_export_with_retry(data: CDExportRequest):
 
     Retries up to 3 times with exponential backoff on failure.
     """
-    from api.routes.settings import load_settings
-    from api.routes.exports import build_cd_payload, send_to_cd
     from api.models import ExportJobRepository, ExtractionRunRepository
+    from api.routes.exports import build_cd_payload, send_to_cd
+    from api.routes.settings import load_settings
 
     start_time = time.time()
     settings = load_settings()
@@ -195,9 +204,9 @@ async def cd_export_with_retry(data: CDExportRequest):
     payload, errors = build_cd_payload(data.run_id)
 
     if errors:
-        log_integration_action("cd", "export", "failed",
-                              details={"run_id": data.run_id},
-                              error="; ".join(errors))
+        log_integration_action(
+            "cd", "export", "failed", details={"run_id": data.run_id}, error="; ".join(errors)
+        )
         return CDExportResponse(
             run_id=data.run_id,
             status="error",
@@ -226,13 +235,17 @@ async def cd_export_with_retry(data: CDExportRequest):
                 ExtractionRunRepository.update(data.run_id, status="exported")
 
                 duration_ms = int((time.time() - start_time) * 1000)
-                log_integration_action("cd", "export", "success",
-                                      details={
-                                          "run_id": data.run_id,
-                                          "attempts": attempt + 1,
-                                          "listing_id": response.get("id"),
-                                      },
-                                      duration_ms=duration_ms)
+                log_integration_action(
+                    "cd",
+                    "export",
+                    "success",
+                    details={
+                        "run_id": data.run_id,
+                        "attempts": attempt + 1,
+                        "listing_id": response.get("id"),
+                    },
+                    duration_ms=duration_ms,
+                )
 
                 return CDExportResponse(
                     run_id=data.run_id,
@@ -252,10 +265,14 @@ async def cd_export_with_retry(data: CDExportRequest):
                 await asyncio.sleep(retry_delays[attempt])
 
     duration_ms = int((time.time() - start_time) * 1000)
-    log_integration_action("cd", "export", "failed",
-                          details={"run_id": data.run_id, "attempts": max_retries},
-                          error=last_error,
-                          duration_ms=duration_ms)
+    log_integration_action(
+        "cd",
+        "export",
+        "failed",
+        details={"run_id": data.run_id, "attempts": max_retries},
+        error=last_error,
+        duration_ms=duration_ms,
+    )
 
     return CDExportResponse(
         run_id=data.run_id,

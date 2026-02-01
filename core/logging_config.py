@@ -1,11 +1,12 @@
 """Structured logging configuration with correlation fields."""
-import logging
+
 import json
+import logging
 import sys
 import uuid
-from datetime import datetime
-from typing import Optional, Dict, Any
 from contextvars import ContextVar
+from datetime import datetime
+from typing import Any, Optional
 
 # Context variables for log correlation
 current_run_id: ContextVar[str] = ContextVar("run_id", default="")
@@ -53,7 +54,7 @@ class JSONFormatter(logging.Formatter):
     """JSON log formatter with correlation fields."""
 
     def format(self, record: logging.LogRecord) -> str:
-        log_data: Dict[str, Any] = {
+        log_data: dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
@@ -187,5 +188,5 @@ class LogContext:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         for name, token in self._tokens.items():
-            getattr(globals()[f"current_{name}"], "reset")(token)
+            globals()[f"current_{name}"].reset(token)
         return False

@@ -5,18 +5,17 @@ Run and manage extraction runs on documents.
 """
 
 import time
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.models import (
-    ExtractionRunRepository,
-    DocumentRepository,
     AuctionTypeRepository,
+    DocumentRepository,
+    ExtractionRunRepository,
     ModelVersionRepository,
     ReviewItemRepository,
-    ExtractionRun,
-    RunStatus,
 )
 
 router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
@@ -26,14 +25,17 @@ router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class ExtractionRunRequest(BaseModel):
     """Request model for running extraction."""
+
     document_id: int = Field(..., description="Document ID to extract from")
     force_ml: bool = Field(False, description="Force ML extraction even if no active model")
 
 
 class ExtractionRunResponse(BaseModel):
     """Response model for extraction run."""
+
     id: int
     uuid: str
     document_id: int
@@ -57,12 +59,14 @@ class ExtractionRunResponse(BaseModel):
 
 class ExtractionRunListResponse(BaseModel):
     """Response model for extraction run list."""
-    items: List[ExtractionRunResponse]
+
+    items: list[ExtractionRunResponse]
     total: int
 
 
 class ExtractionFieldOutput(BaseModel):
     """A single extracted field."""
+
     source_key: str
     internal_key: Optional[str] = None
     cd_key: Optional[str] = None
@@ -73,8 +77,9 @@ class ExtractionFieldOutput(BaseModel):
 
 class ExtractionDetailResponse(BaseModel):
     """Detailed extraction response with field-level outputs."""
+
     run: ExtractionRunResponse
-    fields: List[ExtractionFieldOutput]
+    fields: list[ExtractionFieldOutput]
     raw_text_preview: Optional[str] = None
 
 
@@ -82,8 +87,14 @@ class ExtractionDetailResponse(BaseModel):
 # EXTRACTION LOGIC
 # =============================================================================
 
-def run_extraction(run_id: int, document_id: int, auction_type_id: int,
-                   extractor_kind: str = "rule", model_version_id: int = None):
+
+def run_extraction(
+    run_id: int,
+    document_id: int,
+    auction_type_id: int,
+    extractor_kind: str = "rule",
+    model_version_id: int = None,
+):
     """
     Execute extraction on a document.
 
@@ -121,6 +132,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         if not raw_text and doc.file_path:
             # Try to extract text
             import pdfplumber
+
             with pdfplumber.open(doc.file_path) as pdf:
                 text_parts = []
                 for page in pdf.pages:
@@ -148,6 +160,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         extraction_score = 0.0
 
         from extractors import ExtractorManager
+
         manager = ExtractorManager()
 
         # Classify and extract
@@ -171,28 +184,32 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                 # Pickup address
                 if inv.pickup_address:
                     addr = inv.pickup_address
-                    outputs.update({
-                        "pickup_name": addr.name,
-                        "pickup_address": addr.street,
-                        "pickup_city": addr.city,
-                        "pickup_state": addr.state,
-                        "pickup_zip": addr.postal_code,
-                        "pickup_phone": addr.phone,
-                    })
+                    outputs.update(
+                        {
+                            "pickup_name": addr.name,
+                            "pickup_address": addr.street,
+                            "pickup_city": addr.city,
+                            "pickup_state": addr.state,
+                            "pickup_zip": addr.postal_code,
+                            "pickup_phone": addr.phone,
+                        }
+                    )
 
                 # Vehicles
                 if inv.vehicles:
                     v = inv.vehicles[0]
-                    outputs.update({
-                        "vehicle_vin": v.vin,
-                        "vehicle_year": v.year,
-                        "vehicle_make": v.make,
-                        "vehicle_model": v.model,
-                        "vehicle_color": v.color,
-                        "vehicle_lot": v.lot_number,
-                        "vehicle_mileage": v.mileage,
-                        "vehicle_is_inoperable": v.is_inoperable,
-                    })
+                    outputs.update(
+                        {
+                            "vehicle_vin": v.vin,
+                            "vehicle_year": v.year,
+                            "vehicle_make": v.make,
+                            "vehicle_model": v.model,
+                            "vehicle_color": v.color,
+                            "vehicle_lot": v.lot_number,
+                            "vehicle_mileage": v.mileage,
+                            "vehicle_is_inoperable": v.is_inoperable,
+                        }
+                    )
 
                 extraction_score = result.score
 
@@ -222,26 +239,29 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         if outputs:
             review_items = []
             from api.models import get_connection
+
             with get_connection() as conn:
                 # Get field mappings for this auction type
                 mappings = conn.execute(
                     "SELECT * FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE",
-                    (auction_type_id,)
+                    (auction_type_id,),
                 ).fetchall()
 
                 mapping_dict = {m["source_key"]: dict(m) for m in mappings}
 
             for source_key, value in outputs.items():
                 mapping = mapping_dict.get(source_key, {})
-                review_items.append({
-                    "source_key": source_key,
-                    "internal_key": mapping.get("internal_key", source_key),
-                    "cd_key": mapping.get("cd_key"),
-                    "predicted_value": str(value) if value is not None else None,
-                    "is_match_ok": False,
-                    "export_field": mapping.get("is_required", False) or value is not None,
-                    "confidence": extraction_score,
-                })
+                review_items.append(
+                    {
+                        "source_key": source_key,
+                        "internal_key": mapping.get("internal_key", source_key),
+                        "cd_key": mapping.get("cd_key"),
+                        "predicted_value": str(value) if value is not None else None,
+                        "is_match_ok": False,
+                        "export_field": mapping.get("is_required", False) or value is not None,
+                        "confidence": extraction_score,
+                    }
+                )
 
             if review_items:
                 ReviewItemRepository.create_batch(run_id, review_items)
@@ -257,6 +277,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.post("/run", response_model=ExtractionRunResponse, status_code=201)
 async def run_extraction_endpoint(
@@ -300,13 +321,18 @@ async def run_extraction_endpoint(
 
     if sync:
         # Run synchronously
-        run_extraction(run_id, data.document_id, doc.auction_type_id,
-                      extractor_kind, model_version_id)
+        run_extraction(
+            run_id, data.document_id, doc.auction_type_id, extractor_kind, model_version_id
+        )
     else:
         # Run in background
         background_tasks.add_task(
-            run_extraction, run_id, data.document_id, doc.auction_type_id,
-            extractor_kind, model_version_id
+            run_extraction,
+            run_id,
+            data.document_id,
+            doc.auction_type_id,
+            extractor_kind,
+            model_version_id,
         )
 
     # Get result
@@ -360,47 +386,50 @@ async def list_extraction_runs(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM extraction_runs WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
         data = dict(row)
         if data.get("outputs_json"):
             import json
+
             data["outputs_json"] = json.loads(data["outputs_json"])
         if data.get("errors_json"):
             import json
+
             data["errors_json"] = json.loads(data["errors_json"])
 
         # Get related entities
         doc = DocumentRepository.get_by_id(data["document_id"])
         at = AuctionTypeRepository.get_by_id(data["auction_type_id"])
 
-        items.append(ExtractionRunResponse(
-            id=data["id"],
-            uuid=data["uuid"],
-            document_id=data["document_id"],
-            document_filename=doc.filename if doc else None,
-            auction_type_id=data["auction_type_id"],
-            auction_type_code=at.code if at else None,
-            extractor_kind=data["extractor_kind"],
-            model_version_id=data.get("model_version_id"),
-            status=data["status"],
-            extraction_score=data.get("extraction_score"),
-            outputs=data.get("outputs_json"),
-            errors=data.get("errors_json"),
-            processing_time_ms=data.get("processing_time_ms"),
-            created_at=data.get("created_at"),
-            completed_at=data.get("completed_at"),
-        ))
+        items.append(
+            ExtractionRunResponse(
+                id=data["id"],
+                uuid=data["uuid"],
+                document_id=data["document_id"],
+                document_filename=doc.filename if doc else None,
+                auction_type_id=data["auction_type_id"],
+                auction_type_code=at.code if at else None,
+                extractor_kind=data["extractor_kind"],
+                model_version_id=data.get("model_version_id"),
+                status=data["status"],
+                extraction_score=data.get("extraction_score"),
+                outputs=data.get("outputs_json"),
+                errors=data.get("errors_json"),
+                processing_time_ms=data.get("processing_time_ms"),
+                created_at=data.get("created_at"),
+                completed_at=data.get("completed_at"),
+            )
+        )
 
     return ExtractionRunListResponse(items=items, total=total)
 
 
 class ExtractionStatsResponse(BaseModel):
     """Response model for extraction run statistics."""
+
     total: int
     last_24h: int
     by_status: dict
@@ -415,8 +444,9 @@ async def get_extraction_stats():
 
     Returns aggregate counts by status and auction type.
     """
-    from api.database import get_connection
     from datetime import datetime, timedelta
+
+    from api.database import get_connection
 
     with get_connection() as conn:
         # Total count
@@ -425,8 +455,7 @@ async def get_extraction_stats():
         # Last 24h
         yesterday = (datetime.utcnow() - timedelta(hours=24)).isoformat()
         last_24h = conn.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE created_at >= ?",
-            (yesterday,)
+            "SELECT COUNT(*) FROM extraction_runs WHERE created_at >= ?", (yesterday,)
         ).fetchone()[0]
 
         # By status
@@ -468,23 +497,25 @@ async def list_runs_needing_review(
         doc = DocumentRepository.get_by_id(run.document_id)
         at = AuctionTypeRepository.get_by_id(run.auction_type_id)
 
-        items.append(ExtractionRunResponse(
-            id=run.id,
-            uuid=run.uuid,
-            document_id=run.document_id,
-            document_filename=doc.filename if doc else None,
-            auction_type_id=run.auction_type_id,
-            auction_type_code=at.code if at else None,
-            extractor_kind=run.extractor_kind,
-            model_version_id=run.model_version_id,
-            status=run.status,
-            extraction_score=run.extraction_score,
-            outputs=run.outputs_json,
-            errors=run.errors_json,
-            processing_time_ms=run.processing_time_ms,
-            created_at=run.created_at,
-            completed_at=run.completed_at,
-        ))
+        items.append(
+            ExtractionRunResponse(
+                id=run.id,
+                uuid=run.uuid,
+                document_id=run.document_id,
+                document_filename=doc.filename if doc else None,
+                auction_type_id=run.auction_type_id,
+                auction_type_code=at.code if at else None,
+                extractor_kind=run.extractor_kind,
+                model_version_id=run.model_version_id,
+                status=run.status,
+                extraction_score=run.extraction_score,
+                outputs=run.outputs_json,
+                errors=run.errors_json,
+                processing_time_ms=run.processing_time_ms,
+                created_at=run.created_at,
+                completed_at=run.completed_at,
+            )
+        )
 
     return ExtractionRunListResponse(items=items, total=len(items))
 

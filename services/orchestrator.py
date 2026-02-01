@@ -11,22 +11,20 @@ Flow:
    e. Mark email as seen
    f. Record in idempotency store
 """
+
 import os
 import time
-import logging
-import tempfile
-from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
-from datetime import datetime
+from typing import Any, Optional
 
 from core.config import AppConfig, get_config
-from core.logging_config import setup_logging, LogContext, generate_run_id, get_logger
-from ingest.email_reader import create_email_reader, EmailMessage, Attachment
+from core.logging_config import LogContext, generate_run_id, get_logger
 from extractors import extract_from_pdf
 from extractors.gate_pass import GatePassExtractor
-from services.idempotency import IdempotencyStore
-from services.clickup import ClickUpClient, ClickUpTask, create_vehicle_pickup_task
+from ingest.email_reader import Attachment, EmailMessage, create_email_reader
 from models.vehicle import AuctionInvoice
+from services.clickup import ClickUpClient, ClickUpTask
+from services.idempotency import IdempotencyStore
 
 logger = get_logger(__name__)
 
@@ -34,6 +32,7 @@ logger = get_logger(__name__)
 @dataclass
 class ProcessingResult:
     """Result of processing a single attachment."""
+
     success: bool
     message: str
     attachment_name: str
@@ -48,10 +47,11 @@ class ProcessingResult:
 @dataclass
 class EmailProcessingResult:
     """Result of processing a single email."""
+
     message_id: str
     subject: str
     gate_pass: Optional[str]
-    attachment_results: List[ProcessingResult]
+    attachment_results: list[ProcessingResult]
     error: Optional[str] = None
 
 
@@ -170,8 +170,10 @@ class Orchestrator:
             result.extracted_data = invoice
 
             if invoice:
-                logger.info(f"Extracted invoice: source={invoice.source.value}, "
-                           f"vehicles={len(invoice.vehicles)}")
+                logger.info(
+                    f"Extracted invoice: source={invoice.source.value}, "
+                    f"vehicles={len(invoice.vehicles)}"
+                )
             else:
                 logger.warning("Failed to extract data from PDF")
 
@@ -222,7 +224,7 @@ class Orchestrator:
         attachment: Attachment,
         invoice: Optional[AuctionInvoice],
         gate_pass: Optional[str],
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a ClickUp task for the extracted data."""
         try:
             # Build task name
@@ -247,11 +249,13 @@ class Orchestrator:
 
             if invoice and invoice.vehicles:
                 vehicle = invoice.vehicles[0]
-                desc_parts.extend([
-                    f"**VIN:** {vehicle.vin}",
-                    f"**Lot #:** {lot_number}",
-                    f"**Vehicle:** {vehicle_desc}",
-                ])
+                desc_parts.extend(
+                    [
+                        f"**VIN:** {vehicle.vin}",
+                        f"**Lot #:** {lot_number}",
+                        f"**Vehicle:** {vehicle_desc}",
+                    ]
+                )
 
                 if vehicle.color:
                     desc_parts.append(f"**Color:** {vehicle.color}")
@@ -262,29 +266,38 @@ class Orchestrator:
 
                 if invoice.pickup_address:
                     addr = invoice.pickup_address
-                    addr_str = ", ".join(filter(None, [
-                        addr.name,
-                        addr.street,
-                        f"{addr.city}, {addr.state} {addr.postal_code}",
-                    ]))
-                    desc_parts.append(f"**Pickup Address:**")
+                    addr_str = ", ".join(
+                        filter(
+                            None,
+                            [
+                                addr.name,
+                                addr.street,
+                                f"{addr.city}, {addr.state} {addr.postal_code}",
+                            ],
+                        )
+                    )
+                    desc_parts.append("**Pickup Address:**")
                     desc_parts.append(addr_str)
             else:
-                desc_parts.extend([
-                    "**PARSE FAILED** - Manual review required",
-                    f"**Attachment:** {attachment.filename}",
-                ])
+                desc_parts.extend(
+                    [
+                        "**PARSE FAILED** - Manual review required",
+                        f"**Attachment:** {attachment.filename}",
+                    ]
+                )
 
             # Add email metadata
-            desc_parts.extend([
-                "",
-                "---",
-                "**Email Info:**",
-                f"- From: {email_msg.sender}",
-                f"- Subject: {email_msg.subject}",
-                f"- Date: {email_msg.date}",
-                f"- Message-ID: {email_msg.message_id}",
-            ])
+            desc_parts.extend(
+                [
+                    "",
+                    "---",
+                    "**Email Info:**",
+                    f"- From: {email_msg.sender}",
+                    f"- Subject: {email_msg.subject}",
+                    f"- Date: {email_msg.date}",
+                    f"- Message-ID: {email_msg.message_id}",
+                ]
+            )
 
             description = "\n".join(desc_parts)
 
@@ -308,16 +321,17 @@ class Orchestrator:
     def _html_to_text(html: str) -> str:
         """Simple HTML to text conversion."""
         import re
+
         if not html:
             return ""
-        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', '', text)
-        text = text.replace('&nbsp;', ' ').replace('&amp;', '&')
+        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", "", text)
+        text = text.replace("&nbsp;", " ").replace("&amp;", "&")
         return text.strip()
 
-    def run_once(self) -> List[EmailProcessingResult]:
+    def run_once(self) -> list[EmailProcessingResult]:
         """Run a single pass: fetch and process all unseen emails."""
         run_id = generate_run_id()
         results = []
@@ -339,9 +353,8 @@ class Orchestrator:
 
                             # Mark as seen only if at least one attachment was processed successfully
                             # or if there were no PDF attachments (nothing to do)
-                            should_mark_seen = (
-                                not email_msg.pdf_attachments or
-                                any(r.success for r in result.attachment_results)
+                            should_mark_seen = not email_msg.pdf_attachments or any(
+                                r.success for r in result.attachment_results
                             )
 
                             if should_mark_seen and email_msg.uid:
@@ -350,13 +363,15 @@ class Orchestrator:
 
                         except Exception as e:
                             logger.error(f"Error processing email: {e}", exc_info=True)
-                            results.append(EmailProcessingResult(
-                                message_id=email_msg.message_id,
-                                subject=email_msg.subject,
-                                gate_pass=None,
-                                attachment_results=[],
-                                error=str(e),
-                            ))
+                            results.append(
+                                EmailProcessingResult(
+                                    message_id=email_msg.message_id,
+                                    subject=email_msg.subject,
+                                    gate_pass=None,
+                                    attachment_results=[],
+                                    error=str(e),
+                                )
+                            )
 
             logger.info(f"Run complete. Processed {len(results)} emails")
 
@@ -380,7 +395,7 @@ class Orchestrator:
             time.sleep(interval)
 
 
-def run_once(config: Optional[AppConfig] = None) -> List[EmailProcessingResult]:
+def run_once(config: Optional[AppConfig] = None) -> list[EmailProcessingResult]:
     """Convenience function to run a single processing pass."""
     orchestrator = Orchestrator(config)
     return orchestrator.run_once()

@@ -1,12 +1,18 @@
 """Base extractor class for auction invoices."""
-import re
+
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional
+
 import pdfplumber
 
-from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
+from models.vehicle import (
+    AuctionInvoice,
+    AuctionSource,
+    VehicleType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +20,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExtractionResult:
     """Result of PDF extraction with metadata."""
+
     invoice: Optional[AuctionInvoice]
     source: AuctionSource
     score: float  # 0.0 to 1.0 confidence
     text_length: int
     needs_ocr: bool = False
-    matched_patterns: List[str] = None
+    matched_patterns: list[str] = None
 
     def __post_init__(self):
         if self.matched_patterns is None:
@@ -42,7 +49,7 @@ class BaseExtractor(ABC):
 
     @property
     @abstractmethod
-    def indicators(self) -> List[str]:
+    def indicators(self) -> list[str]:
         """List of text patterns that indicate this document type."""
         pass
 
@@ -51,7 +58,7 @@ class BaseExtractor(ABC):
         """Optional weights for indicators (default: equal weight)."""
         return {}
 
-    def score(self, text: str) -> Tuple[float, List[str]]:
+    def score(self, text: str) -> tuple[float, list[str]]:
         """
         Calculate confidence score for this extractor.
         Returns (score, matched_patterns) where score is 0.0 to 1.0.
@@ -123,7 +130,7 @@ class BaseExtractor(ABC):
                     text += page_text + "\n"
         return text
 
-    def extract_pages_text(self, pdf_path: str) -> List[str]:
+    def extract_pages_text(self, pdf_path: str) -> list[str]:
         pages = []
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
@@ -133,21 +140,18 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def clean_text(text: str) -> str:
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r"\s+", " ", text)
         return text.strip()
 
     @staticmethod
     def extract_vin(text: str) -> Optional[str]:
-        pattern = r'\b[A-HJ-NPR-Z0-9]{17}\b'
+        pattern = r"\b[A-HJ-NPR-Z0-9]{17}\b"
         match = re.search(pattern, text)
         return match.group(0) if match else None
 
     @staticmethod
     def extract_phone(text: str) -> Optional[str]:
-        patterns = [
-            r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-            r'\d{3}[-.\s]\d{3}[-.\s]\d{4}'
-        ]
+        patterns = [r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", r"\d{3}[-.\s]\d{3}[-.\s]\d{4}"]
         for pattern in patterns:
             match = re.search(pattern, text)
             if match:
@@ -156,13 +160,13 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def extract_zip(text: str) -> Optional[str]:
-        pattern = r'\b\d{5}(?:-\d{4})?\b'
+        pattern = r"\b\d{5}(?:-\d{4})?\b"
         match = re.search(pattern, text)
         return match.group(0) if match else None
 
     @staticmethod
-    def parse_address(text: str) -> Tuple[str, str, str]:
-        pattern = r'([A-Za-z\s]+)[,\s]+([A-Z]{2})[\s.,]+(\d{5}(?:-\d{4})?)'
+    def parse_address(text: str) -> tuple[str, str, str]:
+        pattern = r"([A-Za-z\s]+)[,\s]+([A-Z]{2})[\s.,]+(\d{5}(?:-\d{4})?)"
         match = re.search(pattern, text)
         if match:
             return match.group(1).strip(), match.group(2), match.group(3)
@@ -172,11 +176,22 @@ class BaseExtractor(ABC):
     def detect_vehicle_type(make: str, model: str) -> VehicleType:
         combined = f"{make} {model}".upper()
 
-        suv_keywords = ['SUV', 'XC90', 'XC60', 'XC40', 'DURANGO', 'CHEROKEE',
-                       'TUCSON', 'KONA', 'EXPLORER', 'TAHOE', 'SUBURBAN']
-        car_keywords = ['SEDAN', 'COUPE', 'HARDTOP', 'GIULIA', 'E 300', 'CAMRY', 'ACCORD']
-        truck_keywords = ['TRUCK', 'F-150', 'SILVERADO', 'RAM', 'TUNDRA']
-        van_keywords = ['VAN', 'CARAVAN', 'ODYSSEY', 'SIENNA']
+        suv_keywords = [
+            "SUV",
+            "XC90",
+            "XC60",
+            "XC40",
+            "DURANGO",
+            "CHEROKEE",
+            "TUCSON",
+            "KONA",
+            "EXPLORER",
+            "TAHOE",
+            "SUBURBAN",
+        ]
+        car_keywords = ["SEDAN", "COUPE", "HARDTOP", "GIULIA", "E 300", "CAMRY", "ACCORD"]
+        truck_keywords = ["TRUCK", "F-150", "SILVERADO", "RAM", "TUNDRA"]
+        van_keywords = ["VAN", "CARAVAN", "ODYSSEY", "SIENNA"]
 
         for keyword in suv_keywords:
             if keyword in combined:
@@ -195,7 +210,7 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def extract_year(text: str) -> Optional[int]:
-        pattern = r'\b(19|20)\d{2}\b'
+        pattern = r"\b(19|20)\d{2}\b"
         match = re.search(pattern, text)
         if match:
             return int(match.group(0))
@@ -205,24 +220,24 @@ class BaseExtractor(ABC):
     def extract_mileage(text: str) -> Optional[int]:
         patterns = [
             # Match "Mileage: 123456" or "Mileage: 123,456" - \d+ first for non-comma numbers
-            r'Mileage[:\s]+(\d+(?:,\d{3})*|\d+)',
-            r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:Miles|Mi\.?)'
+            r"Mileage[:\s]+(\d+(?:,\d{3})*|\d+)",
+            r"(\d{1,3}(?:,\d{3})+|\d+)\s*(?:Miles|Mi\.?)",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                mileage = match.group(1).replace(',', '')
+                mileage = match.group(1).replace(",", "")
                 return int(mileage)
         return None
 
     @staticmethod
     def extract_amount(text: str, keyword: str = None) -> Optional[float]:
         if keyword:
-            pattern = rf'{keyword}[:\s]*\$?\s*([\d,]+(?:\.\d{2})?)'
+            pattern = rf"{keyword}[:\s]*\$?\s*([\d,]+(?:\.\d{2})?)"
         else:
-            pattern = r'\$\s*([\d,]+(?:\.\d{2})?)'
+            pattern = r"\$\s*([\d,]+(?:\.\d{2})?)"
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            amount = match.group(1).replace(',', '')
+            amount = match.group(1).replace(",", "")
             return float(amount)
         return None

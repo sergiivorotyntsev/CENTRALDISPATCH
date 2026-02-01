@@ -10,14 +10,13 @@ Full warehouse CRUD with:
 """
 
 import json
-import uuid
-from datetime import datetime, time
-from typing import Optional, List, Dict, Any
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from api.database import get_connection
-
 
 router = APIRouter(prefix="/api/warehouses", tags=["Warehouses"])
 
@@ -26,8 +25,10 @@ router = APIRouter(prefix="/api/warehouses", tags=["Warehouses"])
 # MODELS
 # =============================================================================
 
+
 class BusinessHours(BaseModel):
     """Business hours for a single day."""
+
     open: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="Opening time HH:MM")
     close: str = Field(..., pattern=r"^\d{2}:\d{2}$", description="Closing time HH:MM")
     closed: bool = Field(False, description="Is this day closed")
@@ -35,6 +36,7 @@ class BusinessHours(BaseModel):
 
 class WeeklyHours(BaseModel):
     """Weekly business hours."""
+
     monday: Optional[BusinessHours] = None
     tuesday: Optional[BusinessHours] = None
     wednesday: Optional[BusinessHours] = None
@@ -46,16 +48,20 @@ class WeeklyHours(BaseModel):
 
 class AppointmentRules(BaseModel):
     """Rules for scheduling appointments."""
+
     required: bool = Field(False, description="Appointment required for pickup")
     min_notice_hours: int = Field(24, description="Minimum hours notice required")
     max_advance_days: int = Field(7, description="Maximum days in advance to schedule")
     slot_duration_minutes: int = Field(30, description="Duration of each slot")
     slots_per_hour: int = Field(2, description="Number of slots per hour")
-    blackout_dates: List[str] = Field(default_factory=list, description="Dates unavailable (YYYY-MM-DD)")
+    blackout_dates: list[str] = Field(
+        default_factory=list, description="Dates unavailable (YYYY-MM-DD)"
+    )
 
 
 class ContactInfo(BaseModel):
     """Contact information."""
+
     phone: Optional[str] = None
     email: Optional[str] = None
     booking_link: Optional[str] = None
@@ -65,6 +71,7 @@ class ContactInfo(BaseModel):
 
 class PickupRequirements(BaseModel):
     """Requirements for vehicle pickup."""
+
     gate_pass_required: bool = Field(False, description="Gate pass needed")
     release_required: bool = Field(False, description="Release document needed")
     id_required: bool = Field(True, description="Valid ID required")
@@ -75,6 +82,7 @@ class PickupRequirements(BaseModel):
 
 class WarehouseCreate(BaseModel):
     """Request to create a warehouse."""
+
     code: str = Field(..., min_length=1, max_length=20, description="Unique code (uppercase)")
     name: str = Field(..., min_length=1, max_length=100)
     address: Optional[str] = None
@@ -97,6 +105,7 @@ class WarehouseCreate(BaseModel):
 
 class WarehouseUpdate(BaseModel):
     """Request to update a warehouse."""
+
     name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -113,6 +122,7 @@ class WarehouseUpdate(BaseModel):
 
 class WarehouseResponse(BaseModel):
     """Warehouse response."""
+
     id: int
     code: str
     name: str
@@ -133,13 +143,15 @@ class WarehouseResponse(BaseModel):
 
 class WarehouseListResponse(BaseModel):
     """Warehouse list response."""
-    items: List[WarehouseResponse]
+
+    items: list[WarehouseResponse]
     total: int
 
 
 # =============================================================================
 # SCHEMA INITIALIZATION
 # =============================================================================
+
 
 def init_warehouses_schema():
     """Initialize warehouses table."""
@@ -173,6 +185,7 @@ def init_warehouses_schema():
 # ROUTES
 # =============================================================================
 
+
 @router.post("/", response_model=WarehouseResponse, status_code=201)
 async def create_warehouse(data: WarehouseCreate):
     """Create a new warehouse."""
@@ -180,38 +193,41 @@ async def create_warehouse(data: WarehouseCreate):
 
     with get_connection() as conn:
         # Check for duplicate code
-        existing = conn.execute(
-            "SELECT id FROM warehouses WHERE code = ?", (data.code,)
-        ).fetchone()
+        existing = conn.execute("SELECT id FROM warehouses WHERE code = ?", (data.code,)).fetchone()
 
         if existing:
-            raise HTTPException(status_code=400, detail=f"Warehouse with code '{data.code}' already exists")
+            raise HTTPException(
+                status_code=400, detail=f"Warehouse with code '{data.code}' already exists"
+            )
 
         now = datetime.utcnow().isoformat()
 
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             INSERT INTO warehouses
             (code, name, address, city, state, zip_code, country, timezone,
              hours_json, appointment_rules_json, contact_json, requirements_json,
              is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            data.code,
-            data.name,
-            data.address,
-            data.city,
-            data.state,
-            data.zip_code,
-            data.country,
-            data.timezone,
-            data.hours.model_dump_json() if data.hours else None,
-            data.appointment_rules.model_dump_json() if data.appointment_rules else None,
-            data.contact.model_dump_json() if data.contact else None,
-            data.requirements.model_dump_json() if data.requirements else None,
-            data.is_active,
-            now,
-            now,
-        ))
+        """,
+            (
+                data.code,
+                data.name,
+                data.address,
+                data.city,
+                data.state,
+                data.zip_code,
+                data.country,
+                data.timezone,
+                data.hours.model_dump_json() if data.hours else None,
+                data.appointment_rules.model_dump_json() if data.appointment_rules else None,
+                data.contact.model_dump_json() if data.contact else None,
+                data.requirements.model_dump_json() if data.requirements else None,
+                data.is_active,
+                now,
+                now,
+            ),
+        )
         conn.commit()
 
         warehouse_id = cursor.lastrowid
@@ -270,9 +286,7 @@ async def get_warehouse_by_code(code: str):
     init_warehouses_schema()
 
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM warehouses WHERE code = ?", (code.upper(),)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM warehouses WHERE code = ?", (code.upper(),)).fetchone()
 
     if not row:
         raise HTTPException(status_code=404, detail="Warehouse not found")
@@ -331,7 +345,9 @@ async def update_warehouse(id: int, data: WarehouseUpdate):
 
 
 @router.delete("/{id}")
-async def delete_warehouse(id: int, hard: bool = Query(False, description="Hard delete (permanent)")):
+async def delete_warehouse(
+    id: int, hard: bool = Query(False, description="Hard delete (permanent)")
+):
     """Delete a warehouse (soft delete by default)."""
     init_warehouses_schema()
 
@@ -341,7 +357,7 @@ async def delete_warehouse(id: int, hard: bool = Query(False, description="Hard 
         else:
             result = conn.execute(
                 "UPDATE warehouses SET is_active = FALSE, updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), id)
+                (datetime.utcnow().isoformat(), id),
             )
         conn.commit()
 
@@ -354,6 +370,7 @@ async def delete_warehouse(id: int, hard: bool = Query(False, description="Hard 
 # =============================================================================
 # HELPERS
 # =============================================================================
+
 
 def _row_to_response(row: dict) -> WarehouseResponse:
     """Convert database row to response model."""

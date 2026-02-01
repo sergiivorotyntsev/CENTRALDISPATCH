@@ -1,7 +1,8 @@
 """Gate Pass / PIN extractor from email body."""
+
 import re
-from typing import Optional, List
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -17,24 +18,24 @@ class GatePassExtractor:
     # Patterns ordered by specificity: source-specific first, then generic
     PATTERNS = [
         # IAA-specific patterns (check before generic Gate Pass)
-        (r'(?:IAA|IAAI)\s*(?:Gate\s*)?Pass\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'IAA'),
+        (r"(?:IAA|IAAI)\s*(?:Gate\s*)?Pass\s*[:#]?\s*([A-Za-z0-9\-]{4,20})", "IAA"),
         # Copart-specific patterns
-        (r'Copart\s*(?:Release|Lot)\s*(?:Code|#|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
-        (r'(?:Lot\s*#?\s*Pin|Lot\s*Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
+        (r"Copart\s*(?:Release|Lot)\s*(?:Code|#|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})", "COPART"),
+        (r"(?:Lot\s*#?\s*Pin|Lot\s*Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})", "COPART"),
         # Manheim-specific patterns
-        (r'(?:Manheim\s*)?Release\s*ID\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'MANHEIM'),
-        (r'Pickup\s*(?:Code|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})', 'MANHEIM'),
+        (r"(?:Manheim\s*)?Release\s*ID\s*[:#]?\s*([A-Za-z0-9\-]{4,20})", "MANHEIM"),
+        (r"Pickup\s*(?:Code|Pin)\s*[:#]?\s*([A-Za-z0-9\-]{4,20})", "MANHEIM"),
         # Generic patterns (after source-specific)
-        (r'Gate\s*Pass\s*(?:Pin|Code|#|Number)?\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'Release\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'COPART'),
-        (r'(?:Pickup|Gate|Access)\s*PIN\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'Auth(?:orization)?\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'Pass\s*(?:Code|#)\s*[:#]\s*([A-Za-z0-9\-]{4,20})', 'generic'),
-        (r'\b(?:code|pin)\s*[:#]\s*([A-Za-z0-9\-]{4,20})\b', 'generic'),
+        (r"Gate\s*Pass\s*(?:Pin|Code|#|Number)?\s*[:#]\s*([A-Za-z0-9\-]{4,20})", "generic"),
+        (r"Release\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})", "COPART"),
+        (r"(?:Pickup|Gate|Access)\s*PIN\s*[:#]\s*([A-Za-z0-9\-]{4,20})", "generic"),
+        (r"Auth(?:orization)?\s*Code\s*[:#]\s*([A-Za-z0-9\-]{4,20})", "generic"),
+        (r"Pass\s*(?:Code|#)\s*[:#]\s*([A-Za-z0-9\-]{4,20})", "generic"),
+        (r"\b(?:code|pin)\s*[:#]\s*([A-Za-z0-9\-]{4,20})\b", "generic"),
     ]
 
     @classmethod
-    def extract_from_text(cls, text: str) -> List[GatePassInfo]:
+    def extract_from_text(cls, text: str) -> list[GatePassInfo]:
         results = []
         seen_codes = set()
 
@@ -46,11 +47,13 @@ class GatePassExtractor:
                     continue
                 if cls._is_valid_code(code):
                     seen_codes.add(code)
-                    results.append(GatePassInfo(
-                        code=code,
-                        raw_match=match.group(0).strip(),
-                        source_hint=source_hint if source_hint != 'generic' else None
-                    ))
+                    results.append(
+                        GatePassInfo(
+                            code=code,
+                            raw_match=match.group(0).strip(),
+                            source_hint=source_hint if source_hint != "generic" else None,
+                        )
+                    )
         return results
 
     @classmethod
@@ -67,9 +70,9 @@ class GatePassExtractor:
     def _is_valid_code(code: str) -> bool:
         if len(code) < 4 or len(code) > 20:
             return False
-        if not re.match(r'^[A-Z0-9\-]+$', code):
+        if not re.match(r"^[A-Z0-9\-]+$", code):
             return False
-        common_words = {'CODE', 'PASS', 'GATE', 'PIN', 'NONE', 'NULL', 'TEST'}
+        common_words = {"CODE", "PASS", "GATE", "PIN", "NONE", "NULL", "TEST"}
         if code in common_words:
             return False
         return True
@@ -82,33 +85,33 @@ def extract_text_from_email_body(msg) -> str:
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
-            if content_type == 'text/plain':
+            if content_type == "text/plain":
                 payload = part.get_payload(decode=True)
                 if payload:
-                    charset = part.get_content_charset() or 'utf-8'
-                    text_parts.append(payload.decode(charset, errors='replace'))
-            elif content_type == 'text/html':
+                    charset = part.get_content_charset() or "utf-8"
+                    text_parts.append(payload.decode(charset, errors="replace"))
+            elif content_type == "text/html":
                 payload = part.get_payload(decode=True)
                 if payload:
-                    charset = part.get_content_charset() or 'utf-8'
-                    html = payload.decode(charset, errors='replace')
+                    charset = part.get_content_charset() or "utf-8"
+                    html = payload.decode(charset, errors="replace")
                     text_parts.append(_html_to_text(html))
     else:
         payload = msg.get_payload(decode=True)
         if payload:
-            charset = msg.get_content_charset() or 'utf-8'
-            content = payload.decode(charset, errors='replace')
-            if msg.get_content_type() == 'text/html':
+            charset = msg.get_content_charset() or "utf-8"
+            content = payload.decode(charset, errors="replace")
+            if msg.get_content_type() == "text/html":
                 content = _html_to_text(content)
             text_parts.append(content)
 
-    return '\n\n'.join(text_parts)
+    return "\n\n".join(text_parts)
 
 
 def _html_to_text(html: str) -> str:
-    text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = text.replace('&nbsp;', ' ').replace('&amp;', '&')
+    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
     return text.strip()

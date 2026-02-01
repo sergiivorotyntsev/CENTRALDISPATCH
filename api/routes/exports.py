@@ -4,20 +4,19 @@ Export API Routes
 Export data to Central Dispatch API V2.
 """
 
-import time
 import json
-from typing import Optional, List
 from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.models import (
+    AuctionTypeRepository,
+    DocumentRepository,
     ExportJobRepository,
     ExtractionRunRepository,
-    DocumentRepository,
-    AuctionTypeRepository,
     ReviewItemRepository,
-    ExportStatus,
 )
 
 router = APIRouter(prefix="/api/exports", tags=["Exports"])
@@ -27,28 +26,32 @@ router = APIRouter(prefix="/api/exports", tags=["Exports"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class CDExportRequest(BaseModel):
     """Request to export to Central Dispatch."""
-    run_ids: List[int] = Field(..., description="Extraction run IDs to export")
+
+    run_ids: list[int] = Field(..., description="Extraction run IDs to export")
     dry_run: bool = Field(True, description="Preview only, don't actually send")
     sandbox: bool = Field(True, description="Use CD sandbox environment")
 
 
 class CDPayloadPreview(BaseModel):
     """Preview of a CD API V2 payload."""
+
     dispatch_id: str
     run_id: int
     document_filename: Optional[str] = None
     payload: dict
-    validation_errors: List[str] = []
+    validation_errors: list[str] = []
     is_valid: bool = True
 
 
 class CDExportResponse(BaseModel):
     """Response after CD export."""
+
     job_id: Optional[int] = None
     status: str
-    previews: List[CDPayloadPreview] = []
+    previews: list[CDPayloadPreview] = []
     exported_count: int = 0
     failed_count: int = 0
     message: str
@@ -56,6 +59,7 @@ class CDExportResponse(BaseModel):
 
 class ExportJobResponse(BaseModel):
     """Export job status."""
+
     id: int
     status: str
     target: str = "central_dispatch"
@@ -71,7 +75,8 @@ class ExportJobResponse(BaseModel):
 
 class ExportJobListResponse(BaseModel):
     """List of export jobs."""
-    items: List[ExportJobResponse]
+
+    items: list[ExportJobResponse]
     total: int
 
 
@@ -79,7 +84,8 @@ class ExportJobListResponse(BaseModel):
 # CD PAYLOAD BUILDER
 # =============================================================================
 
-def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
+
+def build_cd_payload(run_id: int) -> tuple[dict, list[str]]:
     """
     Build Central Dispatch API V2 payload from extraction run.
 
@@ -190,7 +196,7 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
             "amount": price_total,
             "paymentMethod": "CASH",
             "paymentLocation": "DELIVERY",
-        }
+        },
     }
 
     # Build notes
@@ -272,6 +278,7 @@ def send_to_cd(payload: dict, sandbox: bool = True) -> tuple[bool, dict]:
 # ROUTES
 # =============================================================================
 
+
 @router.post("/central-dispatch", response_model=CDExportResponse)
 async def export_to_cd(
     data: CDExportRequest,
@@ -297,13 +304,15 @@ async def export_to_cd(
     for run_id in data.run_ids:
         run = ExtractionRunRepository.get_by_id(run_id)
         if not run:
-            previews.append(CDPayloadPreview(
-                dispatch_id="",
-                run_id=run_id,
-                payload={},
-                validation_errors=["Run not found"],
-                is_valid=False,
-            ))
+            previews.append(
+                CDPayloadPreview(
+                    dispatch_id="",
+                    run_id=run_id,
+                    payload={},
+                    validation_errors=["Run not found"],
+                    is_valid=False,
+                )
+            )
             failed_count += 1
             continue
 
@@ -315,20 +324,22 @@ async def export_to_cd(
                     """SELECT id, status, created_at FROM export_jobs
                        WHERE run_id = ? AND status = 'completed'
                        ORDER BY created_at DESC LIMIT 1""",
-                    (run_id,)
+                    (run_id,),
                 ).fetchone()
 
             if existing_job:
-                previews.append(CDPayloadPreview(
-                    dispatch_id="",
-                    run_id=run_id,
-                    payload={},
-                    validation_errors=[
-                        f"Already exported (job #{existing_job['id']} on {existing_job['created_at']}). "
-                        "Use force=true to re-export."
-                    ],
-                    is_valid=False,
-                ))
+                previews.append(
+                    CDPayloadPreview(
+                        dispatch_id="",
+                        run_id=run_id,
+                        payload={},
+                        validation_errors=[
+                            f"Already exported (job #{existing_job['id']} on {existing_job['created_at']}). "
+                            "Use force=true to re-export."
+                        ],
+                        is_valid=False,
+                    )
+                )
                 skipped_count += 1
                 continue
 
@@ -338,20 +349,21 @@ async def export_to_cd(
         if doc:
             with get_connection() as conn:
                 is_test = conn.execute(
-                    "SELECT is_test FROM documents WHERE id = ?",
-                    (doc.id,)
+                    "SELECT is_test FROM documents WHERE id = ?", (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
-                    previews.append(CDPayloadPreview(
-                        dispatch_id="",
-                        run_id=run_id,
-                        payload={},
-                        validation_errors=[
-                            "Test document - export to Central Dispatch is blocked. "
-                            "Use production documents for real exports."
-                        ],
-                        is_valid=False,
-                    ))
+                    previews.append(
+                        CDPayloadPreview(
+                            dispatch_id="",
+                            run_id=run_id,
+                            payload={},
+                            validation_errors=[
+                                "Test document - export to Central Dispatch is blocked. "
+                                "Use production documents for real exports."
+                            ],
+                            is_valid=False,
+                        )
+                    )
                     skipped_count += 1
                     continue
 
@@ -470,9 +482,7 @@ async def list_export_jobs(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM export_jobs WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM export_jobs WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
@@ -482,16 +492,18 @@ async def list_export_jobs(
         if data.get("response_json"):
             data["response_json"] = json.loads(data["response_json"])
 
-        items.append(ExportJobResponse(
-            id=data["id"],
-            status=data["status"],
-            target=data["target"],
-            payload_json=data.get("payload_json"),
-            response_json=data.get("response_json"),
-            error_message=data.get("error_message"),
-            created_at=data.get("created_at"),
-            completed_at=data.get("completed_at"),
-        ))
+        items.append(
+            ExportJobResponse(
+                id=data["id"],
+                status=data["status"],
+                target=data["target"],
+                payload_json=data.get("payload_json"),
+                response_json=data.get("response_json"),
+                error_message=data.get("error_message"),
+                created_at=data.get("created_at"),
+                completed_at=data.get("completed_at"),
+            )
+        )
 
     return ExportJobListResponse(items=items, total=total)
 

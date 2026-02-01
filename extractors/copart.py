@@ -1,10 +1,17 @@
 """Copart document extractor."""
+
 import re
-from typing import Optional
 from datetime import datetime
+from typing import Optional
 
 from extractors.base import BaseExtractor
-from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
+from models.vehicle import (
+    Address,
+    AuctionInvoice,
+    AuctionSource,
+    LocationType,
+    Vehicle,
+)
 
 
 class CopartExtractor(BaseExtractor):
@@ -17,25 +24,25 @@ class CopartExtractor(BaseExtractor):
     @property
     def indicators(self) -> list:
         return [
-            'Copart',
-            'Sales Receipt/Bill of Sale',
-            'SOLD THROUGH COPART',
-            'MEMBER:',
-            'PHYSICAL ADDRESS OF LOT',
-            'LOT#',
-            'copart.com',
+            "Copart",
+            "Sales Receipt/Bill of Sale",
+            "SOLD THROUGH COPART",
+            "MEMBER:",
+            "PHYSICAL ADDRESS OF LOT",
+            "LOT#",
+            "copart.com",
         ]
 
     @property
     def indicator_weights(self) -> dict:
         return {
-            'Copart': 2.0,
-            'SOLD THROUGH COPART': 3.0,
-            'Sales Receipt/Bill of Sale': 1.5,
-            'MEMBER:': 1.0,
-            'PHYSICAL ADDRESS OF LOT': 1.5,
-            'LOT#': 1.0,
-            'copart.com': 2.0,
+            "Copart": 2.0,
+            "SOLD THROUGH COPART": 3.0,
+            "Sales Receipt/Bill of Sale": 1.5,
+            "MEMBER:": 1.0,
+            "PHYSICAL ADDRESS OF LOT": 1.5,
+            "LOT#": 1.0,
+            "copart.com": 2.0,
         }
 
     def extract(self, pdf_path: str) -> Optional[AuctionInvoice]:
@@ -45,20 +52,20 @@ class CopartExtractor(BaseExtractor):
 
         invoice = AuctionInvoice(source=self.source, buyer_id="", buyer_name="")
 
-        member_match = re.search(r'MEMBER[:\s]+(\d+)', text)
+        member_match = re.search(r"MEMBER[:\s]+(\d+)", text)
         if member_match:
             invoice.buyer_id = member_match.group(1)
 
-        lot_match = re.search(r'LOT#[:\s]+(\d+)', text)
+        lot_match = re.search(r"LOT#[:\s]+(\d+)", text)
         if lot_match:
             invoice.lot_number = lot_match.group(1)
 
-        date_patterns = [r'Sale[:\s]+(\d{1,2}/\d{1,2}/\d{4})', r'(\d{1,2}/\d{1,2}/\d{4})']
+        date_patterns = [r"Sale[:\s]+(\d{1,2}/\d{1,2}/\d{4})", r"(\d{1,2}/\d{1,2}/\d{4})"]
         for pattern in date_patterns:
             date_match = re.search(pattern, text)
             if date_match:
                 date_str = date_match.group(1)
-                for fmt in ['%m/%d/%Y', '%m/%d/%y']:
+                for fmt in ["%m/%d/%Y", "%m/%d/%y"]:
                     try:
                         invoice.sale_date = datetime.strptime(date_str, fmt)
                         break
@@ -76,12 +83,15 @@ class CopartExtractor(BaseExtractor):
             vehicle.lot_number = invoice.lot_number
             invoice.vehicles.append(vehicle)
 
-        total_patterns = [r'Sale\s*Price\s*\$?([\d,]+\.?\d*)', r'Net\s*Due\s*\(USD\)\s*\$?([\d,]+\.?\d*)']
+        total_patterns = [
+            r"Sale\s*Price\s*\$?([\d,]+\.?\d*)",
+            r"Net\s*Due\s*\(USD\)\s*\$?([\d,]+\.?\d*)",
+        ]
         for pattern in total_patterns:
             total_match = re.search(pattern, text, re.IGNORECASE)
             if total_match:
                 try:
-                    invoice.total_amount = float(total_match.group(1).replace(',', ''))
+                    invoice.total_amount = float(total_match.group(1).replace(",", ""))
                     if invoice.total_amount > 0:
                         break
                 except ValueError:
@@ -92,7 +102,7 @@ class CopartExtractor(BaseExtractor):
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
         patterns = [
-            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]+([^\n]+)\n\s*([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
+            r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]+([^\n]+)\n\s*([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})",
         ]
 
         for pattern in patterns:
@@ -105,14 +115,14 @@ class CopartExtractor(BaseExtractor):
                     state=groups[2],
                     postal_code=groups[3],
                     country="US",
-                    name="Copart"
+                    name="Copart",
                 )
         return None
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
         vehicle_patterns = [
-            r'VEHICLE[:\s]+(\d{4})\s+([A-Z]+(?:\-[A-Z]+)?)\s+([A-Z0-9\s\-]+?)\s+(BLACK|WHITE|SILVER|GRAY|GREY|RED|BLUE|GREEN|BROWN|GOLD|BEIGE|TAN)',
-            r'VEHICLE[:\s]+(\d{4})\s+([A-Z]+(?:\-[A-Z]+)?)\s+([A-Z0-9\s\-]+)',
+            r"VEHICLE[:\s]+(\d{4})\s+([A-Z]+(?:\-[A-Z]+)?)\s+([A-Z0-9\s\-]+?)\s+(BLACK|WHITE|SILVER|GRAY|GREY|RED|BLUE|GREEN|BROWN|GOLD|BEIGE|TAN)",
+            r"VEHICLE[:\s]+(\d{4})\s+([A-Z]+(?:\-[A-Z]+)?)\s+([A-Z0-9\s\-]+)",
         ]
 
         year, make, model, color = None, None, None, None
@@ -141,5 +151,5 @@ class CopartExtractor(BaseExtractor):
             model=model.title() if model else "Unknown",
             color=color,
             mileage=mileage,
-            vehicle_type=self.detect_vehicle_type(make or "", model or "")
+            vehicle_type=self.detect_vehicle_type(make or "", model or ""),
         )

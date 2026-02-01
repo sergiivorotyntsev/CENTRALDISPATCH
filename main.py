@@ -24,11 +24,12 @@ Usage:
     python main.py sheets-upsert invoice.pdf
     python main.py cd-export --from-sheet --dry-run
 """
+
 import argparse
-import json
-import sys
-import os
 import hashlib
+import json
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -137,6 +138,7 @@ def cmd_doctor(args):
     if (Path(PROJECT_ROOT) / ".env").exists():
         try:
             from core.config import load_config_from_env, load_local_settings
+
             config = load_config_from_env()
             settings = load_local_settings()
 
@@ -160,7 +162,7 @@ def cmd_doctor(args):
 
             if "cd" in export_targets:
                 if config.central_dispatch.enabled:
-                    print(f"  OK: Central Dispatch configured")
+                    print("  OK: Central Dispatch configured")
                 else:
                     print("  WARN: CD in targets but not configured")
                     warnings.append("Central Dispatch export enabled but credentials not set")
@@ -191,8 +193,8 @@ def cmd_doctor(args):
 
 def cmd_extract(args):
     """Extract data from a PDF file."""
-    from extractors import extract_from_pdf
     from core.logging_config import setup_logging
+    from extractors import extract_from_pdf
 
     setup_logging(level="INFO", format_type="text")
 
@@ -212,11 +214,15 @@ def cmd_extract(args):
         print(f"Buyer Name: {invoice.buyer_name}")
         print(f"Sale Date: {invoice.sale_date}")
         print(f"Reference ID: {invoice.reference_id}")
-        print(f"Total Amount: ${invoice.total_amount:,.2f}" if invoice.total_amount else "Total Amount: N/A")
+        print(
+            f"Total Amount: ${invoice.total_amount:,.2f}"
+            if invoice.total_amount
+            else "Total Amount: N/A"
+        )
 
         if invoice.pickup_address:
             addr = invoice.pickup_address
-            print(f"\nPickup Address:")
+            print("\nPickup Address:")
             if addr.name:
                 print(f"  Name: {addr.name}")
             if addr.street:
@@ -265,9 +271,9 @@ def cmd_extract(args):
 
 def cmd_batch_extract(args):
     """Extract data from multiple PDFs in a folder."""
-    from extractors import ExtractorManager
+    from core.config import load_config_from_env
     from core.logging_config import setup_logging
-    from core.config import load_config_from_env, load_local_settings
+    from extractors import ExtractorManager
 
     setup_logging(level="INFO", format_type="text")
 
@@ -330,22 +336,26 @@ def cmd_batch_extract(args):
 
                 if result.invoice:
                     inv = result.invoice
-                    record.update({
-                        "buyer_id": inv.buyer_id,
-                        "buyer_name": inv.buyer_name,
-                        "reference_id": inv.reference_id,
-                        "total_amount": inv.total_amount,
-                        "vehicles": [
-                            {
-                                "vin": v.vin,
-                                "year": v.year,
-                                "make": v.make,
-                                "model": v.model,
-                                "lot_number": v.lot_number,
-                            }
-                            for v in inv.vehicles
-                        ] if inv.vehicles else [],
-                    })
+                    record.update(
+                        {
+                            "buyer_id": inv.buyer_id,
+                            "buyer_name": inv.buyer_name,
+                            "reference_id": inv.reference_id,
+                            "total_amount": inv.total_amount,
+                            "vehicles": [
+                                {
+                                    "vin": v.vin,
+                                    "year": v.year,
+                                    "make": v.make,
+                                    "model": v.model,
+                                    "lot_number": v.lot_number,
+                                }
+                                for v in inv.vehicles
+                            ]
+                            if inv.vehicles
+                            else [],
+                        }
+                    )
                     # Extract first vehicle info for flat output
                     if inv.vehicles:
                         v = inv.vehicles[0]
@@ -411,12 +421,26 @@ def cmd_batch_extract(args):
     # Save CSV if requested
     if args.out_csv:
         import csv
+
         csv_file = Path(args.out_csv)
         fieldnames = [
-            "file", "file_hash", "auction", "score", "status",
-            "vin", "vehicle_year", "vehicle_make", "vehicle_model", "lot_number",
-            "pickup_city", "pickup_state", "pickup_zip",
-            "buyer_id", "reference_id", "total_amount", "error"
+            "file",
+            "file_hash",
+            "auction",
+            "score",
+            "status",
+            "vin",
+            "vehicle_year",
+            "vehicle_make",
+            "vehicle_model",
+            "lot_number",
+            "pickup_city",
+            "pickup_state",
+            "pickup_zip",
+            "buyer_id",
+            "reference_id",
+            "total_amount",
+            "error",
         ]
         with open(csv_file, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -430,6 +454,7 @@ def cmd_batch_extract(args):
             config = load_config_from_env()
             if config.sheets.enabled and config.sheets.spreadsheet_id:
                 from services.sheets_exporter import SheetsExporter
+
                 exporter = SheetsExporter(config.sheets)
                 written = exporter.write_batch(results, run_id=run_id)
                 print(f"Written to Google Sheets: {written} rows")
@@ -585,6 +610,7 @@ def cmd_validate(args):
 
         try:
             from services.central_dispatch import CentralDispatchClient
+
             cd_client = CentralDispatchClient(
                 client_id=config.central_dispatch.client_id,
                 client_secret=config.central_dispatch.client_secret,
@@ -612,13 +638,14 @@ def cmd_validate(args):
 def cmd_test_sheets(args):
     """Test Google Sheets connection and optionally write a test row."""
     from pathlib import Path
+
     from core.config import load_config_from_env, load_local_settings
 
     print("Testing Google Sheets connection...")
     print("-" * 50)
 
     config = load_config_from_env()
-    settings = load_local_settings()
+    load_local_settings()
 
     if not config.sheets.enabled:
         print("ERROR: Google Sheets is not enabled")
@@ -636,7 +663,7 @@ def cmd_test_sheets(args):
     if not creds_path.exists():
         print(f"\nERROR: Credentials file not found: {creds_path}")
         return 1
-    print(f"Credentials file: EXISTS")
+    print("Credentials file: EXISTS")
 
     # Try to connect
     try:
@@ -655,16 +682,16 @@ def cmd_test_sheets(args):
         # Test 2: Check if we can read
         print("[2/3] Testing read access...")
         service = exporter._get_service()
-        result = service.spreadsheets().values().get(
-            spreadsheetId=config.sheets.spreadsheet_id,
-            range=f"{config.sheets.sheet_name}!A1:A1"
+        service.spreadsheets().values().get(
+            spreadsheetId=config.sheets.spreadsheet_id, range=f"{config.sheets.sheet_name}!A1:A1"
         ).execute()
-        print(f"  OK: Can read from sheet")
+        print("  OK: Can read from sheet")
 
         # Test 3: Write test row (if requested)
         if args.write_test:
             print("[3/3] Writing test row...")
             from datetime import datetime
+
             test_record = {
                 "run_id": "test_" + datetime.now().strftime("%H%M%S"),
                 "source_type": "test",
@@ -679,7 +706,7 @@ def cmd_test_sheets(args):
                 "attachment_hash": "test_hash_" + datetime.now().strftime("%Y%m%d"),
             }
             exporter.append_record(test_record)
-            print(f"  OK: Test row written successfully")
+            print("  OK: Test row written successfully")
         else:
             print("[3/3] Skipping test write (use --write-test to enable)")
 
@@ -700,10 +727,11 @@ def cmd_test_sheets(args):
 def cmd_sheets_upsert(args):
     """Upsert PDF extraction to Google Sheets by dispatch_id."""
     from pathlib import Path
+
     from core.config import load_config_from_env
     from core.logging_config import setup_logging
     from extractors import ExtractorManager
-    from schemas.sheets_schema_v2 import generate_dispatch_id, RowStatus
+    from schemas.sheets_schema_v2 import RowStatus, generate_dispatch_id
 
     setup_logging(level="INFO", format_type="text")
 
@@ -728,9 +756,7 @@ def cmd_sheets_upsert(args):
         print("Error: Could not classify PDF (no extractor matched)")
         return 1
 
-    result = classification.extractor.extract_with_result(
-        str(pdf_path), classification.text
-    )
+    result = classification.extractor.extract_with_result(str(pdf_path), classification.text)
 
     if not result.invoice:
         print("Error: Could not extract invoice data from PDF")
@@ -777,27 +803,31 @@ def cmd_sheets_upsert(args):
     # Add vehicle info
     if inv.vehicles:
         v = inv.vehicles[0]
-        record.update({
-            "vin": v.vin,
-            "year": v.year,
-            "make": v.make,
-            "model": v.model,
-            "gate_pass": v.lot_number,
-            "color": v.color,
-            "operable": "TRUE",
-        })
+        record.update(
+            {
+                "vin": v.vin,
+                "year": v.year,
+                "make": v.make,
+                "model": v.model,
+                "gate_pass": v.lot_number,
+                "color": v.color,
+                "operable": "TRUE",
+            }
+        )
         if v.mileage:
             record["mileage"] = v.mileage
 
     # Add pickup address
     if inv.pickup_address:
         addr = inv.pickup_address
-        record.update({
-            "pickup_city": addr.city,
-            "pickup_state": addr.state,
-            "pickup_postal_code": addr.postal_code,
-            "pickup_street1": addr.street,
-        })
+        record.update(
+            {
+                "pickup_city": addr.city,
+                "pickup_state": addr.state,
+                "pickup_postal_code": addr.postal_code,
+                "pickup_street1": addr.street,
+            }
+        )
 
     # Add buyer info
     if inv.buyer_name:
@@ -884,18 +914,18 @@ def cmd_cd_export(args):
         if args.dry_run:
             print("(DRY RUN - no actual API calls made)")
 
-        if results['results']:
+        if results["results"]:
             print()
             print("Details:")
-            for r in results['results']:
-                status = "OK" if r['success'] else "FAIL"
+            for r in results["results"]:
+                status = "OK" if r["success"] else "FAIL"
                 print(f"  [{status}] {r['dispatch_id']}")
-                if r.get('listing_id'):
+                if r.get("listing_id"):
                     print(f"         CD Listing: {r['listing_id']}")
-                if r.get('error'):
+                if r.get("error"):
                     print(f"         Error: {r['error']}")
 
-        return 0 if results['failed'] == 0 else 1
+        return 0 if results["failed"] == 0 else 1
 
     except Exception as e:
         print(f"\nError: {e}")
@@ -949,7 +979,7 @@ def cmd_idempotency(args):
         with store._get_connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM processed_items WHERE processed_at < datetime('now', ?)",
-                (f"-{args.days} days",)
+                (f"-{args.days} days",),
             )
             deleted = cursor.rowcount
             conn.commit()
@@ -959,12 +989,15 @@ def cmd_idempotency(args):
     elif args.action == "list":
         limit = args.limit or 20
         with store._get_connection() as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT idempotency_key, source_type, result_id, processed_at
                 FROM processed_items
                 ORDER BY processed_at DESC
                 LIMIT ?
-            """, (limit,))
+            """,
+                (limit,),
+            )
             rows = cursor.fetchall()
 
         print(f"Last {limit} processed items:")
@@ -996,7 +1029,7 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # doctor command
-    doctor_parser = subparsers.add_parser("doctor", help="Run preflight checks")
+    subparsers.add_parser("doctor", help="Run preflight checks")
 
     # extract command
     extract_parser = subparsers.add_parser("extract", help="Extract data from a PDF file")
@@ -1006,7 +1039,9 @@ Examples:
     # batch-extract command
     batch_parser = subparsers.add_parser("batch-extract", help="Extract from multiple PDFs")
     batch_parser.add_argument("folder", help="Folder containing PDF files")
-    batch_parser.add_argument("--write-sheet", action="store_true", help="Write results to Google Sheets")
+    batch_parser.add_argument(
+        "--write-sheet", action="store_true", help="Write results to Google Sheets"
+    )
     batch_parser.add_argument("--out-csv", help="Output CSV file path")
 
     # once command
@@ -1020,9 +1055,15 @@ Examples:
     # validate command
     validate_parser = subparsers.add_parser("validate", help="Validate credentials")
     validate_parser.add_argument("--skip-email", action="store_true", help="Skip email validation")
-    validate_parser.add_argument("--skip-clickup", action="store_true", help="Skip ClickUp validation")
-    validate_parser.add_argument("--mode", choices=["full", "local"], default="full",
-                                 help="Validation mode (local=only enabled targets)")
+    validate_parser.add_argument(
+        "--skip-clickup", action="store_true", help="Skip ClickUp validation"
+    )
+    validate_parser.add_argument(
+        "--mode",
+        choices=["full", "local"],
+        default="full",
+        help="Validation mode (local=only enabled targets)",
+    )
 
     # idempotency command
     idem_parser = subparsers.add_parser("idempotency", help="Manage idempotency database")
@@ -1032,20 +1073,32 @@ Examples:
 
     # test-sheets command
     sheets_parser = subparsers.add_parser("test-sheets", help="Test Google Sheets connection")
-    sheets_parser.add_argument("--write-test", action="store_true", help="Write a test row to verify write access")
+    sheets_parser.add_argument(
+        "--write-test", action="store_true", help="Write a test row to verify write access"
+    )
 
     # sheets-upsert command
-    upsert_parser = subparsers.add_parser("sheets-upsert", help="Upsert PDF extraction to sheet by dispatch_id")
+    upsert_parser = subparsers.add_parser(
+        "sheets-upsert", help="Upsert PDF extraction to sheet by dispatch_id"
+    )
     upsert_parser.add_argument("pdf", help="Path to PDF file")
     upsert_parser.add_argument("--sheet", help="Sheet name (default: Pickups)")
 
     # cd-export command
-    cd_export_parser = subparsers.add_parser("cd-export", help="Export READY rows from sheet to Central Dispatch")
-    cd_export_parser.add_argument("--from-sheet", action="store_true", help="Export from Google Sheets (required)")
+    cd_export_parser = subparsers.add_parser(
+        "cd-export", help="Export READY rows from sheet to Central Dispatch"
+    )
+    cd_export_parser.add_argument(
+        "--from-sheet", action="store_true", help="Export from Google Sheets (required)"
+    )
     cd_export_parser.add_argument("--sheet", help="Sheet name (default: Pickups)")
-    cd_export_parser.add_argument("--dry-run", action="store_true", help="Preview without calling CD API")
+    cd_export_parser.add_argument(
+        "--dry-run", action="store_true", help="Preview without calling CD API"
+    )
     cd_export_parser.add_argument("--limit", type=int, help="Maximum rows to export")
-    cd_export_parser.add_argument("--preview", action="store_true", help="Preview payload for a single row")
+    cd_export_parser.add_argument(
+        "--preview", action="store_true", help="Preview payload for a single row"
+    )
     cd_export_parser.add_argument("--dispatch-id", help="Dispatch ID for preview mode")
 
     args = parser.parse_args()

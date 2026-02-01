@@ -7,27 +7,30 @@ Shared utilities for all integration modules:
 - Common models
 """
 
+import json
+import logging
 import os
 import uuid
-import json
-import base64
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Any, Optional
 
-from pydantic import BaseModel
 from cryptography.fernet import Fernet
+from pydantic import BaseModel
 
 from api.database import get_connection
 
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # ENCRYPTION UTILS
 # =============================================================================
 
+
 def get_encryption_key() -> bytes:
     """Get or create encryption key for secrets."""
-    key_file = Path("config/.secret_key")
+    key_path = os.getenv("ENCRYPTION_KEY_PATH", "config/.secret_key")
+    key_file = Path(key_path)
     if key_file.exists():
         return key_file.read_bytes()
 
@@ -39,28 +42,28 @@ def get_encryption_key() -> bytes:
 
 
 def encrypt_secret(value: str) -> str:
-    """Encrypt a secret value."""
+    """Encrypt a secret value using Fernet symmetric encryption."""
     if not value:
         return ""
     try:
         f = Fernet(get_encryption_key())
         return f.encrypt(value.encode()).decode()
-    except Exception:
-        return base64.b64encode(value.encode()).decode()
+    except Exception as e:
+        logger.error(f"Failed to encrypt secret: {e}")
+        raise ValueError("Encryption failed - check encryption key configuration") from e
 
 
 def decrypt_secret(encrypted: str) -> str:
-    """Decrypt a secret value."""
+    """Decrypt a secret value using Fernet symmetric encryption."""
     if not encrypted:
         return ""
     try:
         f = Fernet(get_encryption_key())
         return f.decrypt(encrypted.encode()).decode()
-    except Exception:
-        try:
-            return base64.b64decode(encrypted.encode()).decode()
-        except Exception:
-            return encrypted
+    except Exception as e:
+        logger.warning(f"Failed to decrypt secret (may be legacy format): {e}")
+        # Return empty string for corrupted/invalid secrets
+        return ""
 
 
 def mask_secret(value: str) -> str:
@@ -76,8 +79,10 @@ def mask_secret(value: str) -> str:
 # AUDIT LOG
 # =============================================================================
 
+
 class AuditLogEntry(BaseModel):
     """Audit log entry for integration actions."""
+
     id: str
     timestamp: str
     integration: str
@@ -85,7 +90,7 @@ class AuditLogEntry(BaseModel):
     status: str
     user: Optional[str] = None
     request_id: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[dict[str, Any]] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None
 
@@ -122,7 +127,7 @@ def log_integration_action(
     integration: str,
     action: str,
     status: str,
-    details: Dict[str, Any] = None,
+    details: dict[str, Any] = None,
     error: str = None,
     duration_ms: int = None,
     request_id: str = None,
@@ -133,22 +138,25 @@ def log_integration_action(
 
     with get_connection() as conn:
         init_audit_log_table()
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO integration_audit_log
             (id, timestamp, integration, action, status, user, request_id, details_json, error, duration_ms)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            entry_id,
-            timestamp,
-            integration,
-            action,
-            status,
-            None,
-            request_id,
-            json.dumps(details) if details else None,
-            error,
-            duration_ms,
-        ))
+        """,
+            (
+                entry_id,
+                timestamp,
+                integration,
+                action,
+                status,
+                None,
+                request_id,
+                json.dumps(details) if details else None,
+                error,
+                duration_ms,
+            ),
+        )
         conn.commit()
 
     return entry_id
@@ -158,7 +166,7 @@ def get_audit_log(
     integration: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
-) -> List[AuditLogEntry]:
+) -> list[AuditLogEntry]:
     """Get audit log entries."""
     sql = "SELECT * FROM integration_audit_log WHERE 1=1"
     params = []
@@ -200,9 +208,11 @@ def get_audit_log(
 # COMMON MODELS
 # =============================================================================
 
+
 class TestConnectionResponse(BaseModel):
     """Standard response for connection tests."""
+
     status: str
     message: str
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[dict[str, Any]] = None
     duration_ms: Optional[int] = None

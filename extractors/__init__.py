@@ -1,12 +1,13 @@
 """Extractor manager - auto-detects document type using scoring."""
+
 import logging
-from typing import Optional, List, Tuple
 from dataclasses import dataclass
+from typing import Optional
 
 from extractors.base import BaseExtractor, ExtractionResult
+from extractors.copart import CopartExtractor
 from extractors.iaa import IAAExtractor
 from extractors.manheim import ManheimExtractor
-from extractors.copart import CopartExtractor
 from models.vehicle import AuctionInvoice, AuctionSource
 
 logger = logging.getLogger(__name__)
@@ -15,10 +16,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ClassificationResult:
     """Result of document classification."""
+
     source: AuctionSource
     score: float
     extractor: Optional[BaseExtractor]
-    matched_patterns: List[str]
+    matched_patterns: list[str]
     text: str = ""  # Cached text for subsequent extraction
 
 
@@ -33,10 +35,10 @@ class ExtractorManager:
     SCORE_MARGIN = 0.1
 
     def __init__(self):
-        self.extractors: List[BaseExtractor] = [
+        self.extractors: list[BaseExtractor] = [
             IAAExtractor(),
             ManheimExtractor(),
-            CopartExtractor()
+            CopartExtractor(),
         ]
         self._text_cache = {}
 
@@ -57,13 +59,15 @@ class ExtractorManager:
         results = []
         for extractor in self.extractors:
             score, patterns = extractor.score(text)
-            results.append(ClassificationResult(
-                source=extractor.source,
-                score=score,
-                extractor=extractor,
-                matched_patterns=patterns,
-                text=text,
-            ))
+            results.append(
+                ClassificationResult(
+                    source=extractor.source,
+                    score=score,
+                    extractor=extractor,
+                    matched_patterns=patterns,
+                    text=text,
+                )
+            )
 
         # Sort by score descending
         results.sort(key=lambda r: r.score, reverse=True)
@@ -156,7 +160,7 @@ class ExtractorManager:
 
         return classification.extractor.extract_with_result(pdf_path, text)
 
-    def get_all_scores(self, pdf_path: str) -> List[Tuple[AuctionSource, float, List[str]]]:
+    def get_all_scores(self, pdf_path: str) -> list[tuple[AuctionSource, float, list[str]]]:
         """Get scores from all extractors for debugging."""
         text = self._get_text(pdf_path)
         results = []

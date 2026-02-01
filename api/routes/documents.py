@@ -4,19 +4,18 @@ Documents API Routes
 Upload and manage documents for extraction and training.
 """
 
-import os
 import hashlib
-import tempfile
-from typing import Optional, List
+import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
-from pydantic import BaseModel, Field
+from typing import Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 
 from api.models import (
-    DocumentRepository,
     AuctionTypeRepository,
     Document,
-    DatasetSplit,
+    DocumentRepository,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -30,8 +29,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class DocumentResponse(BaseModel):
     """Response model for document."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -53,7 +54,8 @@ class DocumentResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     """Response model for document list."""
-    items: List[DocumentResponse]
+
+    items: list[DocumentResponse]
     total: int
     train_count: int = 0
     test_count: int = 0
@@ -61,6 +63,7 @@ class DocumentListResponse(BaseModel):
 
 class DocumentUploadResponse(BaseModel):
     """Response model for document upload."""
+
     document: DocumentResponse
     is_duplicate: bool = False
     raw_text_preview: Optional[str] = None
@@ -78,6 +81,7 @@ class DocumentUploadResponse(BaseModel):
 
 class DocumentStatsResponse(BaseModel):
     """Response model for document statistics."""
+
     auction_type_id: int
     auction_type_name: str
     train_count: int
@@ -88,6 +92,7 @@ class DocumentStatsResponse(BaseModel):
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
@@ -127,7 +132,9 @@ async def upload_document(
     # Validate source
     valid_sources = ("upload", "email", "batch", "test_lab")
     if source not in valid_sources:
-        raise HTTPException(status_code=400, detail=f"source must be one of: {', '.join(valid_sources)}")
+        raise HTTPException(
+            status_code=400, detail=f"source must be one of: {', '.join(valid_sources)}"
+        )
 
     # Auto-set is_test for test_lab source
     if source == "test_lab":
@@ -149,10 +156,11 @@ async def upload_document(
     if existing:
         # For duplicates, still return run info if exists
         from api.database import get_connection
+
         with get_connection() as conn:
             run_row = conn.execute(
                 "SELECT id, status FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC LIMIT 1",
-                (existing.id,)
+                (existing.id,),
             ).fetchone()
 
         return DocumentUploadResponse(
@@ -167,17 +175,16 @@ async def upload_document(
 
     # Validate PDF structure BEFORE saving (P0 requirement)
     import io
+
     page_count = 0
     raw_text = ""
     try:
         import pdfplumber
+
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             page_count = len(pdf.pages)
             if page_count == 0:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Invalid PDF: Document has no pages"
-                )
+                raise HTTPException(status_code=422, detail="Invalid PDF: Document has no pages")
             # Extract text to validate PDF is readable
             text_parts = []
             for page in pdf.pages:
@@ -189,8 +196,7 @@ async def upload_document(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=422,
-            detail=f"Invalid PDF: {str(e)}. Please upload a valid PDF document."
+            status_code=422, detail=f"Invalid PDF: {str(e)}. Please upload a valid PDF document."
         )
 
     # Save file only after validation passed
@@ -216,10 +222,11 @@ async def upload_document(
 
     # Update page count, source, and is_test
     from api.database import get_connection
+
     with get_connection() as conn:
         conn.execute(
             "UPDATE documents SET page_count = ?, source = ?, is_test = ? WHERE id = ?",
-            (page_count, source, is_test, doc_id)
+            (page_count, source, is_test, doc_id),
         )
         conn.commit()
 
@@ -251,6 +258,7 @@ async def upload_document(
             # Run classification first
             try:
                 from extractors import ExtractorManager
+
                 manager = ExtractorManager()
                 classification = manager.classify(str(file_path))
                 detected_source = classification.source.value
@@ -258,6 +266,7 @@ async def upload_document(
 
                 # Run extraction
                 from api.routes.extractions import run_extraction
+
                 run_extraction(run_id, doc_id, auction_type_id, "rule", None)
 
                 # Get updated status
@@ -307,6 +316,7 @@ async def list_documents(
     else:
         # List all documents (need to implement in repository)
         from api.database import get_connection
+
         sql = "SELECT * FROM documents WHERE 1=1"
         params = []
 
@@ -334,10 +344,12 @@ async def list_documents(
     items = []
     for doc in docs:
         at = AuctionTypeRepository.get_by_id(doc.auction_type_id)
-        items.append(DocumentResponse(
-            **doc.__dict__,
-            auction_type_code=at.code if at else None,
-        ))
+        items.append(
+            DocumentResponse(
+                **doc.__dict__,
+                auction_type_code=at.code if at else None,
+            )
+        )
 
     return DocumentListResponse(
         items=items,
@@ -376,7 +388,7 @@ async def get_document_text(id: int):
     }
 
 
-@router.get("/stats/by-auction-type", response_model=List[DocumentStatsResponse])
+@router.get("/stats/by-auction-type", response_model=list[DocumentStatsResponse])
 async def get_document_stats():
     """Get document counts by auction type."""
     auction_types = AuctionTypeRepository.list_all()
@@ -386,13 +398,15 @@ async def get_document_stats():
         counts = DocumentRepository.count_by_auction_type(at.id)
         train_count = counts.get("train", 0)
         test_count = counts.get("test", 0)
-        stats.append(DocumentStatsResponse(
-            auction_type_id=at.id,
-            auction_type_name=at.name,
-            train_count=train_count,
-            test_count=test_count,
-            total=train_count + test_count,
-        ))
+        stats.append(
+            DocumentStatsResponse(
+                auction_type_id=at.id,
+                auction_type_name=at.name,
+                train_count=train_count,
+                test_count=test_count,
+                total=train_count + test_count,
+            )
+        )
 
     return stats
 
@@ -410,6 +424,7 @@ async def delete_document(id: int):
 
     # Delete from database
     from api.database import get_connection
+
     with get_connection() as conn:
         conn.execute("DELETE FROM documents WHERE id = ?", (id,))
         conn.commit()

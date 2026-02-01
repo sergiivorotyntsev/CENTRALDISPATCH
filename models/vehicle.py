@@ -1,8 +1,9 @@
 """Data models for vehicle transport automation."""
+
 from dataclasses import dataclass, field
-from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 
 class AuctionSource(Enum):
@@ -34,6 +35,7 @@ class VehicleType(Enum):
 @dataclass
 class Address:
     """Physical address."""
+
     name: Optional[str] = None
     street: Optional[str] = None
     city: str = ""
@@ -50,7 +52,7 @@ class Address:
             "city": self.city,
             "state": self.state,
             "postalCode": self.postal_code,
-            "country": self.country
+            "country": self.country,
         }
         if self.name:
             stop["locationName"] = self.name
@@ -66,6 +68,7 @@ class Address:
 @dataclass
 class Vehicle:
     """Vehicle information."""
+
     vin: str
     year: int
     make: str
@@ -88,7 +91,7 @@ class Vehicle:
             "make": self.make,
             "model": self.model,
             "vehicleType": self.vehicle_type.value,
-            "isInoperable": self.is_inoperable
+            "isInoperable": self.is_inoperable,
         }
         if self.color:
             vehicle["color"] = self.color
@@ -102,6 +105,7 @@ class Vehicle:
 @dataclass
 class AuctionInvoice:
     """Parsed auction invoice data."""
+
     source: AuctionSource
     buyer_id: str
     buyer_name: str
@@ -112,7 +116,7 @@ class AuctionInvoice:
     release_id: Optional[str] = None
     stock_number: Optional[str] = None
     lot_number: Optional[str] = None
-    vehicles: List[Vehicle] = field(default_factory=list)
+    vehicles: list[Vehicle] = field(default_factory=list)
     total_amount: Optional[float] = None
     notes: Optional[str] = None
 
@@ -130,6 +134,7 @@ class AuctionInvoice:
 @dataclass
 class TransportListing:
     """Central Dispatch listing data."""
+
     invoice: AuctionInvoice
     delivery_address: Address
     price: float
@@ -144,31 +149,37 @@ class TransportListing:
     def to_cd_listing(self, marketplace_id: int = 10000) -> dict:
         """Convert to Central Dispatch listing API format."""
         has_inop = any(v.is_inoperable for v in self.invoice.vehicles)
-        pickup_stop = self.invoice.pickup_address.to_cd_stop(1) if self.invoice.pickup_address else {}
+        pickup_stop = (
+            self.invoice.pickup_address.to_cd_stop(1) if self.invoice.pickup_address else {}
+        )
         delivery_stop = self.delivery_address.to_cd_stop(2)
         vehicles = [v.to_cd_vehicle() for v in self.invoice.vehicles]
 
         listing = {
             "trailerType": self.trailer_type.value,
             "hasInOpVehicle": has_inop,
-            "availableDate": (self.available_date or datetime.utcnow()).strftime("%Y-%m-%dT00:00:00Z"),
+            "availableDate": (self.available_date or datetime.utcnow()).strftime(
+                "%Y-%m-%dT00:00:00Z"
+            ),
             "price": {
                 "total": self.price,
                 "cod": {
                     "amount": self.price,
                     "paymentMethod": "CASH_CERTIFIED_FUNDS",
-                    "paymentLocation": "DELIVERY"
-                }
+                    "paymentLocation": "DELIVERY",
+                },
             },
             "stops": [pickup_stop, delivery_stop],
             "vehicles": vehicles,
-            "marketplaces": [{"marketplaceId": marketplace_id}]
+            "marketplaces": [{"marketplaceId": marketplace_id}],
         }
 
         if self.expiration_date:
             listing["expirationDate"] = self.expiration_date.strftime("%Y-%m-%dT00:00:00Z")
         if self.desired_delivery_date:
-            listing["desiredDeliveryDate"] = self.desired_delivery_date.strftime("%Y-%m-%dT00:00:00Z")
+            listing["desiredDeliveryDate"] = self.desired_delivery_date.strftime(
+                "%Y-%m-%dT00:00:00Z"
+            )
         if self.external_id:
             listing["externalId"] = self.external_id
         if self.load_specific_terms:
@@ -187,7 +198,9 @@ class TransportListing:
 
             location_info = f"{self.invoice.location_type.value} - {ref_note}"
             if "transportationReleaseNotes" in listing:
-                listing["transportationReleaseNotes"] = f"{location_info}. {listing['transportationReleaseNotes']}"
+                listing["transportationReleaseNotes"] = (
+                    f"{location_info}. {listing['transportationReleaseNotes']}"
+                )
             else:
                 listing["transportationReleaseNotes"] = location_info
 

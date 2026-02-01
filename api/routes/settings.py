@@ -1,18 +1,21 @@
 """Settings management endpoints."""
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Optional
-import os
-from pathlib import Path
+
 import json
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 router = APIRouter()
 
 
 # ----- Pydantic Models -----
 
+
 class ExportTargets(BaseModel):
     """Export target configuration."""
+
     sheets: bool = False
     clickup: bool = False
     cd: bool = False
@@ -20,6 +23,7 @@ class ExportTargets(BaseModel):
 
 class SheetsSettings(BaseModel):
     """Google Sheets settings."""
+
     enabled: bool = False
     spreadsheet_id: str = ""
     sheet_name: str = "Pickups"
@@ -28,6 +32,7 @@ class SheetsSettings(BaseModel):
 
 class ClickUpSettings(BaseModel):
     """ClickUp settings."""
+
     enabled: bool = False
     api_token: str = ""
     list_id: str = ""
@@ -36,6 +41,7 @@ class ClickUpSettings(BaseModel):
 
 class CDSettings(BaseModel):
     """Central Dispatch settings."""
+
     enabled: bool = False
     username: str = ""
     password: str = ""
@@ -44,6 +50,7 @@ class CDSettings(BaseModel):
 
 class EmailSettings(BaseModel):
     """Email ingestion settings."""
+
     enabled: bool = False
     imap_server: str = ""
     imap_port: int = 993
@@ -53,6 +60,7 @@ class EmailSettings(BaseModel):
 
 class WarehouseConfig(BaseModel):
     """Warehouse configuration."""
+
     id: str
     name: str
     address: str
@@ -66,33 +74,36 @@ class WarehouseConfig(BaseModel):
 
 class AllSettings(BaseModel):
     """All settings combined."""
+
     export_targets: ExportTargets
     sheets: SheetsSettings
     clickup: ClickUpSettings
     cd: CDSettings
     email: EmailSettings
-    warehouses: List[WarehouseConfig] = []
+    warehouses: list[WarehouseConfig] = []
     schema_version: int = 1
 
 
 class SettingsStatus(BaseModel):
     """Settings status summary."""
+
     sheets_configured: bool
     clickup_configured: bool
     cd_configured: bool
     email_configured: bool
     warehouses_count: int
-    export_targets: List[str]
+    export_targets: list[str]
 
 
 # ----- Helper Functions -----
+
 
 def get_settings_path() -> Path:
     """Get the local settings file path."""
     return Path("config/local_settings.json")
 
 
-def load_settings() -> Dict[str, Any]:
+def load_settings() -> dict[str, Any]:
     """Load settings from file."""
     path = get_settings_path()
     if path.exists():
@@ -101,7 +112,7 @@ def load_settings() -> Dict[str, Any]:
     return {}
 
 
-def save_settings(settings: Dict[str, Any]):
+def save_settings(settings: dict[str, Any]):
     """Save settings to file."""
     path = get_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +131,7 @@ def mask_secret(value: str) -> str:
 
 # ----- Endpoints -----
 
+
 @router.get("/status", response_model=SettingsStatus)
 async def get_settings_status():
     """
@@ -131,23 +143,18 @@ async def get_settings_status():
 
     # Check each integration
     sheets_ok = bool(
-        settings.get("sheets", {}).get("spreadsheet_id") and
-        Path(settings.get("sheets", {}).get("credentials_file", "")).exists()
+        settings.get("sheets", {}).get("spreadsheet_id")
+        and Path(settings.get("sheets", {}).get("credentials_file", "")).exists()
     )
 
     clickup_ok = bool(
-        settings.get("clickup", {}).get("api_token") and
-        settings.get("clickup", {}).get("list_id")
+        settings.get("clickup", {}).get("api_token") and settings.get("clickup", {}).get("list_id")
     )
 
-    cd_ok = bool(
-        settings.get("cd", {}).get("username") and
-        settings.get("cd", {}).get("password")
-    )
+    cd_ok = bool(settings.get("cd", {}).get("username") and settings.get("cd", {}).get("password"))
 
     email_ok = bool(
-        settings.get("email", {}).get("email_address") and
-        settings.get("email", {}).get("password")
+        settings.get("email", {}).get("email_address") and settings.get("email", {}).get("password")
     )
 
     warehouses = settings.get("warehouses", [])
@@ -338,7 +345,7 @@ async def update_email_settings(email: EmailSettings):
     return {"status": "ok"}
 
 
-@router.get("/warehouses", response_model=List[WarehouseConfig])
+@router.get("/warehouses", response_model=list[WarehouseConfig])
 async def get_warehouses():
     """Get all configured warehouses."""
     settings = load_settings()
@@ -346,7 +353,7 @@ async def get_warehouses():
 
 
 @router.put("/warehouses")
-async def update_warehouses(warehouses: List[WarehouseConfig]):
+async def update_warehouses(warehouses: list[WarehouseConfig]):
     """Update warehouse list."""
     settings = load_settings()
     settings["warehouses"] = [w.model_dump() for w in warehouses]
@@ -363,7 +370,9 @@ async def add_warehouse(warehouse: WarehouseConfig):
 
     # Check for duplicate ID
     if any(w["id"] == warehouse.id for w in warehouses):
-        raise HTTPException(status_code=400, detail=f"Warehouse with ID {warehouse.id} already exists")
+        raise HTTPException(
+            status_code=400, detail=f"Warehouse with ID {warehouse.id} already exists"
+        )
 
     warehouses.append(warehouse.model_dump())
     settings["warehouses"] = warehouses
@@ -433,11 +442,7 @@ async def test_sheets_connection():
 
     except ImportError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Google Sheets dependencies not installed: {e}"
+            status_code=500, detail=f"Google Sheets dependencies not installed: {e}"
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to connect to Sheets: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to connect to Sheets: {str(e)}")

@@ -6,22 +6,18 @@ Supports:
 - Gmail (Google OAuth2)
 """
 
-import os
-import json
-import time
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from api.database import get_connection
 from api.routes.integrations.utils import (
-    encrypt_secret,
     decrypt_secret,
+    encrypt_secret,
     log_integration_action,
 )
-
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
@@ -30,8 +26,10 @@ router = APIRouter(prefix="/oauth", tags=["OAuth"])
 # MODELS
 # =============================================================================
 
+
 class OAuthConfig(BaseModel):
     """OAuth configuration."""
+
     provider: str  # microsoft, google
     client_id: str
     client_secret: str
@@ -41,6 +39,7 @@ class OAuthConfig(BaseModel):
 
 class OAuthToken(BaseModel):
     """OAuth token response."""
+
     access_token: str
     refresh_token: Optional[str] = None
     expires_at: Optional[str] = None
@@ -50,6 +49,7 @@ class OAuthToken(BaseModel):
 
 class OAuthInitResponse(BaseModel):
     """Response with authorization URL."""
+
     auth_url: str
     state: str
 
@@ -57,6 +57,7 @@ class OAuthInitResponse(BaseModel):
 # =============================================================================
 # TOKEN STORAGE
 # =============================================================================
+
 
 def init_oauth_table():
     """Initialize OAuth tokens table."""
@@ -91,30 +92,32 @@ def store_token(
     init_oauth_table()
 
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT OR REPLACE INTO oauth_tokens
             (provider, email, access_token_encrypted, refresh_token_encrypted, expires_at, scope, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            provider,
-            email,
-            encrypt_secret(access_token),
-            encrypt_secret(refresh_token) if refresh_token else None,
-            expires_at,
-            scope,
-            datetime.utcnow().isoformat(),
-        ))
+        """,
+            (
+                provider,
+                email,
+                encrypt_secret(access_token),
+                encrypt_secret(refresh_token) if refresh_token else None,
+                expires_at,
+                scope,
+                datetime.utcnow().isoformat(),
+            ),
+        )
         conn.commit()
 
 
-def get_token(provider: str, email: str) -> Optional[Dict[str, Any]]:
+def get_token(provider: str, email: str) -> Optional[dict[str, Any]]:
     """Get stored OAuth token."""
     init_oauth_table()
 
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM oauth_tokens WHERE provider = ? AND email = ?",
-            (provider, email)
+            "SELECT * FROM oauth_tokens WHERE provider = ? AND email = ?", (provider, email)
         ).fetchone()
 
     if not row:
@@ -122,7 +125,9 @@ def get_token(provider: str, email: str) -> Optional[Dict[str, Any]]:
 
     return {
         "access_token": decrypt_secret(row["access_token_encrypted"]),
-        "refresh_token": decrypt_secret(row["refresh_token_encrypted"]) if row["refresh_token_encrypted"] else None,
+        "refresh_token": decrypt_secret(row["refresh_token_encrypted"])
+        if row["refresh_token_encrypted"]
+        else None,
         "expires_at": row["expires_at"],
         "scope": row["scope"],
     }
@@ -144,6 +149,7 @@ def is_token_expired(expires_at: Optional[str]) -> bool:
 # =============================================================================
 # MICROSOFT OAUTH2
 # =============================================================================
+
 
 def get_microsoft_auth_url(client_id: str, tenant_id: str, redirect_uri: str, state: str) -> str:
     """Generate Microsoft OAuth2 authorization URL."""
@@ -170,7 +176,7 @@ async def exchange_microsoft_code(
     client_secret: str,
     tenant_id: str,
     redirect_uri: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Exchange authorization code for tokens."""
     import httpx
 
@@ -191,8 +197,7 @@ async def exchange_microsoft_code(
 
     if response.status_code != 200:
         raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Token exchange failed: {response.text}"
+            status_code=response.status_code, detail=f"Token exchange failed: {response.text}"
         )
 
     return response.json()
@@ -203,7 +208,7 @@ async def refresh_microsoft_token(
     client_id: str,
     client_secret: str,
     tenant_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Refresh Microsoft access token."""
     import httpx
 
@@ -223,8 +228,7 @@ async def refresh_microsoft_token(
 
     if response.status_code != 200:
         raise HTTPException(
-            status_code=response.status_code,
-            detail=f"Token refresh failed: {response.text}"
+            status_code=response.status_code, detail=f"Token refresh failed: {response.text}"
         )
 
     return response.json()
@@ -234,6 +238,7 @@ async def refresh_microsoft_token(
 # ROUTES
 # =============================================================================
 
+
 @router.post("/microsoft/init", response_model=OAuthInitResponse)
 async def init_microsoft_oauth():
     """
@@ -241,20 +246,23 @@ async def init_microsoft_oauth():
 
     Returns the authorization URL to redirect the user to.
     """
-    from api.routes.settings import load_settings
     import uuid
+
+    from api.routes.settings import load_settings
 
     settings = load_settings()
     email_config = settings.get("email", {})
 
     client_id = email_config.get("oauth_client_id")
     tenant_id = email_config.get("oauth_tenant_id", "common")
-    redirect_uri = email_config.get("oauth_redirect_uri", "http://localhost:8000/api/integrations/oauth/callback")
+    redirect_uri = email_config.get(
+        "oauth_redirect_uri", "http://localhost:8000/api/integrations/oauth/callback"
+    )
 
     if not client_id:
         raise HTTPException(
             status_code=400,
-            detail="Microsoft OAuth not configured. Set oauth_client_id in email settings."
+            detail="Microsoft OAuth not configured. Set oauth_client_id in email settings.",
         )
 
     state = str(uuid.uuid4())
@@ -268,13 +276,16 @@ async def init_microsoft_oauth():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.execute("INSERT INTO oauth_states (state, provider) VALUES (?, ?)", (state, "microsoft"))
+        conn.execute(
+            "INSERT INTO oauth_states (state, provider) VALUES (?, ?)", (state, "microsoft")
+        )
         conn.commit()
 
     auth_url = get_microsoft_auth_url(client_id, tenant_id, redirect_uri, state)
 
-    log_integration_action("oauth", "microsoft_init", "success",
-                          details={"redirect_uri": redirect_uri})
+    log_integration_action(
+        "oauth", "microsoft_init", "success", details={"redirect_uri": redirect_uri}
+    )
 
     return OAuthInitResponse(auth_url=auth_url, state=state)
 
@@ -292,8 +303,7 @@ async def oauth_callback(
     Exchanges authorization code for tokens and stores them.
     """
     if error:
-        log_integration_action("oauth", "callback", "failed",
-                              error=f"{error}: {error_description}")
+        log_integration_action("oauth", "callback", "failed", error=f"{error}: {error_description}")
         raise HTTPException(status_code=400, detail=f"OAuth error: {error_description}")
 
     # Verify state
@@ -319,10 +329,14 @@ async def oauth_callback(
         client_id = email_config.get("oauth_client_id")
         client_secret = email_config.get("oauth_client_secret")
         tenant_id = email_config.get("oauth_tenant_id", "common")
-        redirect_uri = email_config.get("oauth_redirect_uri", "http://localhost:8000/api/integrations/oauth/callback")
+        redirect_uri = email_config.get(
+            "oauth_redirect_uri", "http://localhost:8000/api/integrations/oauth/callback"
+        )
 
         # Exchange code for tokens
-        tokens = await exchange_microsoft_code(code, client_id, client_secret, tenant_id, redirect_uri)
+        tokens = await exchange_microsoft_code(
+            code, client_id, client_secret, tenant_id, redirect_uri
+        )
 
         # Calculate expiry
         expires_in = tokens.get("expires_in", 3600)
@@ -341,8 +355,7 @@ async def oauth_callback(
             scope=tokens.get("scope"),
         )
 
-        log_integration_action("oauth", "microsoft_callback", "success",
-                              details={"email": email})
+        log_integration_action("oauth", "microsoft_callback", "success", details={"email": email})
 
         return {"status": "ok", "message": "Microsoft OAuth completed successfully", "email": email}
 
@@ -369,8 +382,7 @@ async def get_microsoft_token():
 
     if not token_data:
         raise HTTPException(
-            status_code=401,
-            detail="No OAuth token found. Please complete the OAuth flow first."
+            status_code=401, detail="No OAuth token found. Please complete the OAuth flow first."
         )
 
     # Check if token needs refresh
@@ -430,8 +442,7 @@ async def revoke_microsoft_token():
 
     with get_connection() as conn:
         result = conn.execute(
-            "DELETE FROM oauth_tokens WHERE provider = ? AND email = ?",
-            ("microsoft", email)
+            "DELETE FROM oauth_tokens WHERE provider = ? AND email = ?", ("microsoft", email)
         )
         conn.commit()
 

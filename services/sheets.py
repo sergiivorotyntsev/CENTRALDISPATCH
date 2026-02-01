@@ -5,12 +5,13 @@ This module provides:
 2. Update existing records by idempotency key
 3. Query records by status for CD export
 """
-import os
+
 import logging
-from dataclasses import dataclass, field, asdict
+import os
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -19,19 +20,21 @@ logger = logging.getLogger(__name__)
 
 class PickupStatus(Enum):
     """Status of a pickup record in the pipeline."""
-    RECEIVED = "RECEIVED"           # Email received, not yet parsed
-    PARSED = "PARSED"               # PDF parsed successfully
-    PARSE_FAILED = "PARSE_FAILED"   # PDF parsing failed
-    ROUTED = "ROUTED"               # Warehouse assigned
+
+    RECEIVED = "RECEIVED"  # Email received, not yet parsed
+    PARSED = "PARSED"  # PDF parsed successfully
+    PARSE_FAILED = "PARSE_FAILED"  # PDF parsing failed
+    ROUTED = "ROUTED"  # Warehouse assigned
     CLICKUP_CREATED = "CLICKUP_CREATED"  # ClickUp task created
-    READY_FOR_CD = "READY_FOR_CD"   # Ready for Central Dispatch export
-    CD_CREATED = "CD_CREATED"       # CD listing created
-    ERROR = "ERROR"                 # Error occurred
+    READY_FOR_CD = "READY_FOR_CD"  # Ready for Central Dispatch export
+    CD_CREATED = "CD_CREATED"  # CD listing created
+    ERROR = "ERROR"  # Error occurred
 
 
 @dataclass
 class PickupRecord:
     """Canonical record for a pickup - one per PDF attachment."""
+
     # Email metadata
     received_at: str = ""
     email_from: str = ""
@@ -88,7 +91,7 @@ class PickupRecord:
         """Unique key for deduplication."""
         return f"{self.thread_root_id}:{self.attachment_hash}"
 
-    def to_row(self) -> List[str]:
+    def to_row(self) -> list[str]:
         """Convert to sheet row (list of strings)."""
         return [
             self.received_at,
@@ -127,7 +130,7 @@ class PickupRecord:
         ]
 
     @classmethod
-    def from_row(cls, row: List[str]) -> "PickupRecord":
+    def from_row(cls, row: list[str]) -> "PickupRecord":
         """Create from sheet row."""
         # Pad row if needed
         while len(row) < 33:
@@ -170,7 +173,7 @@ class PickupRecord:
         )
 
     @classmethod
-    def get_headers(cls) -> List[str]:
+    def get_headers(cls) -> list[str]:
         """Get column headers."""
         return [
             "received_at",
@@ -226,15 +229,15 @@ class SheetsClient:
         self.credentials_file = credentials_file
         self.token_file = token_file
         self._service = None
-        self._row_cache: Dict[str, int] = {}  # idempotency_key -> row_number
+        self._row_cache: dict[str, int] = {}  # idempotency_key -> row_number
 
     def _get_service(self):
         """Get or create the Sheets API service."""
         if self._service is not None:
             return self._service
 
-        from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
 
@@ -249,9 +252,7 @@ class SheetsClient:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_file, self.SCOPES
-                )
+                flow = InstalledAppFlow.from_client_secrets_file(self.credentials_file, self.SCOPES)
                 creds = flow.run_local_server(port=0)
 
             # Save token
@@ -273,10 +274,15 @@ class SheetsClient:
         service = self._get_service()
 
         # Check if headers exist
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range("A1:AG1"),
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range("A1:AG1"),
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         if not values or values[0] != PickupRecord.get_headers():
@@ -299,13 +305,18 @@ class SheetsClient:
         record.created_at = now
         record.updated_at = now
 
-        result = service.spreadsheets().values().append(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range("A:AG"),
-            valueInputOption="RAW",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [record.to_row()]},
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .append(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range("A:AG"),
+                valueInputOption="RAW",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [record.to_row()]},
+            )
+            .execute()
+        )
 
         # Parse the updated range to get row number
         updated_range = result.get("updates", {}).get("updatedRange", "")
@@ -346,17 +357,27 @@ class SheetsClient:
         service = self._get_service()
 
         # Get all idempotency keys (columns E and AD)
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range("E:E"),  # thread_root_id column
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range("E:E"),  # thread_root_id column
+            )
+            .execute()
+        )
 
         thread_ids = result.get("values", [])
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range("AD:AD"),  # attachment_hash column
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range("AD:AD"),  # attachment_hash column
+            )
+            .execute()
+        )
 
         hashes = result.get("values", [])
 
@@ -369,7 +390,7 @@ class SheetsClient:
 
         return self._row_cache.get(idempotency_key)
 
-    def upsert_record(self, record: PickupRecord) -> Tuple[int, bool]:
+    def upsert_record(self, record: PickupRecord) -> tuple[int, bool]:
         """Insert or update a record. Returns (row_number, was_insert)."""
         existing_row = self.find_row_by_key(record.idempotency_key)
 
@@ -381,14 +402,19 @@ class SheetsClient:
             return row_num, True
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def get_records_by_status(self, status: PickupStatus) -> List[Tuple[int, PickupRecord]]:
+    def get_records_by_status(self, status: PickupStatus) -> list[tuple[int, PickupRecord]]:
         """Get all records with the specified status. Returns list of (row_num, record)."""
         service = self._get_service()
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range("A:AG"),
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range("A:AG"),
+            )
+            .execute()
+        )
 
         rows = result.get("values", [])
         records = []
@@ -414,10 +440,15 @@ class SheetsClient:
         service = self._get_service()
 
         # Get current record
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self._get_range(f"A{row_number}:AG{row_number}"),
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=self._get_range(f"A{row_number}:AG{row_number}"),
+            )
+            .execute()
+        )
 
         rows = result.get("values", [])
         if not rows:

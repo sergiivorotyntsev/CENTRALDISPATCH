@@ -4,17 +4,17 @@ Review API Routes
 Manage review items and submit corrections for training.
 """
 
-from typing import Optional, List
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.models import (
+    AuctionTypeRepository,
+    DocumentRepository,
+    ExtractionRunRepository,
     ReviewItemRepository,
     TrainingExampleRepository,
-    ExtractionRunRepository,
-    DocumentRepository,
-    AuctionTypeRepository,
-    ReviewStatus,
 )
 
 router = APIRouter(prefix="/api/review", tags=["Review"])
@@ -24,8 +24,10 @@ router = APIRouter(prefix="/api/review", tags=["Review"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class ReviewItemResponse(BaseModel):
     """A single review item."""
+
     id: int
     run_id: int
     source_key: str
@@ -45,6 +47,7 @@ class ReviewItemResponse(BaseModel):
 
 class ReviewRunResponse(BaseModel):
     """Response for a review run with all items."""
+
     run_id: int
     document_id: int
     document_filename: Optional[str] = None
@@ -52,28 +55,33 @@ class ReviewRunResponse(BaseModel):
     auction_type_code: Optional[str] = None
     status: str
     extraction_score: Optional[float] = None
-    items: List[ReviewItemResponse]
+    items: list[ReviewItemResponse]
     reviewed_count: int
     total_count: int
 
 
 class ReviewItemUpdate(BaseModel):
     """Update a single review item. Item_id is REQUIRED for proper binding."""
+
     item_id: int = Field(..., description="Review item ID (required)")
-    corrected_value: Optional[str] = Field(None, description="Corrected value (if different from predicted)")
+    corrected_value: Optional[str] = Field(
+        None, description="Corrected value (if different from predicted)"
+    )
     is_match_ok: bool = Field(..., description="True if predicted value is correct")
     export_field: bool = Field(True, description="Include this field in export")
 
 
 class ReviewSubmitRequest(BaseModel):
     """Submit review corrections for a run."""
+
     run_id: int = Field(..., description="Extraction run ID")
-    items: List[ReviewItemUpdate] = Field(..., description="Updated review items")
+    items: list[ReviewItemUpdate] = Field(..., description="Updated review items")
     mark_as_reviewed: bool = Field(True, description="Mark run as reviewed after submit")
 
 
 class ReviewSubmitResponse(BaseModel):
     """Response after submitting review."""
+
     run_id: int
     status: str
     items_updated: int
@@ -83,6 +91,7 @@ class ReviewSubmitResponse(BaseModel):
 
 class TrainingExampleResponse(BaseModel):
     """A training example created from review."""
+
     id: int
     document_id: int
     auction_type_id: int
@@ -96,13 +105,15 @@ class TrainingExampleResponse(BaseModel):
 
 class TrainingExamplesListResponse(BaseModel):
     """Response for training examples list."""
-    items: List[TrainingExampleResponse]
+
+    items: list[TrainingExampleResponse]
     total: int
 
 
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.get("/{run_id}", response_model=ReviewRunResponse)
 async def get_review_for_run(run_id: int):
@@ -268,7 +279,9 @@ async def submit_review(data: ReviewSubmitRequest):
 
     # Return 400 if any item_id was invalid
     if errors:
-        raise HTTPException(status_code=400, detail={"message": "Some items not found", "errors": errors})
+        raise HTTPException(
+            status_code=400, detail={"message": "Some items not found", "errors": errors}
+        )
 
     # Mark run as reviewed
     if data.mark_as_reviewed:
@@ -365,9 +378,10 @@ async def export_training_data(
 
     Returns JSONL or CSV format suitable for fine-tuning.
     """
-    from fastapi.responses import StreamingResponse
-    import json
     import io
+    import json
+
+    from fastapi.responses import StreamingResponse
 
     from api.database import get_connection
 
@@ -391,24 +405,40 @@ async def export_training_data(
 
     if format == "csv":
         import csv
+
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow([
-            "id", "document_id", "auction_type_code", "field_key",
-            "predicted_value", "gold_value", "is_correct", "source_text_snippet"
-        ])
+        writer.writerow(
+            [
+                "id",
+                "document_id",
+                "auction_type_code",
+                "field_key",
+                "predicted_value",
+                "gold_value",
+                "is_correct",
+                "source_text_snippet",
+            ]
+        )
         for row in rows:
-            writer.writerow([
-                row["id"], row["document_id"], row["auction_type_code"],
-                row["field_key"], row["predicted_value"], row["gold_value"],
-                row["is_correct"], row["source_text_snippet"][:200] if row["source_text_snippet"] else ""
-            ])
+            writer.writerow(
+                [
+                    row["id"],
+                    row["document_id"],
+                    row["auction_type_code"],
+                    row["field_key"],
+                    row["predicted_value"],
+                    row["gold_value"],
+                    row["is_correct"],
+                    row["source_text_snippet"][:200] if row["source_text_snippet"] else "",
+                ]
+            )
 
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=training_examples.csv"}
+            headers={"Content-Disposition": "attachment; filename=training_examples.csv"},
         )
 
     else:  # jsonl
@@ -430,5 +460,5 @@ async def export_training_data(
         return StreamingResponse(
             iter([content]),
             media_type="application/x-jsonlines",
-            headers={"Content-Disposition": "attachment; filename=training_examples.jsonl"}
+            headers={"Content-Disposition": "attachment; filename=training_examples.jsonl"},
         )

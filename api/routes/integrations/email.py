@@ -5,19 +5,17 @@ Endpoints for testing and managing email ingestion.
 """
 
 import time
-import json
-from typing import Optional, List, Dict, Any
+from typing import Optional
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+from api.database import get_connection
 from api.routes.integrations.utils import (
+    TestConnectionResponse,
     log_integration_action,
     mask_secret,
-    TestConnectionResponse,
 )
-from api.database import get_connection
-
 
 router = APIRouter(prefix="/email", tags=["Email"])
 
@@ -26,12 +24,16 @@ router = APIRouter(prefix="/email", tags=["Email"])
 # MODELS
 # =============================================================================
 
+
 class EmailRule(BaseModel):
     """Email processing rule."""
+
     name: str
     enabled: bool = True
     priority: int = 0
-    condition_type: str  # subject_contains, from_contains, attachment_type, from_domain, subject_regex
+    condition_type: (
+        str  # subject_contains, from_contains, attachment_type, from_domain, subject_regex
+    )
     condition_value: str
     action: str = "process"  # process, ignore
     auction_type_id: Optional[int] = None
@@ -39,11 +41,13 @@ class EmailRule(BaseModel):
 
 class EmailRulesUpdate(BaseModel):
     """Request to update email rules."""
-    rules: List[EmailRule]
+
+    rules: list[EmailRule]
 
 
 class EmailActivity(BaseModel):
     """Email activity log entry."""
+
     id: str
     timestamp: str
     message_id: str
@@ -59,6 +63,7 @@ class EmailActivity(BaseModel):
 # TEST CONNECTION
 # =============================================================================
 
+
 @router.post("/test", response_model=TestConnectionResponse)
 async def test_email_connection():
     """
@@ -66,8 +71,9 @@ async def test_email_connection():
 
     Verifies IMAP server connection and authentication.
     """
-    from api.routes.settings import load_settings
     import imaplib
+
+    from api.routes.settings import load_settings
 
     start_time = time.time()
     settings = load_settings()
@@ -79,8 +85,7 @@ async def test_email_connection():
     password = email_config.get("password")
 
     if not all([server, email_addr, password]):
-        log_integration_action("email", "test", "failed",
-                              error="Email not configured")
+        log_integration_action("email", "test", "failed", error="Email not configured")
         return TestConnectionResponse(
             status="error",
             message="Email not configured. Set IMAP server, email, and password in settings.",
@@ -98,13 +103,17 @@ async def test_email_connection():
 
         duration_ms = int((time.time() - start_time) * 1000)
 
-        log_integration_action("email", "test", "success",
-                              details={
-                                  "server": server,
-                                  "total_messages": total_messages,
-                                  "unread": unseen_count,
-                              },
-                              duration_ms=duration_ms)
+        log_integration_action(
+            "email",
+            "test",
+            "success",
+            details={
+                "server": server,
+                "total_messages": total_messages,
+                "unread": unseen_count,
+            },
+            duration_ms=duration_ms,
+        )
 
         return TestConnectionResponse(
             status="ok",
@@ -130,9 +139,9 @@ async def test_email_connection():
         else:
             message = f"Connection failed: {error_str}"
 
-        log_integration_action("email", "test", "failed",
-                              error=error_str[:200],
-                              duration_ms=duration_ms)
+        log_integration_action(
+            "email", "test", "failed", error=error_str[:200], duration_ms=duration_ms
+        )
 
         return TestConnectionResponse(
             status="error",
@@ -145,7 +154,8 @@ async def test_email_connection():
 # RULES MANAGEMENT
 # =============================================================================
 
-@router.get("/rules", response_model=List[EmailRule])
+
+@router.get("/rules", response_model=list[EmailRule])
 async def get_email_rules():
     """Get configured email processing rules."""
     from api.routes.settings import load_settings
@@ -164,8 +174,9 @@ async def update_email_rules(request: EmailRulesUpdate):
     settings["email_rules"] = [r.model_dump() for r in request.rules]
     save_settings(settings)
 
-    log_integration_action("email", "update_rules", "success",
-                          details={"rule_count": len(request.rules)})
+    log_integration_action(
+        "email", "update_rules", "success", details={"rule_count": len(request.rules)}
+    )
 
     return {"status": "ok", "count": len(request.rules)}
 
@@ -173,6 +184,7 @@ async def update_email_rules(request: EmailRulesUpdate):
 # =============================================================================
 # ACTIVITY LOG
 # =============================================================================
+
 
 def init_email_activity_table():
     """Initialize email activity log table."""
@@ -197,7 +209,7 @@ def init_email_activity_table():
         conn.commit()
 
 
-@router.get("/activity", response_model=List[EmailActivity])
+@router.get("/activity", response_model=list[EmailActivity])
 async def get_email_activity(
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None),

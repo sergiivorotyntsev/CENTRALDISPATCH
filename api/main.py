@@ -14,11 +14,11 @@ Endpoints:
 - /api/exports - Central Dispatch export
 - /api/models - ML model versions and training
 """
-import os
+
 import sys
 import uuid
-from pathlib import Path
 from contextvars import ContextVar
+from pathlib import Path
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -26,18 +26,29 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Context variable for request ID - accessible throughout the request lifecycle
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
-from api.routes import settings, test, runs, health
-from api.routes import auction_types, documents, extractions, reviews, exports, models
-from api.routes import integrations, warehouses, field_mappings
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
+from api.routes import (
+    auction_types,
+    documents,
+    exports,
+    extractions,
+    field_mappings,
+    health,
+    integrations,
+    models,
+    reviews,
+    runs,
+    settings,
+    test,
+    warehouses,
+)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -48,6 +59,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     - Sets it in a context variable for access throughout the request
     - Adds X-Request-ID header to responses
     """
+
     async def dispatch(self, request: Request, call_next):
         # Check if client sent a request ID, otherwise generate one
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
@@ -115,6 +127,7 @@ app.include_router(field_mappings.router)
 # EMAIL WORKER ENDPOINTS
 # =============================================================================
 
+
 @app.post("/api/email/poll", tags=["Email"])
 async def poll_email_now():
     """
@@ -151,6 +164,7 @@ async def poll_email_now():
 async def start_email_worker():
     """Start the background email polling worker."""
     from api.workers.email_worker import start_worker
+
     await start_worker()
     return {"status": "ok", "message": "Email worker started"}
 
@@ -159,6 +173,7 @@ async def start_email_worker():
 async def stop_email_worker():
     """Stop the background email polling worker."""
     from api.workers.email_worker import stop_worker
+
     await stop_worker()
     return {"status": "ok", "message": "Email worker stopped"}
 
@@ -174,9 +189,11 @@ async def startup():
     seed_base_auction_types()
     # Initialize warehouses schema
     from api.routes.warehouses import init_warehouses_schema
+
     init_warehouses_schema()
     # Initialize templates schema
     from api.routes.field_mappings import init_template_schema
+
     init_template_schema()
 
 

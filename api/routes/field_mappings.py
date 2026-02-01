@@ -10,12 +10,12 @@ Manage extraction field mappings for each auction type:
 
 import json
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.database import get_connection
-
 
 router = APIRouter(prefix="/api/templates", tags=["Templates"])
 
@@ -24,8 +24,10 @@ router = APIRouter(prefix="/api/templates", tags=["Templates"])
 # MODELS
 # =============================================================================
 
+
 class FieldMappingCreate(BaseModel):
     """Create a field mapping."""
+
     source_key: str = Field(..., min_length=1, max_length=100)
     internal_key: str = Field(..., min_length=1, max_length=100)
     cd_key: Optional[str] = Field(None, max_length=100, description="Central Dispatch API key")
@@ -36,14 +38,19 @@ class FieldMappingCreate(BaseModel):
     default_value: Optional[str] = None
     validation_regex: Optional[str] = None
     validation_message: Optional[str] = None
-    transform: Optional[str] = Field(None, description="Transform function: uppercase, lowercase, trim, date_format")
-    extraction_hints: Optional[List[str]] = Field(None, description="Keywords/patterns to help extraction")
+    transform: Optional[str] = Field(
+        None, description="Transform function: uppercase, lowercase, trim, date_format"
+    )
+    extraction_hints: Optional[list[str]] = Field(
+        None, description="Keywords/patterns to help extraction"
+    )
     display_order: int = Field(0, ge=0)
     is_active: bool = True
 
 
 class FieldMappingUpdate(BaseModel):
     """Update a field mapping."""
+
     source_key: Optional[str] = None
     internal_key: Optional[str] = None
     cd_key: Optional[str] = None
@@ -55,13 +62,14 @@ class FieldMappingUpdate(BaseModel):
     validation_regex: Optional[str] = None
     validation_message: Optional[str] = None
     transform: Optional[str] = None
-    extraction_hints: Optional[List[str]] = None
+    extraction_hints: Optional[list[str]] = None
     display_order: Optional[int] = None
     is_active: Optional[bool] = None
 
 
 class FieldMappingResponse(BaseModel):
     """Field mapping response."""
+
     id: int
     auction_type_id: int
     source_key: str
@@ -75,7 +83,7 @@ class FieldMappingResponse(BaseModel):
     validation_regex: Optional[str] = None
     validation_message: Optional[str] = None
     transform: Optional[str] = None
-    extraction_hints: Optional[List[str]] = None
+    extraction_hints: Optional[list[str]] = None
     display_order: int = 0
     is_active: bool = True
     created_at: Optional[str] = None
@@ -84,6 +92,7 @@ class FieldMappingResponse(BaseModel):
 
 class TemplateVersionCreate(BaseModel):
     """Create a template version."""
+
     version_tag: str = Field(..., min_length=1, max_length=50)
     description: Optional[str] = None
     is_active: bool = False
@@ -91,6 +100,7 @@ class TemplateVersionCreate(BaseModel):
 
 class TemplateVersionResponse(BaseModel):
     """Template version response."""
+
     id: int
     auction_type_id: int
     version_tag: str
@@ -102,17 +112,19 @@ class TemplateVersionResponse(BaseModel):
 
 class TemplateResponse(BaseModel):
     """Full template with fields."""
+
     auction_type_id: int
     auction_type_code: str
     auction_type_name: str
     active_version: Optional[str] = None
-    versions: List[TemplateVersionResponse]
-    fields: List[FieldMappingResponse]
+    versions: list[TemplateVersionResponse]
+    fields: list[FieldMappingResponse]
 
 
 # =============================================================================
 # SCHEMA EXTENSIONS
 # =============================================================================
+
 
 def init_template_schema():
     """Initialize template versioning tables."""
@@ -164,7 +176,8 @@ def init_template_schema():
 # ROUTES - TEMPLATES
 # =============================================================================
 
-@router.get("/", response_model=List[TemplateResponse])
+
+@router.get("/", response_model=list[TemplateResponse])
 async def list_templates():
     """List all templates (one per auction type)."""
     init_template_schema()
@@ -181,7 +194,7 @@ async def list_templates():
             versions = conn.execute(
                 """SELECT * FROM template_versions
                    WHERE auction_type_id = ? ORDER BY created_at DESC""",
-                (at["id"],)
+                (at["id"],),
             ).fetchall()
 
             # Get active version
@@ -196,28 +209,30 @@ async def list_templates():
                 """SELECT * FROM field_mappings
                    WHERE auction_type_id = ? AND is_active = TRUE
                    ORDER BY display_order, source_key""",
-                (at["id"],)
+                (at["id"],),
             ).fetchall()
 
-            templates.append(TemplateResponse(
-                auction_type_id=at["id"],
-                auction_type_code=at["code"],
-                auction_type_name=at["name"],
-                active_version=active_version,
-                versions=[
-                    TemplateVersionResponse(
-                        id=v["id"],
-                        auction_type_id=v["auction_type_id"],
-                        version_tag=v["version_tag"],
-                        description=v["description"],
-                        is_active=v["is_active"],
-                        field_count=len([f for f in fields]),
-                        created_at=v["created_at"],
-                    )
-                    for v in versions
-                ],
-                fields=[_row_to_field(dict(f)) for f in fields],
-            ))
+            templates.append(
+                TemplateResponse(
+                    auction_type_id=at["id"],
+                    auction_type_code=at["code"],
+                    auction_type_name=at["name"],
+                    active_version=active_version,
+                    versions=[
+                        TemplateVersionResponse(
+                            id=v["id"],
+                            auction_type_id=v["auction_type_id"],
+                            version_tag=v["version_tag"],
+                            description=v["description"],
+                            is_active=v["is_active"],
+                            field_count=len(list(fields)),
+                            created_at=v["created_at"],
+                        )
+                        for v in versions
+                    ],
+                    fields=[_row_to_field(dict(f)) for f in fields],
+                )
+            )
 
     return templates
 
@@ -229,8 +244,7 @@ async def get_template(auction_type_id: int):
 
     with get_connection() as conn:
         at = conn.execute(
-            "SELECT id, code, name FROM auction_types WHERE id = ?",
-            (auction_type_id,)
+            "SELECT id, code, name FROM auction_types WHERE id = ?", (auction_type_id,)
         ).fetchone()
 
         if not at:
@@ -240,7 +254,7 @@ async def get_template(auction_type_id: int):
         versions = conn.execute(
             """SELECT * FROM template_versions
                WHERE auction_type_id = ? ORDER BY created_at DESC""",
-            (auction_type_id,)
+            (auction_type_id,),
         ).fetchall()
 
         active_version = None
@@ -254,7 +268,7 @@ async def get_template(auction_type_id: int):
             """SELECT * FROM field_mappings
                WHERE auction_type_id = ? AND is_active = TRUE
                ORDER BY display_order, source_key""",
-            (auction_type_id,)
+            (auction_type_id,),
         ).fetchall()
 
     return TemplateResponse(
@@ -282,6 +296,7 @@ async def get_template(auction_type_id: int):
 # ROUTES - VERSIONS
 # =============================================================================
 
+
 @router.post("/{auction_type_id}/versions", response_model=TemplateVersionResponse)
 async def create_template_version(auction_type_id: int, data: TemplateVersionCreate):
     """Create a new template version."""
@@ -298,22 +313,24 @@ async def create_template_version(auction_type_id: int, data: TemplateVersionCre
         # Check for duplicate version
         existing = conn.execute(
             "SELECT id FROM template_versions WHERE auction_type_id = ? AND version_tag = ?",
-            (auction_type_id, data.version_tag)
+            (auction_type_id, data.version_tag),
         ).fetchone()
         if existing:
-            raise HTTPException(status_code=400, detail=f"Version '{data.version_tag}' already exists")
+            raise HTTPException(
+                status_code=400, detail=f"Version '{data.version_tag}' already exists"
+            )
 
         # If setting as active, deactivate others
         if data.is_active:
             conn.execute(
                 "UPDATE template_versions SET is_active = FALSE WHERE auction_type_id = ?",
-                (auction_type_id,)
+                (auction_type_id,),
             )
 
         cursor = conn.execute(
             """INSERT INTO template_versions (auction_type_id, version_tag, description, is_active)
                VALUES (?, ?, ?, ?)""",
-            (auction_type_id, data.version_tag, data.description, data.is_active)
+            (auction_type_id, data.version_tag, data.description, data.is_active),
         )
         conn.commit()
 
@@ -322,7 +339,7 @@ async def create_template_version(auction_type_id: int, data: TemplateVersionCre
         # Get field count
         field_count = conn.execute(
             "SELECT COUNT(*) FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE",
-            (auction_type_id,)
+            (auction_type_id,),
         ).fetchone()[0]
 
     return TemplateVersionResponse(
@@ -345,13 +362,13 @@ async def activate_template_version(auction_type_id: int, version_tag: str):
         # Deactivate all versions
         conn.execute(
             "UPDATE template_versions SET is_active = FALSE WHERE auction_type_id = ?",
-            (auction_type_id,)
+            (auction_type_id,),
         )
 
         # Activate requested version
         result = conn.execute(
             "UPDATE template_versions SET is_active = TRUE WHERE auction_type_id = ? AND version_tag = ?",
-            (auction_type_id, version_tag)
+            (auction_type_id, version_tag),
         )
         conn.commit()
 
@@ -365,7 +382,8 @@ async def activate_template_version(auction_type_id: int, version_tag: str):
 # ROUTES - FIELDS
 # =============================================================================
 
-@router.get("/{auction_type_id}/fields", response_model=List[FieldMappingResponse])
+
+@router.get("/{auction_type_id}/fields", response_model=list[FieldMappingResponse])
 async def list_fields(
     auction_type_id: int,
     include_inactive: bool = Query(False),
@@ -396,38 +414,41 @@ async def create_field(auction_type_id: int, data: FieldMappingCreate):
         # Check for duplicate source_key
         existing = conn.execute(
             "SELECT id FROM field_mappings WHERE auction_type_id = ? AND source_key = ?",
-            (auction_type_id, data.source_key)
+            (auction_type_id, data.source_key),
         ).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail=f"Field '{data.source_key}' already exists")
 
         now = datetime.utcnow().isoformat()
 
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             INSERT INTO field_mappings
             (auction_type_id, source_key, internal_key, cd_key, display_name, description,
              field_type, is_required, default_value, validation_regex, validation_message,
              transform, extraction_hints_json, display_order, is_active, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            auction_type_id,
-            data.source_key,
-            data.internal_key,
-            data.cd_key,
-            data.display_name,
-            data.description,
-            data.field_type,
-            data.is_required,
-            data.default_value,
-            data.validation_regex,
-            data.validation_message,
-            data.transform,
-            json.dumps(data.extraction_hints) if data.extraction_hints else None,
-            data.display_order,
-            data.is_active,
-            now,
-            now,
-        ))
+        """,
+            (
+                auction_type_id,
+                data.source_key,
+                data.internal_key,
+                data.cd_key,
+                data.display_name,
+                data.description,
+                data.field_type,
+                data.is_required,
+                data.default_value,
+                data.validation_regex,
+                data.validation_message,
+                data.transform,
+                json.dumps(data.extraction_hints) if data.extraction_hints else None,
+                data.display_order,
+                data.is_active,
+                now,
+                now,
+            ),
+        )
         conn.commit()
 
         field_id = cursor.lastrowid
@@ -441,7 +462,7 @@ async def get_field(auction_type_id: int, field_id: int):
     with get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM field_mappings WHERE id = ? AND auction_type_id = ?",
-            (field_id, auction_type_id)
+            (field_id, auction_type_id),
         ).fetchone()
 
     if not row:
@@ -494,8 +515,7 @@ async def update_field(auction_type_id: int, field_id: int, data: FieldMappingUp
 
     with get_connection() as conn:
         result = conn.execute(
-            f"UPDATE field_mappings SET {set_clause} WHERE id = ? AND auction_type_id = ?",
-            values
+            f"UPDATE field_mappings SET {set_clause} WHERE id = ? AND auction_type_id = ?", values
         )
         conn.commit()
 
@@ -516,13 +536,13 @@ async def delete_field(
         if hard:
             result = conn.execute(
                 "DELETE FROM field_mappings WHERE id = ? AND auction_type_id = ?",
-                (field_id, auction_type_id)
+                (field_id, auction_type_id),
             )
         else:
             result = conn.execute(
                 """UPDATE field_mappings SET is_active = FALSE, updated_at = ?
                    WHERE id = ? AND auction_type_id = ?""",
-                (datetime.utcnow().isoformat(), field_id, auction_type_id)
+                (datetime.utcnow().isoformat(), field_id, auction_type_id),
             )
         conn.commit()
 
@@ -533,13 +553,13 @@ async def delete_field(
 
 
 @router.put("/{auction_type_id}/fields/reorder")
-async def reorder_fields(auction_type_id: int, field_ids: List[int]):
+async def reorder_fields(auction_type_id: int, field_ids: list[int]):
     """Reorder fields by providing ordered list of field IDs."""
     with get_connection() as conn:
         for i, field_id in enumerate(field_ids):
             conn.execute(
                 "UPDATE field_mappings SET display_order = ? WHERE id = ? AND auction_type_id = ?",
-                (i, field_id, auction_type_id)
+                (i, field_id, auction_type_id),
             )
         conn.commit()
 
@@ -549,6 +569,7 @@ async def reorder_fields(auction_type_id: int, field_ids: List[int]):
 # =============================================================================
 # HELPERS
 # =============================================================================
+
 
 def _row_to_field(row: dict) -> FieldMappingResponse:
     """Convert database row to field response."""

@@ -1,12 +1,13 @@
 """SQLite database for Run History and API state."""
-import sqlite3
+
 import json
+import sqlite3
 import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-from contextlib import contextmanager
-from dataclasses import dataclass, asdict
+from typing import Any, Optional
 
 # Database path
 DB_PATH = Path(__file__).parent.parent / "data" / "control_panel.db"
@@ -84,6 +85,7 @@ def get_connection():
 @dataclass
 class RunRecord:
     """A single run record."""
+
     id: str
     created_at: str
     source_type: str  # 'email', 'upload', 'batch'
@@ -103,7 +105,7 @@ class RunRecord:
     sheets_row_index: Optional[int] = None
     error_message: Optional[str] = None
     config_version: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
 
 
 class RunHistory:
@@ -123,7 +125,7 @@ class RunHistory:
             conn.execute(
                 """INSERT INTO runs (id, source_type, status, attachment_name, attachment_hash, email_message_id)
                    VALUES (?, ?, 'pending', ?, ?, ?)""",
-                (run_id, source_type, attachment_name, attachment_hash, email_message_id)
+                (run_id, source_type, attachment_name, attachment_hash, email_message_id),
             )
             conn.commit()
 
@@ -144,20 +146,14 @@ class RunHistory:
         values = list(kwargs.values()) + [run_id]
 
         with get_connection() as conn:
-            conn.execute(
-                f"UPDATE runs SET {set_clause} WHERE id = ?",
-                values
-            )
+            conn.execute(f"UPDATE runs SET {set_clause} WHERE id = ?", values)
             conn.commit()
 
     @staticmethod
     def get_run(run_id: str) -> Optional[RunRecord]:
         """Get a single run by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM runs WHERE id = ?",
-                (run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
 
             if row:
                 data = dict(row)
@@ -173,7 +169,7 @@ class RunHistory:
         source_type: str = None,
         status: str = None,
         auction: str = None,
-    ) -> List[RunRecord]:
+    ) -> list[RunRecord]:
         """List runs with optional filtering."""
         query = "SELECT * FROM runs WHERE 1=1"
         params = []
@@ -202,22 +198,26 @@ class RunHistory:
             return runs
 
     @staticmethod
-    def get_stats() -> Dict[str, Any]:
+    def get_stats() -> dict[str, Any]:
         """Get run statistics."""
         with get_connection() as conn:
             total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
 
-            by_status = dict(conn.execute(
-                "SELECT status, COUNT(*) FROM runs GROUP BY status"
-            ).fetchall())
+            by_status = dict(
+                conn.execute("SELECT status, COUNT(*) FROM runs GROUP BY status").fetchall()
+            )
 
-            by_auction = dict(conn.execute(
-                "SELECT auction_detected, COUNT(*) FROM runs WHERE auction_detected IS NOT NULL GROUP BY auction_detected"
-            ).fetchall())
+            by_auction = dict(
+                conn.execute(
+                    "SELECT auction_detected, COUNT(*) FROM runs WHERE auction_detected IS NOT NULL GROUP BY auction_detected"
+                ).fetchall()
+            )
 
-            by_source = dict(conn.execute(
-                "SELECT source_type, COUNT(*) FROM runs GROUP BY source_type"
-            ).fetchall())
+            by_source = dict(
+                conn.execute(
+                    "SELECT source_type, COUNT(*) FROM runs GROUP BY source_type"
+                ).fetchall()
+            )
 
             recent = conn.execute(
                 "SELECT COUNT(*) FROM runs WHERE created_at > datetime('now', '-24 hours')"
@@ -236,23 +236,22 @@ class RunLogs:
     """Manage logs for runs."""
 
     @staticmethod
-    def add_log(run_id: str, level: str, message: str, details: Dict = None):
+    def add_log(run_id: str, level: str, message: str, details: dict = None):
         """Add a log entry for a run."""
         with get_connection() as conn:
             conn.execute(
                 """INSERT INTO logs (run_id, level, message, details)
                    VALUES (?, ?, ?, ?)""",
-                (run_id, level, message, json.dumps(details) if details else None)
+                (run_id, level, message, json.dumps(details) if details else None),
             )
             conn.commit()
 
     @staticmethod
-    def get_logs(run_id: str) -> List[Dict]:
+    def get_logs(run_id: str) -> list[dict]:
         """Get all logs for a run."""
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM logs WHERE run_id = ? ORDER BY timestamp",
-                (run_id,)
+                "SELECT * FROM logs WHERE run_id = ? ORDER BY timestamp", (run_id,)
             ).fetchall()
 
             logs = []
@@ -269,7 +268,7 @@ class RunLogs:
         run_id: str = None,
         level: str = None,
         limit: int = 100,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Search logs with filters."""
         sql = "SELECT * FROM logs WHERE 1=1"
         params = []
@@ -296,7 +295,7 @@ class ConfigSnapshots:
     """Manage configuration snapshots."""
 
     @staticmethod
-    def save_snapshot(config_type: str, config_data: Dict, description: str = None) -> str:
+    def save_snapshot(config_type: str, config_data: dict, description: str = None) -> str:
         """Save a configuration snapshot. Returns snapshot ID."""
         snapshot_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -304,19 +303,18 @@ class ConfigSnapshots:
             conn.execute(
                 """INSERT INTO config_snapshots (id, config_type, config_data, description)
                    VALUES (?, ?, ?, ?)""",
-                (snapshot_id, config_type, json.dumps(config_data), description)
+                (snapshot_id, config_type, json.dumps(config_data), description),
             )
             conn.commit()
 
         return snapshot_id
 
     @staticmethod
-    def get_snapshot(snapshot_id: str) -> Optional[Dict]:
+    def get_snapshot(snapshot_id: str) -> Optional[dict]:
         """Get a configuration snapshot."""
         with get_connection() as conn:
             row = conn.execute(
-                "SELECT * FROM config_snapshots WHERE id = ?",
-                (snapshot_id,)
+                "SELECT * FROM config_snapshots WHERE id = ?", (snapshot_id,)
             ).fetchone()
 
             if row:
@@ -326,7 +324,7 @@ class ConfigSnapshots:
             return None
 
     @staticmethod
-    def list_snapshots(config_type: str = None, limit: int = 20) -> List[Dict]:
+    def list_snapshots(config_type: str = None, limit: int = 20) -> list[dict]:
         """List configuration snapshots."""
         sql = "SELECT id, created_at, config_type, description FROM config_snapshots"
         params = []

@@ -1,13 +1,14 @@
 """Centralized configuration management with validation."""
+
 import os
-import re
 from dataclasses import dataclass, field
-from typing import Optional, List
 from pathlib import Path
+from typing import Optional
 
 
 class ConfigurationError(Exception):
     """Raised when configuration is invalid or missing."""
+
     pass
 
 
@@ -23,6 +24,7 @@ def _mask_secret(value: str, visible_chars: int = 4) -> str:
 @dataclass
 class EmailConfig:
     """Email/IMAP configuration."""
+
     provider: str = "imap"  # "imap" or "graph"
     imap_server: str = ""
     imap_port: int = 993
@@ -38,7 +40,7 @@ class EmailConfig:
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate email configuration, return list of errors."""
         errors = []
 
@@ -64,13 +66,16 @@ class EmailConfig:
         return errors
 
     def __repr__(self) -> str:
-        return (f"EmailConfig(provider={self.provider}, server={self.imap_server}, "
-                f"address={self.address}, password={_mask_secret(self.password)})")
+        return (
+            f"EmailConfig(provider={self.provider}, server={self.imap_server}, "
+            f"address={self.address}, password={_mask_secret(self.password)})"
+        )
 
 
 @dataclass
 class ClickUpConfig:
     """ClickUp API configuration."""
+
     token: str = ""
     list_id: str = ""
 
@@ -81,7 +86,7 @@ class ClickUpConfig:
     field_id_auction: Optional[str] = None
     field_id_pickup_address: Optional[str] = None
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate ClickUp configuration, return list of errors."""
         errors = []
         if not self.token:
@@ -97,12 +102,13 @@ class ClickUpConfig:
 @dataclass
 class CentralDispatchConfig:
     """Central Dispatch API configuration."""
+
     enabled: bool = False
     client_id: str = ""
     client_secret: str = ""
     marketplace_id: int = 10000
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate CD configuration, return list of errors."""
         errors = []
         if self.enabled:
@@ -113,17 +119,20 @@ class CentralDispatchConfig:
         return errors
 
     def __repr__(self) -> str:
-        return (f"CentralDispatchConfig(enabled={self.enabled}, "
-                f"client_id={_mask_secret(self.client_id)}, marketplace_id={self.marketplace_id})")
+        return (
+            f"CentralDispatchConfig(enabled={self.enabled}, "
+            f"client_id={_mask_secret(self.client_id)}, marketplace_id={self.marketplace_id})"
+        )
 
 
 @dataclass
 class StorageConfig:
     """Storage/persistence configuration."""
+
     idempotency_db_path: str = "processed_emails.db"
     temp_dir: str = "/tmp/dispatch"
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate storage configuration, return list of errors."""
         errors = []
         # Ensure parent directory exists or can be created
@@ -139,13 +148,14 @@ class StorageConfig:
 @dataclass
 class SheetsConfig:
     """Google Sheets configuration."""
+
     enabled: bool = False
     spreadsheet_id: str = ""
     sheet_name: str = "Pickups"
     credentials_file: str = "credentials.json"
     token_file: str = "token.json"
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate Sheets configuration, return list of errors."""
         errors = []
         if self.enabled:
@@ -162,6 +172,7 @@ class SheetsConfig:
 @dataclass
 class WarehouseConfig:
     """Warehouse routing configuration."""
+
     enabled: bool = True
     data_file: str = "warehouses.yaml"
     geocode_provider: str = "google"  # "google" or "nominatim"
@@ -169,7 +180,7 @@ class WarehouseConfig:
     distance_mode: str = "driving"  # "driving" or "haversine"
     cache_db_path: str = "geocode_cache.db"
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate warehouse configuration, return list of errors."""
         errors = []
         if self.enabled:
@@ -185,6 +196,7 @@ class WarehouseConfig:
 @dataclass
 class AppConfig:
     """Main application configuration."""
+
     email: EmailConfig = field(default_factory=EmailConfig)
     clickup: ClickUpConfig = field(default_factory=ClickUpConfig)
     central_dispatch: CentralDispatchConfig = field(default_factory=CentralDispatchConfig)
@@ -215,10 +227,12 @@ class AppConfig:
             raise ConfigurationError("Configuration errors:\n  - " + "\n  - ".join(errors))
 
     def __repr__(self) -> str:
-        return (f"AppConfig(\n  email={self.email},\n  clickup={self.clickup},\n  "
-                f"central_dispatch={self.central_dispatch},\n  storage={self.storage},\n  "
-                f"sheets={self.sheets},\n  warehouse={self.warehouse},\n  "
-                f"dry_run={self.dry_run}, log_level={self.log_level}\n)")
+        return (
+            f"AppConfig(\n  email={self.email},\n  clickup={self.clickup},\n  "
+            f"central_dispatch={self.central_dispatch},\n  storage={self.storage},\n  "
+            f"sheets={self.sheets},\n  warehouse={self.warehouse},\n  "
+            f"dry_run={self.dry_run}, log_level={self.log_level}\n)"
+        )
 
 
 def load_config_from_env() -> AppConfig:
@@ -227,6 +241,7 @@ def load_config_from_env() -> AppConfig:
     # Load .env file if present (optional dependency)
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
         pass

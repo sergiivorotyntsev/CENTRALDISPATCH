@@ -1,11 +1,12 @@
 """Test/Sandbox endpoints for PDF upload, preview, and dry-run."""
+
+import hashlib
 import os
 import tempfile
-import hashlib
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -13,8 +14,10 @@ router = APIRouter()
 
 # ----- Pydantic Models -----
 
+
 class VehiclePreview(BaseModel):
     """Preview of extracted vehicle data."""
+
     vin: str
     year: Optional[int] = None
     make: Optional[str] = None
@@ -27,6 +30,7 @@ class VehiclePreview(BaseModel):
 
 class PickupLocation(BaseModel):
     """Pickup location details."""
+
     name: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -37,15 +41,16 @@ class PickupLocation(BaseModel):
 
 class ExtractionPreview(BaseModel):
     """Full extraction preview response."""
+
     status: str  # 'ok', 'needs_review', 'fail', 'error'
     auction: str
     confidence_score: float
-    matched_patterns: List[str]
+    matched_patterns: list[str]
     text_length: int
     needs_ocr: bool
 
     # Extracted data
-    vehicles: List[VehiclePreview]
+    vehicles: list[VehiclePreview]
     pickup_location: Optional[PickupLocation] = None
     gate_pass: Optional[str] = None
     buyer_id: Optional[str] = None
@@ -53,7 +58,7 @@ class ExtractionPreview(BaseModel):
     total_amount: Optional[float] = None
 
     # Warnings
-    warnings: List[str] = []
+    warnings: list[str] = []
 
     # File info
     attachment_hash: str
@@ -62,31 +67,35 @@ class ExtractionPreview(BaseModel):
 
 class CDPayloadPreview(BaseModel):
     """Preview of Central Dispatch listing payload."""
+
     endpoint: str
     method: str
-    payload: Dict[str, Any]
-    validation_errors: List[str] = []
-    warnings: List[str] = []
+    payload: dict[str, Any]
+    validation_errors: list[str] = []
+    warnings: list[str] = []
 
 
 class SheetsRowPreview(BaseModel):
     """Preview of Google Sheets row."""
-    columns: List[str]
-    values: List[Any]
-    row_dict: Dict[str, Any]
+
+    columns: list[str]
+    values: list[Any]
+    row_dict: dict[str, Any]
 
 
 class DryRunResult(BaseModel):
     """Result of a dry run."""
+
     extraction: ExtractionPreview
     cd_payload: Optional[CDPayloadPreview] = None
     sheets_row: Optional[SheetsRowPreview] = None
-    warehouse_routing: Optional[Dict[str, Any]] = None
-    would_create: List[str]  # List of what would be created
-    errors: List[str] = []
+    warehouse_routing: Optional[dict[str, Any]] = None
+    would_create: list[str]  # List of what would be created
+    errors: list[str] = []
 
 
 # ----- Helper Functions -----
+
 
 def compute_file_hash(content: bytes) -> str:
     """Compute SHA256 hash of file content."""
@@ -105,8 +114,10 @@ def get_status_from_score(score: float) -> str:
 
 # ----- Endpoints -----
 
+
 class UploadAndExtractResponse(BaseModel):
     """Full response for upload with extraction and run creation."""
+
     # Extraction preview data
     extraction: ExtractionPreview
 
@@ -116,7 +127,7 @@ class UploadAndExtractResponse(BaseModel):
     run_status: Optional[str] = None
 
     # Invoice data for UI display (legacy format)
-    invoice: Optional[Dict[str, Any]] = None
+    invoice: Optional[dict[str, Any]] = None
 
 
 @router.post("/upload")
@@ -175,16 +186,18 @@ async def upload_and_extract(
             inv = result.invoice
 
             for v in inv.vehicles:
-                vehicles.append(VehiclePreview(
-                    vin=v.vin,
-                    year=v.year,
-                    make=v.make,
-                    model=v.model,
-                    lot_number=v.lot_number,
-                    mileage=v.mileage,
-                    is_operable=v.is_operable,
-                    color=v.color,
-                ))
+                vehicles.append(
+                    VehiclePreview(
+                        vin=v.vin,
+                        year=v.year,
+                        make=v.make,
+                        model=v.model,
+                        lot_number=v.lot_number,
+                        mileage=v.mileage,
+                        is_operable=v.is_operable,
+                        color=v.color,
+                    )
+                )
 
             if inv.pickup_address:
                 loc = inv.pickup_address
@@ -197,17 +210,13 @@ async def upload_and_extract(
                     phone=loc.phone,
                 )
 
-            gate_pass = getattr(inv, 'gate_pass', None) or getattr(inv, 'release_id', None)
+            gate_pass = getattr(inv, "gate_pass", None) or getattr(inv, "release_id", None)
             buyer_id = inv.buyer_id
             reference_id = inv.reference_id
             total_amount = inv.total_amount
 
             # Check for warnings
-            has_critical_missing = (
-                not inv.pickup_address or
-                not inv.buyer_id or
-                not inv.vehicles
-            )
+            has_critical_missing = not inv.pickup_address or not inv.buyer_id or not inv.vehicles
             if has_critical_missing:
                 warnings.append("Missing critical fields - needs review")
 
@@ -270,7 +279,9 @@ async def upload_and_extract(
                     "state": inv.pickup_address.state,
                     "postal_code": inv.pickup_address.postal_code,
                     "phone": inv.pickup_address.phone,
-                } if inv.pickup_address else None,
+                }
+                if inv.pickup_address
+                else None,
             }
 
         # Optional: auto-save document and create run
@@ -280,9 +291,9 @@ async def upload_and_extract(
 
         if auto_save:
             from api.models import (
+                AuctionTypeRepository,
                 DocumentRepository,
                 ExtractionRunRepository,
-                AuctionTypeRepository,
             )
 
             # Get auction type (use provided or try to match from classification)
@@ -296,6 +307,7 @@ async def upload_and_extract(
             if not at_id:
                 # Default to first active auction type
                 from api.database import get_connection
+
                 with get_connection() as conn:
                     row = conn.execute(
                         "SELECT id FROM auction_types WHERE is_active = TRUE LIMIT 1"
@@ -329,6 +341,7 @@ async def upload_and_extract(
 
                 # Run extraction
                 from api.routes.extractions import run_extraction
+
                 run_extraction(run_id, document_id, at_id, "rule", None)
 
                 # Get updated run status
@@ -345,6 +358,7 @@ async def upload_and_extract(
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
@@ -489,34 +503,40 @@ async def preview_sheets_row(
             inv = result.invoice
             if inv.vehicles:
                 v = inv.vehicles[0]
-                row_dict.update({
-                    "vin": v.vin,
-                    "vehicle_year": v.year,
-                    "vehicle_make": v.make,
-                    "vehicle_model": v.model,
-                    "lot_number": v.lot_number,
-                    "mileage": v.mileage,
-                    "is_operable": v.is_operable,
-                    "vehicle_color": v.color,
-                })
+                row_dict.update(
+                    {
+                        "vin": v.vin,
+                        "vehicle_year": v.year,
+                        "vehicle_make": v.make,
+                        "vehicle_model": v.model,
+                        "lot_number": v.lot_number,
+                        "mileage": v.mileage,
+                        "is_operable": v.is_operable,
+                        "vehicle_color": v.color,
+                    }
+                )
 
             if inv.pickup_address:
                 loc = inv.pickup_address
-                row_dict.update({
-                    "pickup_name": loc.name,
-                    "pickup_address": loc.street,
-                    "pickup_city": loc.city,
-                    "pickup_state": loc.state,
-                    "pickup_zip": loc.postal_code,
-                    "pickup_phone": loc.phone,
-                })
+                row_dict.update(
+                    {
+                        "pickup_name": loc.name,
+                        "pickup_address": loc.street,
+                        "pickup_city": loc.city,
+                        "pickup_state": loc.state,
+                        "pickup_zip": loc.postal_code,
+                        "pickup_phone": loc.phone,
+                    }
+                )
 
-            row_dict.update({
-                "gate_pass": getattr(inv, 'gate_pass', None) or inv.release_id,
-                "buyer_id": inv.buyer_id,
-                "reference_id": inv.reference_id,
-                "total_amount": inv.total_amount,
-            })
+            row_dict.update(
+                {
+                    "gate_pass": getattr(inv, "gate_pass", None) or inv.release_id,
+                    "buyer_id": inv.buyer_id,
+                    "reference_id": inv.reference_id,
+                    "total_amount": inv.total_amount,
+                }
+            )
 
         # Build values list in column order
         values = []
@@ -582,16 +602,18 @@ async def dry_run(
         if result.invoice:
             inv = result.invoice
             for v in inv.vehicles:
-                vehicles.append(VehiclePreview(
-                    vin=v.vin,
-                    year=v.year,
-                    make=v.make,
-                    model=v.model,
-                    lot_number=v.lot_number,
-                    mileage=v.mileage,
-                    is_operable=v.is_operable,
-                    color=v.color,
-                ))
+                vehicles.append(
+                    VehiclePreview(
+                        vin=v.vin,
+                        year=v.year,
+                        make=v.make,
+                        model=v.model,
+                        lot_number=v.lot_number,
+                        mileage=v.mileage,
+                        is_operable=v.is_operable,
+                        color=v.color,
+                    )
+                )
 
             if inv.pickup_address:
                 loc = inv.pickup_address
@@ -613,7 +635,12 @@ async def dry_run(
             needs_ocr=result.needs_ocr,
             vehicles=vehicles,
             pickup_location=pickup_location,
-            gate_pass=(getattr(result.invoice, 'gate_pass', None) or getattr(result.invoice, 'release_id', None)) if result.invoice else None,
+            gate_pass=(
+                getattr(result.invoice, "gate_pass", None)
+                or getattr(result.invoice, "release_id", None)
+            )
+            if result.invoice
+            else None,
             buyer_id=result.invoice.buyer_id if result.invoice else None,
             reference_id=result.invoice.reference_id if result.invoice else None,
             total_amount=result.invoice.total_amount if result.invoice else None,
@@ -668,12 +695,14 @@ async def dry_run(
                 inv = result.invoice
                 if inv.vehicles:
                     v = inv.vehicles[0]
-                    row_dict.update({
-                        "vin": v.vin,
-                        "vehicle_year": v.year,
-                        "vehicle_make": v.make,
-                        "vehicle_model": v.model,
-                    })
+                    row_dict.update(
+                        {
+                            "vin": v.vin,
+                            "vehicle_year": v.year,
+                            "vehicle_make": v.make,
+                            "vehicle_model": v.model,
+                        }
+                    )
 
             values = [row_dict.get(col, "") for col in column_names]
 
@@ -755,7 +784,9 @@ async def classify_pdf(file: UploadFile = File(...)):
             matched_patterns = []
         else:
             source = classification.source.value
-            extractor_name = classification.extractor.__class__.__name__ if classification.extractor else None
+            extractor_name = (
+                classification.extractor.__class__.__name__ if classification.extractor else None
+            )
             score = classification.score
             matched_patterns = classification.matched_patterns
 
@@ -770,7 +801,6 @@ async def classify_pdf(file: UploadFile = File(...)):
             "needs_ocr": needs_ocr,
             "text_length": text_length,
             "matched_patterns": matched_patterns,
-
             # Detailed scores for all extractors
             "all_scores": [
                 {
@@ -780,7 +810,6 @@ async def classify_pdf(file: UploadFile = File(...)):
                 }
                 for s, sc, p in all_scores
             ],
-
             # File info
             "filename": file.filename,
         }

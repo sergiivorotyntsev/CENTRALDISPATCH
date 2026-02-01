@@ -22,29 +22,31 @@ Column Classes:
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
-from typing import List, Dict, Optional, Any
+from typing import Any, Optional
 
 
 class ColumnClass(Enum):
     """Column ownership/protection class."""
-    PK = "pk"              # Primary key
-    SYSTEM = "system"      # Updated by automation
-    AUDIT = "audit"        # Export tracking
-    LOCK = "lock"          # Boolean protection flags
-    BASE = "base"          # Business data from extraction
+
+    PK = "pk"  # Primary key
+    SYSTEM = "system"  # Updated by automation
+    AUDIT = "audit"  # Export tracking
+    LOCK = "lock"  # Boolean protection flags
+    BASE = "base"  # Business data from extraction
     OVERRIDE = "override"  # Manual corrections (never written by ingestion)
 
 
 class RowStatus(Enum):
     """Row lifecycle status (state machine)."""
-    NEW = "NEW"              # Just imported, not reviewed
-    READY = "READY"          # Validated, ready for CD export
-    HOLD = "HOLD"            # On hold, don't export
-    ERROR = "ERROR"          # Validation or export error
-    EXPORTED = "EXPORTED"    # Successfully exported to CD
-    RETRY = "RETRY"          # Manual retry requested
+
+    NEW = "NEW"  # Just imported, not reviewed
+    READY = "READY"  # Validated, ready for CD export
+    HOLD = "HOLD"  # On hold, don't export
+    ERROR = "ERROR"  # Validation or export error
+    EXPORTED = "EXPORTED"  # Successfully exported to CD
+    RETRY = "RETRY"  # Manual retry requested
     CANCELLED = "CANCELLED"  # Cancelled, don't process
 
 
@@ -62,6 +64,7 @@ VALID_TRANSITIONS = {
 
 class AuctionSource(Enum):
     """Auction source types."""
+
     COPART = "COPART"
     IAA = "IAA"
     MANHEIM = "MANHEIM"
@@ -70,12 +73,14 @@ class AuctionSource(Enum):
 
 class WarehouseMode(Enum):
     """Warehouse selection mode."""
-    AUTO = "AUTO"      # Auto-selected by routing
+
+    AUTO = "AUTO"  # Auto-selected by routing
     MANUAL = "MANUAL"  # Manually selected by operator
 
 
 class TrailerType(Enum):
     """Trailer types for CD API."""
+
     OPEN = "OPEN"
     ENCLOSED = "ENCLOSED"
     DRIVEAWAY = "DRIVEAWAY"
@@ -83,6 +88,7 @@ class TrailerType(Enum):
 
 class PaymentMethod(Enum):
     """Payment methods for CD API."""
+
     CASH = "CASH"
     CHECK = "CHECK"
     ACH = "ACH"
@@ -98,12 +104,14 @@ class PaymentMethod(Enum):
 
 class PaymentLocation(Enum):
     """COD payment locations."""
+
     PICKUP = "PICKUP"
     DELIVERY = "DELIVERY"
 
 
 class PaymentTime(Enum):
     """Balance payment time."""
+
     IMMEDIATELY = "IMMEDIATELY"
     UPON_PICKUP = "UPON_PICKUP"
     UPON_DELIVERY = "UPON_DELIVERY"
@@ -113,12 +121,14 @@ class PaymentTime(Enum):
 
 class BalanceTermsBeginOn(Enum):
     """Balance terms begin on."""
+
     PICKUP = "PICKUP"
     DELIVERY = "DELIVERY"
 
 
 class LocationType(Enum):
     """Stop location types."""
+
     BUSINESS = "BUSINESS"
     RESIDENCE = "RESIDENCE"
     AUCTION = "AUCTION"
@@ -131,6 +141,7 @@ class LocationType(Enum):
 
 class VehicleType(Enum):
     """Vehicle types for CD API."""
+
     SEDAN = "SEDAN"
     COUPE = "COUPE"
     CONVERTIBLE = "CONVERTIBLE"
@@ -153,6 +164,7 @@ SCHEMA_VERSION = 3
 @dataclass
 class ColumnDef:
     """Column definition."""
+
     name: str
     col_class: ColumnClass
     required_for_ready: bool = False
@@ -165,7 +177,7 @@ class ColumnDef:
 # SCHEMA COLUMNS - Organized by CD Listings API V2 structure
 # =============================================================================
 
-COLUMNS: List[ColumnDef] = [
+COLUMNS: list[ColumnDef] = [
     # =========================================================================
     # 1. IDENTITY & SYSTEM FIELDS
     # =========================================================================
@@ -218,7 +230,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Parser confidence 0-100",
     ),
-
     # =========================================================================
     # 2. WAREHOUSE SELECTION
     # =========================================================================
@@ -238,7 +249,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Auto-recommended warehouse ID",
     ),
-
     # =========================================================================
     # 3. AUDIT / EXPORT TRACKING
     # =========================================================================
@@ -267,7 +277,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.AUDIT,
         description="Sent payload JSON snapshot (for debugging)",
     ),
-
     # =========================================================================
     # 4. LOCK FLAGS (Protection Controls)
     # =========================================================================
@@ -289,7 +298,6 @@ COLUMNS: List[ColumnDef] = [
         default="FALSE",
         description="Lock transportation_release_notes + load_specific_terms",
     ),
-
     # =========================================================================
     # 5. LISTING IDENTIFIERS (CD API)
     # =========================================================================
@@ -305,7 +313,6 @@ COLUMNS: List[ColumnDef] = [
         description="Optional partner reference ID",
         cd_field="partnerReferenceId",
     ),
-
     # =========================================================================
     # 6. LISTING FLAGS (CD API)
     # =========================================================================
@@ -329,7 +336,6 @@ COLUMNS: List[ColumnDef] = [
         description="Load-specific terms text",
         cd_field="loadSpecificTerms",
     ),
-
     # =========================================================================
     # 7. DATES (CD API) - availableDate, expirationDate, desiredDeliveryDate
     # =========================================================================
@@ -353,7 +359,6 @@ COLUMNS: List[ColumnDef] = [
         description="Desired delivery date (YYYY-MM-DD, optional)",
         cd_field="desiredDeliveryDate",
     ),
-
     # =========================================================================
     # 8. TRANSPORTATION RELEASE NOTES
     # =========================================================================
@@ -363,7 +368,6 @@ COLUMNS: List[ColumnDef] = [
         description="Transportation release notes text",
         cd_field="transportationReleaseNotes",
     ),
-
     # =========================================================================
     # 9. PRICE (CD API: price.total, cod{}, balance{})
     # =========================================================================
@@ -418,7 +422,6 @@ COLUMNS: List[ColumnDef] = [
         description="Balance payment method",
         cd_field="price.balance.balancePaymentMethod",
     ),
-
     # =========================================================================
     # 10. SLA (CD API: sla{})
     # =========================================================================
@@ -447,7 +450,6 @@ COLUMNS: List[ColumnDef] = [
         description="Include current day after rollover (TRUE|FALSE)",
         cd_field="sla.includeCurrentDayAfterRollOver",
     ),
-
     # =========================================================================
     # 11. PICKUP STOP (stops[0]) - Flat structure per CD V2
     # =========================================================================
@@ -525,7 +527,6 @@ COLUMNS: List[ColumnDef] = [
         description="Pickup location type (BUSINESS|RESIDENCE|AUCTION|...)",
         cd_field="stops[0].locationType",
     ),
-
     # =========================================================================
     # 12. DROPOFF STOP (stops[1]) - Flat structure per CD V2
     # =========================================================================
@@ -603,7 +604,6 @@ COLUMNS: List[ColumnDef] = [
         description="Dropoff location type (BUSINESS|RESIDENCE|...)",
         cd_field="stops[1].locationType",
     ),
-
     # =========================================================================
     # 13. VEHICLE (vehicles[0]) - Per CD V2 structure
     # =========================================================================
@@ -693,7 +693,6 @@ COLUMNS: List[ColumnDef] = [
         description="Vehicle additional info text",
         cd_field="vehicles[0].additionalInfo",
     ),
-
     # =========================================================================
     # 14. MARKETPLACE (marketplaces[0]) - Per CD V2 structure
     # =========================================================================
@@ -744,7 +743,6 @@ COLUMNS: List[ColumnDef] = [
         description="Customers excluded from offers (JSON array)",
         cd_field="marketplaces[0].customersExcludedFromOffers",
     ),
-
     # =========================================================================
     # 15. TAGS (CD API: tags[])
     # =========================================================================
@@ -754,7 +752,6 @@ COLUMNS: List[ColumnDef] = [
         description="Tags as JSON array of strings",
         cd_field="tags",
     ),
-
     # =========================================================================
     # 16. OVERRIDE FIELDS (Manual corrections, never written by ingestion)
     # =========================================================================
@@ -864,7 +861,8 @@ COLUMNS: List[ColumnDef] = [
 # HELPER FUNCTIONS
 # =============================================================================
 
-def get_column_names() -> List[str]:
+
+def get_column_names() -> list[str]:
     """Get ordered list of column names."""
     return [col.name for col in COLUMNS]
 
@@ -890,7 +888,7 @@ def column_index_to_letter(index: int) -> str:
     """Convert 0-based column index to Excel-style letter."""
     result = ""
     while index >= 0:
-        result = chr(index % 26 + ord('A')) + result
+        result = chr(index % 26 + ord("A")) + result
         index = index // 26 - 1
     return result
 
@@ -903,48 +901,47 @@ def get_column_letter(name: str) -> str:
     return column_index_to_letter(index)
 
 
-def get_columns_by_class(col_class: ColumnClass) -> List[str]:
+def get_columns_by_class(col_class: ColumnClass) -> list[str]:
     """Get column names by class."""
     return [col.name for col in COLUMNS if col.col_class == col_class]
 
 
-def get_required_columns() -> List[str]:
+def get_required_columns() -> list[str]:
     """Get names of required columns for READY status."""
     return [col.name for col in COLUMNS if col.required_for_ready]
 
 
-def get_override_columns() -> List[str]:
+def get_override_columns() -> list[str]:
     """Get names of override columns."""
     return get_columns_by_class(ColumnClass.OVERRIDE)
 
 
-def get_lock_columns() -> List[str]:
+def get_lock_columns() -> list[str]:
     """Get names of lock flag columns."""
     return get_columns_by_class(ColumnClass.LOCK)
 
 
-def get_base_columns() -> List[str]:
+def get_base_columns() -> list[str]:
     """Get names of base (business data) columns."""
     return get_columns_by_class(ColumnClass.BASE)
 
 
-def get_system_audit_columns() -> List[str]:
+def get_system_audit_columns() -> list[str]:
     """Get names of SYSTEM and AUDIT columns (always updatable)."""
-    return (get_columns_by_class(ColumnClass.SYSTEM) +
-            get_columns_by_class(ColumnClass.AUDIT))
+    return get_columns_by_class(ColumnClass.SYSTEM) + get_columns_by_class(ColumnClass.AUDIT)
 
 
-def get_delivery_columns() -> List[str]:
+def get_delivery_columns() -> list[str]:
     """Get names of delivery-related columns (protected by lock_delivery)."""
     return [col.name for col in COLUMNS if col.name.startswith("dropoff_")]
 
 
-def get_release_notes_columns() -> List[str]:
+def get_release_notes_columns() -> list[str]:
     """Get names of release notes columns (protected by lock_release_notes)."""
     return ["transportation_release_notes", "load_specific_terms"]
 
 
-def get_cd_field_mapping() -> Dict[str, str]:
+def get_cd_field_mapping() -> dict[str, str]:
     """Get mapping of column names to CD API fields."""
     return {col.name: col.cd_field for col in COLUMNS if col.cd_field}
 
@@ -952,6 +949,7 @@ def get_cd_field_mapping() -> Dict[str, str]:
 # =============================================================================
 # DISPATCH_ID GENERATION
 # =============================================================================
+
 
 def generate_dispatch_id(
     auction_source: str,
@@ -1006,7 +1004,8 @@ def generate_dispatch_id(
 # FINAL VALUE RESOLUTION (Override Pattern)
 # =============================================================================
 
-def get_final_value(row: Dict[str, Any], field: str) -> Any:
+
+def get_final_value(row: dict[str, Any], field: str) -> Any:
     """
     Get the final value for a field, considering overrides.
 
@@ -1022,7 +1021,7 @@ def get_final_value(row: Dict[str, Any], field: str) -> Any:
     return row.get(field)
 
 
-def get_final_value_with_mapping(row: Dict[str, Any], base_field: str, override_field: str) -> Any:
+def get_final_value_with_mapping(row: dict[str, Any], base_field: str, override_field: str) -> Any:
     """
     Get the final value using explicit base and override field names.
     Useful when override naming doesn't follow pattern (e.g., vehicle_vin -> override_vehicle_vin).
@@ -1059,7 +1058,7 @@ OVERRIDE_MAPPINGS = {
 }
 
 
-def apply_all_overrides(row: Dict[str, Any]) -> Dict[str, Any]:
+def apply_all_overrides(row: dict[str, Any]) -> dict[str, Any]:
     """
     Apply all overrides to get final values for export.
     Returns a new dict with _final_{field} keys added.
@@ -1078,7 +1077,8 @@ def apply_all_overrides(row: Dict[str, Any]) -> Dict[str, Any]:
 # VALIDATION FOR READY STATUS (CD V2 Requirements)
 # =============================================================================
 
-def validate_row_for_ready(row: Dict[str, Any]) -> List[str]:
+
+def validate_row_for_ready(row: dict[str, Any]) -> list[str]:
     """
     Validate a row before setting status to READY.
     Returns list of error messages (empty if valid).
@@ -1135,7 +1135,9 @@ def validate_row_for_ready(row: Dict[str, Any]) -> List[str]:
                 if avail_dt < today:
                     errors.append(f"available_date cannot be in the past (got {avail_dt})")
                 elif avail_dt > max_date:
-                    errors.append(f"available_date cannot be more than 30 days from today (got {avail_dt})")
+                    errors.append(
+                        f"available_date cannot be more than 30 days from today (got {avail_dt})"
+                    )
         except ValueError as e:
             errors.append(f"Invalid available_date: {e}")
 
@@ -1241,6 +1243,7 @@ def can_transition_to(current_status: RowStatus, new_status: RowStatus) -> bool:
 # =============================================================================
 # CSV HEADER GENERATION
 # =============================================================================
+
 
 def get_csv_header() -> str:
     """Get CSV header line for sheet template."""

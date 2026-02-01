@@ -4,11 +4,12 @@ Auction Types API Routes
 CRUD operations for AuctionType management.
 """
 
-from typing import Optional, List
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.models import AuctionTypeRepository, AuctionType
+from api.models import AuctionTypeRepository
 
 router = APIRouter(prefix="/api/auction-types", tags=["Auction Types"])
 
@@ -17,8 +18,10 @@ router = APIRouter(prefix="/api/auction-types", tags=["Auction Types"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class AuctionTypeCreate(BaseModel):
     """Request model for creating an auction type."""
+
     name: str = Field(..., min_length=1, max_length=100)
     code: str = Field(..., min_length=1, max_length=20)
     parent_id: Optional[int] = None
@@ -28,6 +31,7 @@ class AuctionTypeCreate(BaseModel):
 
 class AuctionTypeUpdate(BaseModel):
     """Request model for updating an auction type."""
+
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -36,6 +40,7 @@ class AuctionTypeUpdate(BaseModel):
 
 class AuctionTypeResponse(BaseModel):
     """Response model for auction type."""
+
     id: int
     name: str
     code: str
@@ -54,13 +59,15 @@ class AuctionTypeResponse(BaseModel):
 
 class AuctionTypeListResponse(BaseModel):
     """Response model for list of auction types."""
-    items: List[AuctionTypeResponse]
+
+    items: list[AuctionTypeResponse]
     total: int
 
 
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.get("/", response_model=AuctionTypeListResponse)
 async def list_auction_types(
@@ -107,7 +114,9 @@ async def create_auction_type(data: AuctionTypeCreate):
     # Check if code already exists
     existing = AuctionTypeRepository.get_by_code(data.code)
     if existing:
-        raise HTTPException(status_code=409, detail=f"Auction type with code '{data.code}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"Auction type with code '{data.code}' already exists"
+        )
 
     # Validate parent_id if provided
     if data.parent_id:

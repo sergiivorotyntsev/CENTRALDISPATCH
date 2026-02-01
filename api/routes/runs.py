@@ -1,19 +1,22 @@
 """Run history and logs endpoints."""
-from typing import Optional, List, Dict, Any
+
 from datetime import datetime
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from api.database import RunHistory, RunLogs, RunRecord
+from api.database import RunHistory, RunLogs
 
 router = APIRouter()
 
 
 # ----- Pydantic Models -----
 
+
 class RunResponse(BaseModel):
     """Run record response."""
+
     id: str
     created_at: str
     source_type: str
@@ -33,12 +36,13 @@ class RunResponse(BaseModel):
     sheets_row_index: Optional[int] = None
     error_message: Optional[str] = None
     config_version: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
 
 
 class RunListResponse(BaseModel):
     """Response for listing runs."""
-    runs: List[RunResponse]
+
+    runs: list[RunResponse]
     total: int
     limit: int
     offset: int
@@ -46,32 +50,41 @@ class RunListResponse(BaseModel):
 
 class LogEntry(BaseModel):
     """Log entry."""
+
     id: int
     run_id: str
     timestamp: str
     level: str
     message: str
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[dict[str, Any]] = None
 
 
 class StatsResponse(BaseModel):
     """Run statistics response."""
+
     total: int
     last_24h: int
-    by_status: Dict[str, int]
-    by_auction: Dict[str, int]
-    by_source: Dict[str, int]
+    by_status: dict[str, int]
+    by_auction: dict[str, int]
+    by_source: dict[str, int]
 
 
 # ----- Endpoints -----
+
 
 @router.get("/", response_model=RunListResponse)
 async def list_runs(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
-    source_type: Optional[str] = Query(default=None, description="Filter by source: email, upload, batch"),
-    status: Optional[str] = Query(default=None, description="Filter by status: pending, processing, ok, failed, error"),
-    auction: Optional[str] = Query(default=None, description="Filter by auction: COPART, IAA, MANHEIM"),
+    source_type: Optional[str] = Query(
+        default=None, description="Filter by source: email, upload, batch"
+    ),
+    status: Optional[str] = Query(
+        default=None, description="Filter by status: pending, processing, ok, failed, error"
+    ),
+    auction: Optional[str] = Query(
+        default=None, description="Filter by auction: COPART, IAA, MANHEIM"
+    ),
 ):
     """
     List runs with optional filtering.
@@ -89,28 +102,31 @@ async def list_runs(
     stats = RunHistory.get_stats()
 
     return RunListResponse(
-        runs=[RunResponse(
-            id=r.id,
-            created_at=r.created_at,
-            source_type=r.source_type,
-            status=r.status,
-            email_message_id=r.email_message_id,
-            attachment_hash=r.attachment_hash,
-            attachment_name=r.attachment_name,
-            auction_detected=r.auction_detected,
-            extraction_score=r.extraction_score,
-            warehouse_id=r.warehouse_id,
-            warehouse_reason=r.warehouse_reason,
-            clickup_task_id=r.clickup_task_id,
-            clickup_task_url=r.clickup_task_url,
-            cd_listing_id=r.cd_listing_id,
-            cd_payload_summary=r.cd_payload_summary,
-            sheets_spreadsheet_id=r.sheets_spreadsheet_id,
-            sheets_row_index=r.sheets_row_index,
-            error_message=r.error_message,
-            config_version=r.config_version,
-            metadata=r.metadata,
-        ) for r in runs],
+        runs=[
+            RunResponse(
+                id=r.id,
+                created_at=r.created_at,
+                source_type=r.source_type,
+                status=r.status,
+                email_message_id=r.email_message_id,
+                attachment_hash=r.attachment_hash,
+                attachment_name=r.attachment_name,
+                auction_detected=r.auction_detected,
+                extraction_score=r.extraction_score,
+                warehouse_id=r.warehouse_id,
+                warehouse_reason=r.warehouse_reason,
+                clickup_task_id=r.clickup_task_id,
+                clickup_task_url=r.clickup_task_url,
+                cd_listing_id=r.cd_listing_id,
+                cd_payload_summary=r.cd_payload_summary,
+                sheets_spreadsheet_id=r.sheets_spreadsheet_id,
+                sheets_row_index=r.sheets_row_index,
+                error_message=r.error_message,
+                config_version=r.config_version,
+                metadata=r.metadata,
+            )
+            for r in runs
+        ],
         total=stats["total"],
         limit=limit,
         offset=offset,
@@ -169,7 +185,7 @@ async def get_run(run_id: str):
     )
 
 
-@router.get("/{run_id}/logs", response_model=List[LogEntry])
+@router.get("/{run_id}/logs", response_model=list[LogEntry])
 async def get_run_logs(run_id: str):
     """
     Get logs for a specific run.
@@ -181,14 +197,17 @@ async def get_run_logs(run_id: str):
 
     logs = RunLogs.get_logs(run_id)
 
-    return [LogEntry(
-        id=log["id"],
-        run_id=log["run_id"],
-        timestamp=log["timestamp"],
-        level=log["level"],
-        message=log["message"],
-        details=log.get("details"),
-    ) for log in logs]
+    return [
+        LogEntry(
+            id=log["id"],
+            run_id=log["run_id"],
+            timestamp=log["timestamp"],
+            level=log["level"],
+            message=log["message"],
+            details=log.get("details"),
+        )
+        for log in logs
+    ]
 
 
 @router.get("/logs/search")
@@ -209,14 +228,17 @@ async def search_logs(
     )
 
     return {
-        "logs": [LogEntry(
-            id=log["id"],
-            run_id=log["run_id"],
-            timestamp=log["timestamp"],
-            level=log["level"],
-            message=log["message"],
-            details=log.get("details"),
-        ) for log in logs],
+        "logs": [
+            LogEntry(
+                id=log["id"],
+                run_id=log["run_id"],
+                timestamp=log["timestamp"],
+                level=log["level"],
+                message=log["message"],
+                details=log.get("details"),
+            )
+            for log in logs
+        ],
         "count": len(logs),
     }
 
@@ -253,7 +275,9 @@ async def retry_run(run_id: str):
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
     if run.status not in ("failed", "error"):
-        raise HTTPException(status_code=400, detail=f"Run {run_id} is not failed (status: {run.status})")
+        raise HTTPException(
+            status_code=400, detail=f"Run {run_id} is not failed (status: {run.status})"
+        )
 
     # Create new run with same parameters
     new_run_id = RunHistory.create_run(
@@ -289,9 +313,10 @@ async def export_runs_csv(
     """
     Export runs to CSV format.
     """
-    from fastapi.responses import StreamingResponse
     import csv
     import io
+
+    from fastapi.responses import StreamingResponse
 
     runs = RunHistory.list_runs(
         limit=limit,
@@ -305,27 +330,39 @@ async def export_runs_csv(
     writer = csv.writer(output)
 
     # Header
-    writer.writerow([
-        "id", "created_at", "source_type", "status", "auction_detected",
-        "extraction_score", "attachment_name", "warehouse_id",
-        "clickup_task_id", "cd_listing_id", "error_message",
-    ])
+    writer.writerow(
+        [
+            "id",
+            "created_at",
+            "source_type",
+            "status",
+            "auction_detected",
+            "extraction_score",
+            "attachment_name",
+            "warehouse_id",
+            "clickup_task_id",
+            "cd_listing_id",
+            "error_message",
+        ]
+    )
 
     # Rows
     for run in runs:
-        writer.writerow([
-            run.id,
-            run.created_at,
-            run.source_type,
-            run.status,
-            run.auction_detected,
-            run.extraction_score,
-            run.attachment_name,
-            run.warehouse_id,
-            run.clickup_task_id,
-            run.cd_listing_id,
-            run.error_message,
-        ])
+        writer.writerow(
+            [
+                run.id,
+                run.created_at,
+                run.source_type,
+                run.status,
+                run.auction_detected,
+                run.extraction_score,
+                run.attachment_name,
+                run.warehouse_id,
+                run.clickup_task_id,
+                run.cd_listing_id,
+                run.error_message,
+            ]
+        )
 
     output.seek(0)
 
