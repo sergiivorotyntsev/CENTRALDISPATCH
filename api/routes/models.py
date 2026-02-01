@@ -491,36 +491,53 @@ async def get_training_stats_overview():
             at_id = at["id"]
             at_code = at["code"]
 
-            # Count from training_examples
-            total = conn.execute(
-                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-                (at_id,)
-            ).fetchone()[0]
+            # Count from training_examples (new system)
+            try:
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
+                    (at_id,)
+                ).fetchone()[0]
 
-            validated = conn.execute(
-                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = TRUE",
-                (at_id,)
-            ).fetchone()[0]
+                validated = conn.execute(
+                    "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = 1",
+                    (at_id,)
+                ).fetchone()[0]
+            except:
+                total = 0
+                validated = 0
 
-            # Also count reviewed items as training data
-            reviewed_count = conn.execute(
-                """SELECT COUNT(*)
-                   FROM review_items ri
-                   JOIN extraction_runs er ON ri.run_id = er.id
-                   WHERE er.auction_type_id = ? AND ri.is_match_ok = TRUE""",
-                (at_id,)
-            ).fetchone()[0]
+            # Count from field_corrections (new training system)
+            try:
+                corrections_count = conn.execute(
+                    "SELECT COUNT(DISTINCT extraction_run_id) FROM field_corrections WHERE auction_type_id = ?",
+                    (at_id,)
+                ).fetchone()[0]
+                total += corrections_count
+                validated += corrections_count
+            except:
+                pass
 
-            total_for_type = total + reviewed_count
-            validated_for_type = validated + reviewed_count
+            # Also count reviewed items as training data (legacy)
+            try:
+                reviewed_count = conn.execute(
+                    """SELECT COUNT(DISTINCT er.id)
+                       FROM extraction_runs er
+                       WHERE er.auction_type_id = ? AND er.status = 'approved'""",
+                    (at_id,)
+                ).fetchone()[0]
+
+                total += reviewed_count
+                validated += reviewed_count
+            except:
+                pass
 
             by_auction_type[at_code] = {
-                "total": total_for_type,
-                "validated": validated_for_type,
+                "total": total,
+                "validated": validated,
             }
 
-            total_examples += total_for_type
-            total_validated += validated_for_type
+            total_examples += total
+            total_validated += validated
 
     return {
         "total_examples": total_examples,

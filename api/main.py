@@ -35,7 +35,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from api.routes import settings, test, runs, health
 from api.routes import auction_types, documents, extractions, reviews, exports, models
-from api.routes import integrations, warehouses, field_mappings
+from api.routes import integrations, warehouses, field_mappings, training
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
 
@@ -109,6 +109,7 @@ app.include_router(models.router)
 app.include_router(integrations.router)
 app.include_router(warehouses.router)
 app.include_router(field_mappings.router)
+app.include_router(training.router, prefix="/api")
 
 
 # =============================================================================
@@ -178,6 +179,9 @@ async def startup():
     # Initialize templates schema
     from api.routes.field_mappings import init_template_schema
     init_template_schema()
+    # Initialize training schema
+    from api.routes.training import init_training_schema
+    init_training_schema()
 
 
 # Serve frontend (simple HTML for now)
