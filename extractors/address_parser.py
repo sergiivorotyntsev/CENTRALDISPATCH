@@ -259,6 +259,61 @@ def extract_address_from_section(
     return result
 
 
+def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6) -> List[str]:
+    """
+    Extract lines that appear AFTER (below) a label in the text.
+
+    This handles the common pattern in auction documents where:
+    - Label is on one line (e.g., "PHYSICAL ADDRESS OF LOT:")
+    - Values are on subsequent lines below the label
+
+    Args:
+        text: Full document text
+        label_pattern: Regex pattern to find the label
+        max_lines: Maximum number of lines to capture after the label
+
+    Returns:
+        List of lines after the label (stripped, non-empty)
+    """
+    lines = text.split('\n')
+    result = []
+    found_label = False
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+
+        # Check if this line contains the label
+        if not found_label and re.search(label_pattern, stripped, re.IGNORECASE):
+            found_label = True
+            # Check if there's content on the same line after the label
+            # (remove the label part and check for remaining content)
+            after_label = re.sub(label_pattern + r'[:\s]*', '', stripped, flags=re.IGNORECASE).strip()
+            if after_label and len(after_label) > 3:
+                # Content is on the same line as label
+                result.append(after_label)
+            continue
+
+        if found_label:
+            if not stripped:
+                # Empty line might signal end of section
+                if len(result) > 0:
+                    break
+                continue
+
+            # Stop if we hit another section header (ALL CAPS ending with colon, or known keywords)
+            if re.match(r'^[A-Z][A-Z\s]{3,}:?\s*$', stripped):
+                break
+            if re.match(r'^(MEMBER|LOT|VEHICLE|VIN|SALE|BUYER|SELLER|TOTAL|PAYMENT|RECEIPT|STOCK|INVOICE)', stripped, re.IGNORECASE):
+                break
+
+            result.append(stripped)
+
+            if len(result) >= max_lines:
+                break
+
+    return result
+
+
 def extract_address_after_label(
     text: str,
     label_patterns: List[str],
@@ -267,6 +322,13 @@ def extract_address_after_label(
 ) -> Optional[Address]:
     """
     Extract address that follows a specific label in the text.
+
+    Handles two common patterns:
+    1. Label and value on same line: "Location: 123 Main St, City, ST 12345"
+    2. Label on one line, value on lines BELOW (common in Copart/IAA):
+       PHYSICAL ADDRESS OF LOT:
+       123 Main St
+       City ST 12345
 
     Args:
         text: Full document text
@@ -294,9 +356,27 @@ def extract_address_after_label(
             r'Payment',
         ]
 
-    # Build end pattern regex
+    # First, try the new line-based extraction (label above, value below)
+    for label_pattern in label_patterns:
+        lines = extract_lines_after_label(text, label_pattern)
+        if lines:
+            # Join lines and try to parse as address section
+            section_text = '\n'.join(lines)
+            parsed = extract_address_from_section(section_text)
+
+            if parsed.is_valid():
+                # Add location prefix if provided
+                if location_prefix and parsed.name:
+                    if location_prefix.upper() not in parsed.name.upper():
+                        parsed.name = f"{location_prefix} {parsed.name}"
+                elif location_prefix and not parsed.name:
+                    parsed.name = location_prefix
+                return parsed.to_address()
+
+    # Build end pattern regex for fallback methods
     end_regex = '|'.join(f'(?:{p})' for p in end_patterns)
 
+    # Fallback: try inline extraction (label and value on same line/section)
     for label_pattern in label_patterns:
         # Find the label and capture text after it
         regex = rf'{label_pattern}[:\s]*(.+?)(?:{end_regex})'
@@ -316,7 +396,7 @@ def extract_address_after_label(
 
                 return parsed.to_address()
 
-    # Fallback: try to find address pattern anywhere after any label
+    # Final fallback: try to find address pattern anywhere after any label
     for label_pattern in label_patterns:
         match = re.search(rf'{label_pattern}[:\s]*(.{{50,500}})', text, re.IGNORECASE | re.DOTALL)
         if match:

@@ -46,8 +46,12 @@ function TestLab() {
   const [recentTests, setRecentTests] = useState([])
   const [loadingTests, setLoadingTests] = useState(true)
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState('extraction')
+  // Tabs - default to unified training tab
+  const [activeTab, setActiveTab] = useState('training')
+
+  // Extracted fields from test result
+  const [extractedFields, setExtractedFields] = useState(null)
+  const [loadingFields, setLoadingFieldsData] = useState(false)
 
   // Training stats
   const [trainingStats, setTrainingStats] = useState(null)
@@ -368,6 +372,7 @@ function TestLab() {
     setProcessing(true)
     setError(null)
     setResult(null)
+    setExtractedFields(null)
 
     try {
       const formData = new FormData()
@@ -400,11 +405,31 @@ function TestLab() {
         raw_text_preview: data.raw_text_preview,
       })
 
+      // Fetch extracted fields if we have a run_id
+      if (data.run_id) {
+        loadExtractedFields(data.run_id)
+      }
+
       loadRecentTests()
     } catch (err) {
       setError(err.message)
     } finally {
       setProcessing(false)
+    }
+  }
+
+  async function loadExtractedFields(runId) {
+    setLoadingFieldsData(true)
+    try {
+      const response = await fetch(`/api/extractions/${runId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setExtractedFields(data.fields || data.extracted_data || data)
+      }
+    } catch (err) {
+      console.error('Failed to load extracted fields:', err)
+    } finally {
+      setLoadingFieldsData(false)
     }
   }
 
@@ -452,6 +477,7 @@ function TestLab() {
     setResult(null)
     setTestFile(null)
     setError(null)
+    setExtractedFields(null)
   }
 
   return (
@@ -472,14 +498,14 @@ function TestLab() {
       <div className="border-b border-gray-200 mb-6">
         <nav className="-mb-px flex space-x-8">
           <button
-            onClick={() => setActiveTab('extraction')}
+            onClick={() => setActiveTab('training')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'extraction'
+              activeTab === 'training'
                 ? 'border-primary-500 text-primary-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
-            Test Extraction
+            Training & Testing
           </button>
           <button
             onClick={() => setActiveTab('auction-types')}
@@ -490,16 +516,6 @@ function TestLab() {
             }`}
           >
             Auction Types
-          </button>
-          <button
-            onClick={() => setActiveTab('training')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'training'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            Training Data
           </button>
           <button
             onClick={() => setActiveTab('warehouses')}
@@ -521,21 +537,34 @@ function TestLab() {
         </div>
       )}
 
-      {/* Test Extraction Tab */}
-      {activeTab === 'extraction' && (
-        <>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Unified Training & Testing Tab */}
+      {activeTab === 'training' && (
+        <div className="space-y-6">
+          {/* Info Banner */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="font-semibold text-blue-800 mb-2">Training & Testing Environment</h3>
+            <p className="text-sm text-blue-700">
+              Upload PDF documents to test extraction and build training data. Review extracted fields,
+              correct any errors, and the system will learn from your corrections to improve accuracy for each auction type.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Upload Section */}
             <div className="card">
               <div className="card-header">
-                <h2 className="font-semibold">Test PDF Extraction</h2>
+                <h2 className="font-semibold">Upload Document</h2>
               </div>
               <div className="card-body space-y-4">
                 <div>
                   <label className="form-label">Auction Type</label>
                   <select
                     value={selectedAuctionType}
-                    onChange={(e) => setSelectedAuctionType(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedAuctionType(e.target.value)
+                      const at = auctionTypes.find(a => a.id.toString() === e.target.value)
+                      if (at) loadFieldMappings(at.id)
+                    }}
                     className="form-select w-full"
                   >
                     {auctionTypes.map((at) => (
@@ -585,100 +614,165 @@ function TestLab() {
                   disabled={!testFile || processing}
                   className="btn btn-primary w-full"
                 >
-                  {processing ? 'Processing...' : 'Run Test Extraction'}
+                  {processing ? 'Processing...' : 'Extract & Analyze'}
                 </button>
 
-                <div className="text-xs text-gray-500 bg-gray-50 p-3 rounded">
-                  <strong>Note:</strong> Test Lab documents are marked as test and cannot be exported to Central Dispatch.
-                </div>
+                {/* Training Stats for Selected Auction Type */}
+                {selectedAuctionType && trainingStats && (
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Training Progress</p>
+                    {(() => {
+                      const at = auctionTypes.find(a => a.id.toString() === selectedAuctionType)
+                      const stats = trainingStats?.by_auction_type?.[at?.code] || { total: 0, validated: 0 }
+                      return (
+                        <>
+                          <div className="flex justify-between text-xs text-gray-600">
+                            <span>Examples: {stats.total}</span>
+                            <span>Validated: {stats.validated}</span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 mt-1">
+                            <div
+                              className="bg-green-500 h-2 rounded-full"
+                              style={{ width: `${Math.min(100, (stats.total / 50) * 100)}%` }}
+                            ></div>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {stats.total >= 50 ? 'Ready for training' : `${50 - stats.total} more examples needed`}
+                          </p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Result Section */}
-            <div className="card">
-              <div className="card-header flex items-center justify-between">
-                <h2 className="font-semibold">Extraction Result</h2>
-                {result && (
-                  <button onClick={clearResult} className="text-sm text-gray-500 hover:text-gray-700">
-                    Clear
-                  </button>
-                )}
-              </div>
-              <div className="card-body">
-                {result ? (
-                  <div className="space-y-4">
-                    <div className="flex items-center space-x-2">
-                      <StatusIndicator status={result.run_status} />
-                      <span className="font-medium">
-                        {result.run_status === 'needs_review' ? 'Extraction Complete' :
-                         result.run_status === 'failed' ? 'Extraction Failed - Manual Entry Required' :
-                         result.run_status}
-                      </span>
-                    </div>
+            {/* Extraction Result & Fields */}
+            <div className="lg:col-span-2">
+              <div className="card">
+                <div className="card-header flex items-center justify-between">
+                  <h2 className="font-semibold">Extraction Result</h2>
+                  {result && (
+                    <button onClick={clearResult} className="text-sm text-gray-500 hover:text-gray-700">
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="card-body">
+                  {result ? (
+                    <div className="space-y-4">
+                      {/* Status and Meta */}
+                      <div className="flex items-center justify-between border-b pb-4">
+                        <div className="flex items-center space-x-2">
+                          <StatusIndicator status={result.run_status} />
+                          <span className="font-medium">
+                            {result.run_status === 'needs_review' ? 'Extraction Complete' :
+                             result.run_status === 'failed' ? 'Extraction Failed' :
+                             result.run_status}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          Detected: <span className="font-medium">{result.detected_source || 'Unknown'}</span>
+                          {result.classification_score && (
+                            <span className="ml-2">({(result.classification_score * 100).toFixed(0)}% confidence)</span>
+                          )}
+                        </div>
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <p className="text-gray-500">Document ID</p>
-                        <p className="font-mono">{result.document?.id}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Run ID</p>
-                        <p className="font-mono">{result.run_id || '-'}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Text Length</p>
-                        <p>{result.text_length} chars</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Detected Source</p>
-                        <p className="font-medium">{result.detected_source || 'Unknown'}</p>
-                      </div>
-                    </div>
+                      {/* Extracted Fields Display */}
+                      {loadingFieldsData ? (
+                        <div className="text-center py-8">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
+                          <p className="text-sm text-gray-500 mt-2">Loading extracted fields...</p>
+                        </div>
+                      ) : extractedFields ? (
+                        <div>
+                          <h3 className="font-medium text-gray-700 mb-3">Extracted Fields</h3>
+                          <div className="bg-gray-50 rounded-lg divide-y divide-gray-200 max-h-[400px] overflow-y-auto">
+                            {Object.entries(extractedFields).filter(([key]) => !key.startsWith('_') && key !== 'id' && key !== 'run_id').map(([key, value]) => {
+                              // Find matching CD field definition
+                              const cdField = CD_FIELDS.find(f => f.key === key)
+                              const displayValue = value === null || value === undefined ? '-' :
+                                typeof value === 'object' ? JSON.stringify(value) : String(value)
+                              const isEmpty = !value || displayValue === '-' || displayValue === ''
 
-                    {result.raw_text_preview && (
-                      <div>
-                        <p className="text-gray-500 text-sm mb-1">Text Preview</p>
-                        <pre className="text-xs bg-gray-50 p-3 rounded max-h-32 overflow-auto whitespace-pre-wrap">
-                          {result.raw_text_preview}
-                        </pre>
-                      </div>
-                    )}
-
-                    <div className="flex space-x-2 pt-2 border-t">
-                      {result.run_id && (
-                        <a
-                          href={'/review/' + result.run_id}
-                          className="btn btn-sm btn-primary flex-1 text-center"
-                        >
-                          {result.run_status === 'failed' ? 'Enter Data Manually' : 'Review Fields'}
-                        </a>
+                              return (
+                                <div key={key} className={`flex items-center justify-between p-3 ${isEmpty ? 'bg-yellow-50' : ''}`}>
+                                  <div className="flex-1">
+                                    <span className="text-sm font-medium text-gray-700">
+                                      {cdField?.label || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                    </span>
+                                    <span className="ml-2 text-xs text-gray-400 font-mono">{key}</span>
+                                  </div>
+                                  <div className={`text-sm ${isEmpty ? 'text-red-500 italic' : 'text-gray-900'}`}>
+                                    {isEmpty ? 'Not extracted' : displayValue}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-gray-500 text-sm">
+                          Field extraction data not available
+                        </div>
                       )}
-                      {result.run_id && result.run_status !== 'failed' && (
-                        <button
-                          onClick={() => handleDryRunExport(result.run_id)}
-                          className="btn btn-sm btn-secondary flex-1"
-                        >
-                          Dry Run Export
-                        </button>
+
+                      {/* Text Preview */}
+                      {result.raw_text_preview && (
+                        <details className="bg-gray-50 rounded-lg">
+                          <summary className="p-3 cursor-pointer text-sm font-medium text-gray-700">
+                            Raw Text Preview ({result.text_length} chars)
+                          </summary>
+                          <pre className="text-xs p-3 border-t max-h-48 overflow-auto whitespace-pre-wrap">
+                            {result.raw_text_preview}
+                          </pre>
+                        </details>
                       )}
+
+                      {/* Actions */}
+                      <div className="flex space-x-2 pt-2 border-t">
+                        {result.run_id && (
+                          <a
+                            href={'/review/' + result.run_id}
+                            className="btn btn-primary flex-1 text-center"
+                          >
+                            {result.run_status === 'failed' ? 'Enter Data Manually' : 'Review & Correct Fields'}
+                          </a>
+                        )}
+                        {result.run_id && result.run_status !== 'failed' && (
+                          <button
+                            onClick={() => handleDryRunExport(result.run_id)}
+                            className="btn btn-secondary"
+                          >
+                            Dry Run Export
+                          </button>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-gray-500 bg-blue-50 p-2 rounded">
+                        <strong>Training tip:</strong> Click "Review & Correct Fields" to fix any extraction errors.
+                        Your corrections help train the system for better accuracy on similar documents.
+                      </p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-gray-500">
-                    <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                    </svg>
-                    <p>Upload a PDF to see extraction results</p>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-center py-12 text-gray-500">
+                      <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      <p>Upload a PDF to test extraction</p>
+                      <p className="text-xs mt-2">Extracted fields will be displayed here for review</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Recent Tests */}
-          <div className="card mt-6">
+          {/* Recent Test Runs */}
+          <div className="card">
             <div className="card-header flex items-center justify-between">
-              <h2 className="font-semibold">Recent Test Runs</h2>
+              <h2 className="font-semibold">Recent Extractions</h2>
               <button onClick={loadRecentTests} className="btn btn-sm btn-secondary">
                 Refresh
               </button>
@@ -690,13 +784,12 @@ function TestLab() {
                 </div>
               ) : recentTests.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
-                  No test runs yet. Upload a PDF to get started.
+                  No extractions yet. Upload a PDF to get started.
                 </div>
               ) : (
                 <table className="table">
                   <thead>
                     <tr>
-                      <th>Run ID</th>
                       <th>Document</th>
                       <th>Auction Type</th>
                       <th>Status</th>
@@ -707,12 +800,19 @@ function TestLab() {
                   <tbody>
                     {recentTests.map((run) => (
                       <tr key={run.id}>
-                        <td className="font-mono text-xs">{run.id}</td>
-                        <td className="text-sm truncate max-w-[150px]">
-                          {run.document_filename || 'Doc #' + run.document_id}
+                        <td className="text-sm">
+                          <span className="truncate max-w-[200px] block">
+                            {run.document_filename || 'Doc #' + run.document_id}
+                          </span>
+                          <span className="text-xs text-gray-400 font-mono">ID: {run.id}</span>
                         </td>
                         <td>
-                          <span className="badge badge-info">{run.auction_type_code}</span>
+                          <span className={`badge ${
+                            run.auction_type_code === 'COPART' ? 'bg-blue-100 text-blue-800' :
+                            run.auction_type_code === 'IAA' ? 'bg-purple-100 text-purple-800' :
+                            run.auction_type_code === 'MANHEIM' ? 'bg-green-100 text-green-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>{run.auction_type_code}</span>
                         </td>
                         <td>
                           <StatusBadge status={run.status} />
@@ -723,7 +823,7 @@ function TestLab() {
                         <td>
                           <div className="flex space-x-2">
                             <a href={'/review/' + run.id} className="text-sm text-blue-600 hover:text-blue-800">
-                              {run.status === 'failed' ? 'Enter Data' : 'Review'}
+                              {run.status === 'failed' ? 'Enter Data' : 'Review & Train'}
                             </a>
                             {run.status !== 'failed' && (
                               <button
@@ -742,7 +842,47 @@ function TestLab() {
               )}
             </div>
           </div>
-        </>
+
+          {/* Training Stats by Auction Type */}
+          <div className="card">
+            <div className="card-header">
+              <h2 className="font-semibold">Training Data by Auction Type</h2>
+            </div>
+            <div className="card-body">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {auctionTypes.map((at) => {
+                  const stats = trainingStats?.by_auction_type?.[at.code] || { total: 0, validated: 0 }
+                  const progress = stats.total >= 50 ? 100 : (stats.total / 50) * 100
+                  return (
+                    <div key={at.id} className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`badge ${
+                          at.code === 'COPART' ? 'bg-blue-100 text-blue-800' :
+                          at.code === 'IAA' ? 'bg-purple-100 text-purple-800' :
+                          at.code === 'MANHEIM' ? 'bg-green-100 text-green-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>{at.name}</span>
+                        {stats.total >= 50 && (
+                          <span className="text-xs text-green-600 font-medium">Ready</span>
+                        )}
+                      </div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-gray-600">{stats.total} examples</span>
+                        <span className="text-green-600">{stats.validated} validated</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${stats.total >= 50 ? 'bg-green-500' : 'bg-blue-500'}`}
+                          style={{ width: `${progress}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Auction Types Tab */}
@@ -909,8 +1049,9 @@ function TestLab() {
                               <th className="w-8">Active</th>
                               <th>CD API Field</th>
                               <th>Display Name</th>
+                              <th>Source</th>
                               <th>Required</th>
-                              <th>Type</th>
+                              <th>Default Value</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -923,8 +1064,10 @@ function TestLab() {
                               description: f.description,
                               sort_order: idx,
                               is_active: true,
+                              value_source: 'extracted', // 'extracted' or 'constant'
+                              default_value: '',
                             }))).map((field, idx) => (
-                              <tr key={field.field_key || idx} className="hover:bg-gray-50">
+                              <tr key={field.field_key || idx} className={`hover:bg-gray-50 ${field.value_source === 'constant' ? 'bg-blue-50' : ''}`}>
                                 <td>
                                   <input
                                     type="checkbox"
@@ -955,6 +1098,22 @@ function TestLab() {
                                   />
                                 </td>
                                 <td>
+                                  <select
+                                    value={field.value_source || 'extracted'}
+                                    onChange={(e) => {
+                                      const updated = [...fieldMappings]
+                                      if (updated[idx]) {
+                                        updated[idx] = { ...updated[idx], value_source: e.target.value }
+                                        setFieldMappings(updated)
+                                      }
+                                    }}
+                                    className="form-select form-select-sm"
+                                  >
+                                    <option value="extracted">Extracted</option>
+                                    <option value="constant">Constant</option>
+                                  </select>
+                                </td>
+                                <td>
                                   <input
                                     type="checkbox"
                                     checked={field.is_required}
@@ -968,19 +1127,45 @@ function TestLab() {
                                     className="form-checkbox"
                                   />
                                 </td>
-                                <td className="text-xs text-gray-500">{field.field_type}</td>
+                                <td>
+                                  {field.value_source === 'constant' ? (
+                                    <input
+                                      type="text"
+                                      value={field.default_value || ''}
+                                      onChange={(e) => {
+                                        const updated = [...fieldMappings]
+                                        if (updated[idx]) {
+                                          updated[idx] = { ...updated[idx], default_value: e.target.value }
+                                          setFieldMappings(updated)
+                                        }
+                                      }}
+                                      className="form-input form-input-sm w-full"
+                                      placeholder="Enter constant value"
+                                    />
+                                  ) : (
+                                    <span className="text-xs text-gray-400">-</span>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                      <div className="p-4 border-t bg-gray-50 flex justify-between items-center">
-                        <span className="text-sm text-gray-500">
-                          {fieldMappings.filter(f => f.is_active !== false).length} fields active
-                        </span>
-                        <button onClick={handleSaveFieldMappings} className="btn btn-primary">
-                          Save Field Mappings
-                        </button>
+                      <div className="p-4 border-t bg-gray-50">
+                        <div className="flex justify-between items-center mb-3">
+                          <div className="text-sm text-gray-500">
+                            <span className="font-medium">{fieldMappings.filter(f => f.is_active !== false).length}</span> fields active
+                            <span className="mx-2">|</span>
+                            <span className="text-blue-600">{fieldMappings.filter(f => f.value_source === 'constant').length}</span> constants
+                          </div>
+                          <button onClick={handleSaveFieldMappings} className="btn btn-primary">
+                            Save Field Mappings
+                          </button>
+                        </div>
+                        <div className="text-xs text-gray-500 bg-white p-2 rounded border">
+                          <strong>Tip:</strong> Set fields to "Constant" when the value is always the same for this auction type
+                          (e.g., vehicle condition is always "operable" for a specific auction). Extracted fields are read from each document.
+                        </div>
                       </div>
                     </>
                   )}
@@ -1001,140 +1186,6 @@ function TestLab() {
         </div>
       )}
 
-      {/* Training Data Tab */}
-      {activeTab === 'training' && (
-        <div className="space-y-6">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="font-semibold text-blue-800 mb-2">How Training Works</h3>
-            <p className="text-sm text-blue-700">
-              When you review and correct extracted fields, those corrections are saved as training examples.
-              The more corrections you provide, the better the system learns to extract similar documents.
-              Each auction type builds its own training dataset.
-            </p>
-          </div>
-
-          {/* Upload Training Document */}
-          <div className="card">
-            <div className="card-header">
-              <h2 className="font-semibold">Upload Training Document</h2>
-            </div>
-            <div className="card-body">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">Auction Type</label>
-                  <select
-                    value={selectedAuctionType}
-                    onChange={(e) => setSelectedAuctionType(e.target.value)}
-                    className="form-select w-full"
-                  >
-                    {auctionTypes.map((at) => (
-                      <option key={at.id} value={at.id}>{at.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="form-label">PDF Document</label>
-                  <div className="flex items-center space-x-2">
-                    <label className="btn btn-secondary flex-1 cursor-pointer text-center">
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        onChange={(e) => {
-                          if (e.target.files[0]) {
-                            handleUploadTrainingDoc(e.target.files[0], selectedAuctionType)
-                          }
-                        }}
-                        className="hidden"
-                        disabled={uploadingTrainingDoc}
-                      />
-                      {uploadingTrainingDoc ? 'Uploading...' : 'Select & Upload PDF'}
-                    </label>
-                  </div>
-                </div>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">
-                Upload documents to build training data. After upload, review and correct the extracted fields to improve accuracy.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {auctionTypes.map((at) => {
-              const stats = trainingStats?.by_auction_type?.[at.code] || { total: 0, validated: 0 }
-              return (
-                <div key={at.id} className="card">
-                  <div className="card-header">
-                    <h3 className="font-semibold">{at.name}</h3>
-                  </div>
-                  <div className="card-body">
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500">Training Examples</span>
-                        <span className="font-mono text-lg">{stats.total}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-500">Validated</span>
-                        <span className="font-mono text-lg text-green-600">{stats.validated}</span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className="bg-green-500 h-2 rounded-full"
-                          style={{ width: `${stats.total > 0 ? (stats.validated / stats.total) * 100 : 0}%` }}
-                        ></div>
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {stats.total >= 50 ? (
-                          <span className="text-green-600">Ready for training</span>
-                        ) : (
-                          <span>Need {50 - stats.total} more examples for training</span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <h2 className="font-semibold">Training Process</h2>
-            </div>
-            <div className="card-body">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="w-12 h-12 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                    1
-                  </div>
-                  <p className="font-medium">Upload Documents</p>
-                  <p className="text-xs text-gray-500 mt-1">Upload PDF documents for extraction</p>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="w-12 h-12 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                    2
-                  </div>
-                  <p className="font-medium">Review & Correct</p>
-                  <p className="text-xs text-gray-500 mt-1">Fix any extraction errors</p>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="w-12 h-12 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                    3
-                  </div>
-                  <p className="font-medium">Build Training Data</p>
-                  <p className="text-xs text-gray-500 mt-1">Corrections become training examples</p>
-                </div>
-                <div className="text-center p-4 bg-gray-50 rounded-lg">
-                  <div className="w-12 h-12 bg-primary-100 text-primary-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                    4
-                  </div>
-                  <p className="font-medium">Improve Accuracy</p>
-                  <p className="text-xs text-gray-500 mt-1">System learns from your corrections</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Warehouses Tab */}
       {activeTab === 'warehouses' && (

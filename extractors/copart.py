@@ -75,26 +75,8 @@ class CopartExtractor(BaseExtractor):
         if member_match:
             invoice.buyer_id = member_match.group(1)
 
-        # Extract buyer name (usually appears after MEMBER number on next line)
-        buyer_name_patterns = [
-            # Pattern 1: Name on line after MEMBER number (most common in Copart)
-            r'MEMBER[:\s]*\d+\s*\n([A-Z][A-Z\s\-\.]+(?:INC|LLC|CORP|CO)?)\s*\n',
-            # Pattern 2: SOLD TO format
-            r'SOLD\s*TO[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
-            # Pattern 3: BUYER format
-            r'BUYER[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
-            # Pattern 4: Bill To format
-            r'Bill\s*To[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n)',
-        ]
-        for pattern in buyer_name_patterns:
-            name_match = re.search(pattern, text, re.IGNORECASE)
-            if name_match:
-                buyer_name = name_match.group(1).strip()
-                # Clean up - remove trailing numbers/dates
-                buyer_name = re.sub(r'\s+\d+.*$', '', buyer_name)
-                if len(buyer_name) > 2 and len(buyer_name) < 100:
-                    invoice.buyer_name = buyer_name
-                    break
+        # Extract buyer name - look on lines BELOW the MEMBER line
+        invoice.buyer_name = self._extract_buyer_name(text)
 
         lot_match = re.search(r'LOT#[:\s]+(\d+)', text)
         if lot_match:
@@ -149,6 +131,75 @@ class CopartExtractor(BaseExtractor):
                 r'Copart\s+Location',
             ]
         )
+
+    def _extract_buyer_name(self, text: str) -> str:
+        """
+        Extract buyer name from Copart document.
+
+        In Copart documents, the buyer name typically appears on lines BELOW
+        the MEMBER: line, not on the same line. Format:
+            MEMBER:
+            12345678
+            BROADWAY MOTORING INC
+        or:
+            MEMBER: 12345678
+            BROADWAY MOTORING INC
+        """
+        lines = text.split('\n')
+        found_member = False
+        found_member_number = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            # Look for MEMBER line
+            if not found_member and re.search(r'MEMBER[:\s]*', stripped, re.IGNORECASE):
+                found_member = True
+                # Check if member number is on same line
+                member_num_match = re.search(r'MEMBER[:\s]*(\d+)', stripped, re.IGNORECASE)
+                if member_num_match:
+                    found_member_number = True
+                continue
+
+            if found_member:
+                # Skip empty lines
+                if not stripped:
+                    continue
+
+                # If we haven't found the member number yet, this line might be it
+                if not found_member_number and re.match(r'^\d+$', stripped):
+                    found_member_number = True
+                    continue
+
+                # After member number, the next non-empty line should be the buyer name
+                if found_member_number:
+                    # Check if this looks like a company/person name (not a field label or number)
+                    if (re.match(r'^[A-Z]', stripped) and
+                        not re.match(r'^(LOT|VIN|VEHICLE|SALE|DATE|RECEIPT|TOTAL|PHYSICAL)', stripped, re.IGNORECASE) and
+                        len(stripped) > 2 and len(stripped) < 100):
+                        # Clean up - remove trailing numbers/dates
+                        buyer_name = re.sub(r'\s+\d+.*$', '', stripped)
+                        return buyer_name
+
+                # Safety: don't search too far
+                if i > 20:
+                    break
+
+        # Fallback: try traditional patterns
+        buyer_name_patterns = [
+            r'SOLD\s*TO[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
+            r'BUYER[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n|MEMBER)',
+            r'Bill\s*To[:\s]+([A-Z][A-Za-z\s\-\.]+?)(?:\n)',
+        ]
+        for pattern in buyer_name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                buyer_name = name_match.group(1).strip()
+                buyer_name = re.sub(r'\s+\d+.*$', '', buyer_name)
+                if len(buyer_name) > 2 and len(buyer_name) < 100:
+                    return buyer_name
+
+        return ""
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
         vehicle_patterns = [
