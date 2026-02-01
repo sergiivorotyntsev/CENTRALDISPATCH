@@ -96,12 +96,18 @@ async def upload_document(
     dataset_split: str = Form("train", description="Dataset split: train or test"),
     uploaded_by: Optional[str] = Form(None, description="Uploader identifier"),
     auto_extract: bool = Form(True, description="Automatically run extraction after upload"),
+    source: str = Form("upload", description="Source: upload, email, batch, test_lab"),
+    is_test: bool = Form(False, description="Mark as test document (blocks export)"),
 ):
     """
     Upload a document for extraction and training.
 
     The document is associated with an auction type and marked as train or test.
     Duplicate detection is performed using SHA256 hash.
+
+    Parameters:
+    - source: upload (manual), email (ingestion), batch (bulk), test_lab (sandbox)
+    - is_test: If true, document cannot be exported to Central Dispatch
 
     IMPORTANT: This endpoint automatically creates an ExtractionRun after upload.
     - If text_length >= 100: runs extraction, status = needs_review
@@ -117,6 +123,15 @@ async def upload_document(
     # Validate dataset split
     if dataset_split not in ("train", "test"):
         raise HTTPException(status_code=400, detail="dataset_split must be 'train' or 'test'")
+
+    # Validate source
+    valid_sources = ("upload", "email", "batch", "test_lab")
+    if source not in valid_sources:
+        raise HTTPException(status_code=400, detail=f"source must be one of: {', '.join(valid_sources)}")
+
+    # Auto-set is_test for test_lab source
+    if source == "test_lab":
+        is_test = True
 
     # Validate file type
     if not file.filename.lower().endswith(".pdf"):
@@ -199,12 +214,12 @@ async def upload_document(
         uploaded_by=uploaded_by,
     )
 
-    # Update page count
+    # Update page count, source, and is_test
     from api.database import get_connection
     with get_connection() as conn:
         conn.execute(
-            "UPDATE documents SET page_count = ? WHERE id = ?",
-            (page_count, doc_id)
+            "UPDATE documents SET page_count = ?, source = ?, is_test = ? WHERE id = ?",
+            (page_count, source, is_test, doc_id)
         )
         conn.commit()
 

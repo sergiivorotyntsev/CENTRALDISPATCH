@@ -21,7 +21,7 @@ from api.routes.integrations.utils import (
     mask_secret,
     log_integration_action,
 )
-from api.routes.integrations import clickup, sheets, cd, email, csv_export
+from api.routes.integrations import clickup, sheets, cd, email, csv_export, oauth
 
 
 # Main router that includes all sub-routers
@@ -33,6 +33,7 @@ router.include_router(sheets.router)
 router.include_router(cd.router)
 router.include_router(email.router)
 router.include_router(csv_export.router)
+router.include_router(oauth.router)
 
 
 # =============================================================================

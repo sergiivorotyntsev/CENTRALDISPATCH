@@ -132,6 +132,8 @@ def init_extended_schema():
                 page_count INTEGER,
                 has_ocr BOOLEAN DEFAULT FALSE,
                 raw_text TEXT,
+                source TEXT DEFAULT 'upload' CHECK (source IN ('upload', 'email', 'batch', 'test_lab')),
+                is_test BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 uploaded_by TEXT,
                 FOREIGN KEY (auction_type_id) REFERENCES auction_types(id)
@@ -1528,3 +1530,34 @@ def init_schema():
     """Initialize the extended database schema. Alias for init_extended_schema."""
     init_extended_schema()
     seed_default_field_mappings()
+    _run_migrations()
+
+
+def _run_migrations():
+    """Run database migrations for new columns."""
+    with get_connection() as conn:
+        # Migration: Add source column to documents
+        try:
+            conn.execute("ALTER TABLE documents ADD COLUMN source TEXT DEFAULT 'upload'")
+        except Exception:
+            pass  # Column already exists
+
+        # Migration: Add is_test column to documents
+        try:
+            conn.execute("ALTER TABLE documents ADD COLUMN is_test BOOLEAN DEFAULT FALSE")
+        except Exception:
+            pass  # Column already exists
+
+        # Migration: Add source index
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source)")
+        except Exception:
+            pass
+
+        # Migration: Add is_test index
+        try:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_is_test ON documents(is_test)")
+        except Exception:
+            pass
+
+        conn.commit()

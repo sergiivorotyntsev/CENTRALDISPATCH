@@ -334,6 +334,27 @@ async def export_to_cd(
 
         doc = DocumentRepository.get_by_id(run.document_id)
 
+        # TEST DOCUMENT CHECK: Block export for test documents
+        if doc:
+            with get_connection() as conn:
+                is_test = conn.execute(
+                    "SELECT is_test FROM documents WHERE id = ?",
+                    (doc.id,)
+                ).fetchone()
+                if is_test and is_test[0]:
+                    previews.append(CDPayloadPreview(
+                        dispatch_id="",
+                        run_id=run_id,
+                        payload={},
+                        validation_errors=[
+                            "Test document - export to Central Dispatch is blocked. "
+                            "Use production documents for real exports."
+                        ],
+                        is_valid=False,
+                    ))
+                    skipped_count += 1
+                    continue
+
         # Build payload
         payload, errors = build_cd_payload(run_id)
         is_valid = len(errors) == 0
