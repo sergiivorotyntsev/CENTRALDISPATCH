@@ -202,7 +202,7 @@ async def upload_document(
     text_length = len(raw_text) if raw_text else 0
     needs_ocr = text_length < 100
 
-    # Create document record
+    # Create document record with all fields
     doc_id = DocumentRepository.create(
         auction_type_id=auction_type_id,
         dataset_split=dataset_split,
@@ -212,16 +212,10 @@ async def upload_document(
         sha256=sha256,
         raw_text=raw_text,
         uploaded_by=uploaded_by,
+        source=source,
+        is_test=is_test,
+        page_count=page_count,
     )
-
-    # Update page count, source, and is_test
-    from api.database import get_connection
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE documents SET page_count = ?, source = ?, is_test = ? WHERE id = ?",
-            (page_count, source, is_test, doc_id)
-        )
-        conn.commit()
 
     doc = DocumentRepository.get_by_id(doc_id)
 

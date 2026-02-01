@@ -780,17 +780,19 @@ class DocumentRepository:
     @staticmethod
     def create(auction_type_id: int, dataset_split: str, filename: str,
                file_path: str = None, file_size: int = None, sha256: str = None,
-               raw_text: str = None, uploaded_by: str = None) -> int:
+               raw_text: str = None, uploaded_by: str = None,
+               source: str = "upload", is_test: bool = False,
+               page_count: int = None) -> int:
         """Create a new document."""
         doc_uuid = str(uuid.uuid4())
 
         with get_connection() as conn:
             cursor = conn.execute(
                 """INSERT INTO documents
-                   (uuid, auction_type_id, dataset_split, filename, file_path, file_size, sha256, raw_text, uploaded_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (uuid, auction_type_id, dataset_split, filename, file_path, file_size, sha256, raw_text, uploaded_by, source, is_test, page_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (doc_uuid, auction_type_id, dataset_split, filename, file_path,
-                 file_size, sha256, raw_text, uploaded_by)
+                 file_size, sha256, raw_text, uploaded_by, source, is_test, page_count)
             )
             conn.commit()
             return cursor.lastrowid
