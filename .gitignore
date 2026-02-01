@@ -1,39 +1,135 @@
-# Environment variables (NEVER commit!)
+# =============================================================================
+# Environment & Secrets (NEVER commit!)
+# =============================================================================
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
 
-# Google API credentials (NEVER commit!)
+# Google API credentials
 credentials.json
 token.json
 *.pickle
+service_account*.json
 
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 venv/
 ENV/
+env/
+.venv/
 
-# SQLite databases
-*.db
-processed_emails.db
-geocode_cache.db
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
 
-# IDE
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ruff
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# =============================================================================
+# Node.js
+# =============================================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+web/dist/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.playwright/
+
+# =============================================================================
+# IDE & Editors
+# =============================================================================
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-*
 
-# OS
+# =============================================================================
+# OS Files
+# =============================================================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Logs
+# =============================================================================
+# Databases
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+data/control_panel.db
+
+# =============================================================================
+# Logs & Temp Files
+# =============================================================================
 *.log
+logs/
+tmp/
+temp/
 
-# Runtime data
-data/
-uploads/
+# =============================================================================
+# Build & Runtime Artifacts
+# =============================================================================
+*.tar.gz
+*.zip
+*.tgz
+coverage/
+.nyc_output/
+
+# =============================================================================
+# Project-specific
+# =============================================================================
+# Uploads directory (runtime data)
+data/uploads/
+
+# Processed files tracking
+processed_emails.db
+geocode_cache.db
