@@ -61,13 +61,14 @@ async def test_cd_connection(user: User = Depends(require_auth)):
     Requires authentication.
     """
     from api.routes.settings import load_settings
+    from core.secrets import get_cd_credentials
 
     start_time = time.time()
     settings = load_settings()
     cd = settings.get("cd", {})
 
-    username = cd.get("username")
-    password = cd.get("password")
+    # Get credentials from ENV or settings
+    username, password = get_cd_credentials()
     marketplace_id = cd.get("marketplace_id")
     use_sandbox = cd.get("sandbox", True)
 

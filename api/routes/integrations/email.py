@@ -76,6 +76,7 @@ async def test_email_connection(user: User = Depends(require_auth)):
     import imaplib
 
     from api.routes.settings import load_settings
+    from core.secrets import get_email_password
 
     start_time = time.time()
     settings = load_settings()
@@ -84,7 +85,8 @@ async def test_email_connection(user: User = Depends(require_auth)):
     server = email_config.get("imap_server")
     port = email_config.get("imap_port", 993)
     email_addr = email_config.get("email_address")
-    password = email_config.get("password")
+    # Get password from ENV or settings
+    password = get_email_password()
 
     if not all([server, email_addr, password]):
         log_integration_action("email", "test", "failed", error="Email not configured")

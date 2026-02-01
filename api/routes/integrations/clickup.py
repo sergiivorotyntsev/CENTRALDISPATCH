@@ -43,12 +43,14 @@ async def test_clickup_connection(user: User = Depends(require_auth)):
     Requires authentication.
     """
     from api.routes.settings import load_settings
+    from core.secrets import get_clickup_token
 
     start_time = time.time()
     settings = load_settings()
     clickup = settings.get("clickup", {})
 
-    api_key = clickup.get("api_key")
+    # Get token from ENV or settings
+    api_key = get_clickup_token()
     list_id = clickup.get("list_id")
 
     if not api_key or not list_id:

@@ -107,6 +107,20 @@ async def health_check():
     except Exception as e:
         checks["export_targets"] = {"status": "error", "error": str(e)}
 
+    # Check production readiness (secrets configuration)
+    try:
+        from core.secrets import check_production_readiness
+
+        warnings = check_production_readiness()
+        checks["production_readiness"] = {
+            "ready": len(warnings) == 0,
+            "warnings": warnings,
+        }
+        if warnings and os.getenv("ENVIRONMENT", "development") == "production":
+            overall_status = "unhealthy"
+    except Exception as e:
+        checks["production_readiness"] = {"status": "error", "error": str(e)}
+
     git_info = get_git_info()
 
     return HealthResponse(
