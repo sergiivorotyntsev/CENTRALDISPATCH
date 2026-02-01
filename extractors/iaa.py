@@ -162,81 +162,144 @@ class IAAExtractor(BaseExtractor):
 
         name, street, city, state, postal, phone = None, None, None, None, None, None
 
-        # Try multiple patterns for pickup location
-        patterns = [
-            # Pattern 1: With full state name (e.g., "Flint Michigan 48507")
-            r'Pick-Up Location[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{5})',
-            # Pattern 2: Standard format with state abbreviation
-            r'Pick-Up Location[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+)\s+([A-Z]{2})\s+(\d{5})',
-            # Pattern 3: Alternative format
-            r'(?:PICKUP|Pick[\-\s]?Up)\s*(?:Location|Address)?[:\s]*\n?\s*([A-Za-z/\s\-\.]+)\n([^\n]+)\n([A-Za-z\s]+),?\s*([A-Za-z]{2,})\s+(\d{5})',
-        ]
+        # First, try the most flexible approach - find the pickup section and parse line by line
+        # This handles various whitespace and formatting issues from PDF extraction
+        pickup_section = re.search(
+            r'Pick[-\s]?Up\s*Location[:\s]*(.+?)(?:Stock|Invoice|Sale\s*Date|Buyer|Receipt|\n\s*\n)',
+            text, re.IGNORECASE | re.DOTALL
+        )
 
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-            if match:
-                groups = match.groups()
-                name = groups[0].strip()
-                street = groups[1].strip()
-                city = groups[2].strip().rstrip(',')
-                state = normalize_state(groups[3])  # Convert full state name to abbrev
-                postal = groups[4]
-                break
+        if pickup_section:
+            section_text = pickup_section.group(1)
+            # Split by newlines and filter empty lines
+            lines = [l.strip() for l in section_text.split('\n') if l.strip()]
 
-        # If patterns didn't match, try more flexible approach
-        if not (city and state):
-            # Look for "Pick-Up Location:" section
-            pickup_section = re.search(
-                r'Pick-Up Location[:\s]*\n(.+?)(?:\n\n|\nStock|\nInvoice)',
-                text, re.IGNORECASE | re.DOTALL
-            )
-            if pickup_section:
-                lines = [l.strip() for l in pickup_section.group(1).strip().split('\n') if l.strip()]
-                if len(lines) >= 3:
-                    name = lines[0]  # "Flint"
-                    street = lines[1]  # "3088 S. Dye Rd"
-                    # Parse city/state/zip from line 3: "Flint Michigan 48507"
-                    addr_line = lines[2]
-                    addr_match = re.match(r'([A-Za-z\s]+?)\s+([A-Za-z]+)\s+(\d{5})', addr_line)
-                    if addr_match:
-                        city = addr_match.group(1).strip()
-                        state = normalize_state(addr_match.group(2))
-                        postal = addr_match.group(3)
-                    # Check for phone on line 4
-                    if len(lines) >= 4:
-                        phone_match = re.search(r'\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4}', lines[3])
+            if len(lines) >= 1:
+                # First line is usually the branch/location name (e.g., "Flint")
+                name = lines[0]
+
+            if len(lines) >= 2:
+                # Second line is usually street address
+                street = lines[1]
+
+            # Look for city/state/zip pattern in remaining lines
+            for i, line in enumerate(lines[2:] if len(lines) > 2 else lines):
+                # Try "City State ZIP" format (e.g., "Flint Michigan 48507")
+                addr_match = re.match(
+                    r'([A-Za-z][A-Za-z\s]*?)\s+([A-Za-z]{2,})\s+(\d{5}(?:-\d{4})?)',
+                    line
+                )
+                if addr_match:
+                    city = addr_match.group(1).strip()
+                    state = normalize_state(addr_match.group(2))
+                    postal = addr_match.group(3)
+                    # Check next line for phone
+                    next_idx = i + 3 if len(lines) > 2 else i + 1
+                    if len(lines) > next_idx:
+                        phone_match = re.search(
+                            r'\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4}',
+                            lines[next_idx]
+                        )
                         if phone_match:
                             phone = phone_match.group(0)
+                    break
+
+                # Also try "City, State ZIP" format
+                addr_match2 = re.match(
+                    r'([A-Za-z][A-Za-z\s]*?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)',
+                    line
+                )
+                if addr_match2:
+                    city = addr_match2.group(1).strip()
+                    state = addr_match2.group(2)
+                    postal = addr_match2.group(3)
+                    break
+
+        # If flexible approach didn't work, try regex patterns
+        if not (city and state):
+            patterns = [
+                # Pattern 1: With full state name (e.g., "Flint Michigan 48507")
+                r'Pick[-\s]?Up\s*Location[:\s]*\n?\s*([A-Za-z][A-Za-z/\s\-\.]*)\n\s*([^\n]+)\n\s*([A-Za-z]+)\s+([A-Za-z]+)\s+(\d{5})',
+                # Pattern 2: Standard format with state abbreviation
+                r'Pick[-\s]?Up\s*Location[:\s]*\n?\s*([A-Za-z][A-Za-z/\s\-\.]*)\n\s*([^\n]+)\n\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
+                # Pattern 3: Inline format
+                r'(?:PICKUP|Pick[-\s]?Up)\s*(?:Location|Address)?[:\s]+([A-Za-z][A-Za-z\s\-]+),\s*([^\n,]+),\s*([A-Za-z\s]+),?\s*([A-Z]{2})\s+(\d{5})',
+            ]
+
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+                if match:
+                    groups = match.groups()
+                    name = groups[0].strip()
+                    street = groups[1].strip()
+                    city = groups[2].strip().rstrip(',')
+                    state = normalize_state(groups[3])
+                    postal = groups[4]
+                    break
+
+        # Final fallback - look for any address-like pattern near "Pick-Up"
+        if not (city and state):
+            # Try to find address pattern anywhere after Pick-Up Location
+            after_pickup = re.search(r'Pick[-\s]?Up\s*Location[:\s]*(.{50,500})', text, re.IGNORECASE | re.DOTALL)
+            if after_pickup:
+                section = after_pickup.group(1)
+                # Look for ZIP code and work backwards
+                zip_match = re.search(r'([A-Za-z][A-Za-z\s]*?)\s+([A-Za-z]{2,})\s+(\d{5})', section)
+                if zip_match:
+                    city = zip_match.group(1).strip()
+                    state = normalize_state(zip_match.group(2))
+                    postal = zip_match.group(3)
+                    # Try to find street before this
+                    before_city = section[:zip_match.start()]
+                    street_lines = [l.strip() for l in before_city.split('\n') if l.strip() and re.search(r'\d', l)]
+                    if street_lines:
+                        street = street_lines[-1]
 
         if not (city and state):
             return None
 
         # Extract phone number if not found yet
         if not phone:
+            # Look for phone near the pickup location section
+            phone_section = text
+            if pickup_section:
+                # Search within and slightly after the pickup section
+                start = pickup_section.start()
+                end = min(pickup_section.end() + 200, len(text))
+                phone_section = text[start:end]
+
             phone_patterns = [
-                r'(?:PHONE|TEL|CONTACT|Ph)[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-                r'(?:Location\s*(?:Phone|Tel))[:\s]*(\(?\d{3}\)?[\s\-\.]?\d{3}[\s\-\.]?\d{4})',
-                r'(\(\d{3}\)\s*\d{3}[\s\-\.]\d{4})',  # (810) 720-0981 format
+                r'\((\d{3})\)\s*(\d{3})[-\.\s]?(\d{4})',  # (810) 720-0981 format
+                r'(\d{3})[-\.\s](\d{3})[-\.\s](\d{4})',   # 810-720-0981 format
+                r'(?:PHONE|TEL|CONTACT|Ph)[:\s]*\(?\s*(\d{3})\s*\)?[\s\-\.]*(\d{3})[\s\-\.]*(\d{4})',
             ]
 
             for pattern in phone_patterns:
-                phone_match = re.search(pattern, text, re.IGNORECASE)
+                phone_match = re.search(pattern, phone_section, re.IGNORECASE)
                 if phone_match:
-                    phone = phone_match.group(1).strip()
+                    groups = phone_match.groups()
+                    if len(groups) == 3:
+                        phone = f"({groups[0]}) {groups[1]}-{groups[2]}"
+                    else:
+                        phone = phone_match.group(0)
                     break
 
-        # Normalize phone format
-        if phone:
+        # Normalize phone format if we have digits
+        if phone and not re.match(r'\(\d{3}\)\s*\d{3}-\d{4}', phone):
             phone_digits = re.sub(r'\D', '', phone)
             if len(phone_digits) == 10:
                 phone = f"({phone_digits[:3]}) {phone_digits[3:6]}-{phone_digits[6:]}"
 
-        # Try to get better location name
-        if name and 'IAA' not in name.upper():
-            name = f"IAA {name}"
+        # Clean up name - add IAA prefix if not present
+        if name:
+            name = name.strip()
+            if 'IAA' not in name.upper() and not name.lower().startswith('insurance'):
+                name = f"IAA {name}"
+        else:
+            name = "IAA"
 
         return Address(
-            name=name or "IAA",
+            name=name,
             street=street,
             city=city,
             state=state,

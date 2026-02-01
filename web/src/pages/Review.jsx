@@ -20,6 +20,27 @@ function Review() {
   // Track changes
   const [corrections, setCorrections] = useState({})
 
+  // Warehouses for delivery destination
+  const [warehouses, setWarehouses] = useState([])
+  const [selectedWarehouse, setSelectedWarehouse] = useState('')
+
+  // Load warehouses
+  const loadWarehouses = useCallback(async () => {
+    try {
+      const data = await api.listWarehouses()
+      setWarehouses(data.items || [])
+      // Set default warehouse if available
+      const defaultWh = (data.items || []).find(w => w.is_default)
+      if (defaultWh) {
+        setSelectedWarehouse(defaultWh.id.toString())
+      } else if (data.items?.length > 0) {
+        setSelectedWarehouse(data.items[0].id.toString())
+      }
+    } catch (err) {
+      console.error('Failed to load warehouses:', err)
+    }
+  }, [])
+
   // Fetch run and review items
   const fetchData = useCallback(async () => {
     if (!runId) return
@@ -49,12 +70,15 @@ function Review() {
         }
       }
       setCorrections(initialCorrections)
+
+      // Load warehouses
+      await loadWarehouses()
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [runId])
+  }, [runId, loadWarehouses])
 
   useEffect(() => {
     fetchData()
@@ -91,9 +115,39 @@ function Review() {
 
     try {
       const itemsToSubmit = Object.values(corrections)
+
+      // If a warehouse is selected, add delivery address fields from warehouse
+      if (selectedWarehouse) {
+        const wh = warehouses.find(w => w.id.toString() === selectedWarehouse)
+        if (wh) {
+          // Add delivery fields from warehouse to corrections
+          const deliveryFields = [
+            { key: 'delivery_name', value: wh.name },
+            { key: 'delivery_address', value: wh.address },
+            { key: 'delivery_city', value: wh.city },
+            { key: 'delivery_state', value: wh.state },
+            { key: 'delivery_zip', value: wh.zip_code },
+            { key: 'delivery_phone', value: wh.contact?.phone || '' },
+            { key: 'delivery_contact', value: wh.contact?.notes || '' },
+            { key: 'transport_special_instructions', value: wh.requirements?.special_instructions || '' },
+          ]
+
+          // Find existing delivery items and update them, or mark for addition
+          for (const df of deliveryFields) {
+            const existingItem = items.find(i =>
+              i.source_key === df.key || i.cd_key === df.key
+            )
+            if (existingItem && corrections[existingItem.id]) {
+              itemsToSubmit.find(i => i.item_id === existingItem.id).corrected_value = df.value
+            }
+          }
+        }
+      }
+
       await api.submitReview({
         run_id: parseInt(runId),
         items: itemsToSubmit,
+        warehouse_id: selectedWarehouse ? parseInt(selectedWarehouse) : null,
       })
       setSuccess('Review submitted successfully!')
       setTimeout(() => {
@@ -200,6 +254,51 @@ function Review() {
           </div>
         </div>
       </div>
+
+      {/* Delivery Destination Selection */}
+      {warehouses.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Delivery Destination
+              </label>
+              <select
+                value={selectedWarehouse}
+                onChange={(e) => setSelectedWarehouse(e.target.value)}
+                className="form-select w-full max-w-md"
+              >
+                <option value="">-- Select Warehouse --</option>
+                {warehouses.map((wh) => (
+                  <option key={wh.id} value={wh.id}>
+                    {wh.name} - {wh.city}, {wh.state}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedWarehouse && warehouses.find(w => w.id.toString() === selectedWarehouse) && (
+              <div className="ml-6 text-sm text-gray-600 max-w-md">
+                {(() => {
+                  const wh = warehouses.find(w => w.id.toString() === selectedWarehouse)
+                  return (
+                    <div>
+                      <p className="font-medium">{wh.name}</p>
+                      <p>{wh.address}</p>
+                      <p>{wh.city}, {wh.state} {wh.zip_code}</p>
+                      {wh.contact?.phone && <p className="text-gray-500">Phone: {wh.contact.phone}</p>}
+                      {wh.requirements?.special_instructions && (
+                        <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs">
+                          <strong>Special Instructions:</strong> {wh.requirements.special_instructions}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Split Layout: PDF Viewer + Review Items */}
       <div className={`flex gap-6 ${showPdf && pdfUrl ? '' : 'flex-col'}`}>
