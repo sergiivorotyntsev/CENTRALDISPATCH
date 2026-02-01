@@ -35,6 +35,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from api.routes import settings, test, runs, health
 from api.routes import auction_types, documents, extractions, reviews, exports, models
+from api.routes import integrations
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
 
@@ -105,6 +106,7 @@ app.include_router(extractions.router)
 app.include_router(reviews.router)
 app.include_router(exports.router)
 app.include_router(models.router)
+app.include_router(integrations.router)
 
 # Initialize database on startup
 @app.on_event("startup")

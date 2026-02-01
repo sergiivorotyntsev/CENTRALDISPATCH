@@ -166,6 +166,66 @@ export const api = {
   // Auction Types
   listAuctionTypes: () => request('/auction-types/'),
   getAuctionType: (id) => request(`/auction-types/${id}`),
+
+  // Integration Management
+  getAllSettings: async () => {
+    const [email, clickup, sheets, cd, warehouses, exportTargets] = await Promise.all([
+      request('/settings/email').catch(() => ({})),
+      request('/settings/clickup').catch(() => ({})),
+      request('/settings/sheets').catch(() => ({})),
+      request('/settings/cd').catch(() => ({})),
+      request('/settings/warehouses').catch(() => ({ warehouses: [] })),
+      request('/settings/export-targets').catch(() => ({ targets: [] })),
+    ])
+    return { email, clickup, sheets, cd, warehouses: warehouses.warehouses || [], exportTargets: exportTargets.targets || [] }
+  },
+
+  // Integration Testing
+  testClickUpConnection: () => request('/integrations/clickup/test', { method: 'POST' }),
+  getClickUpCustomFields: (listId) => request(`/integrations/clickup/custom-fields/${listId}`),
+  testSheetsConnection: () => request('/integrations/sheets/test', { method: 'POST' }),
+  testCDConnection: () => request('/integrations/cd/test', { method: 'POST' }),
+  cdDryRun: (runId) => request('/integrations/cd/dry-run', {
+    method: 'POST',
+    body: JSON.stringify({ run_id: runId }),
+  }),
+  cdExport: (runId) => request('/integrations/cd/export', {
+    method: 'POST',
+    body: JSON.stringify({ run_id: runId }),
+  }),
+  testEmailConnection: () => request('/integrations/email/test', { method: 'POST' }),
+
+  // Email Rules
+  getEmailRules: () => request('/integrations/email/rules'),
+  updateEmailRules: (rules) => request('/integrations/email/rules', {
+    method: 'PUT',
+    body: JSON.stringify({ rules }),
+  }),
+
+  // Email Activity Log
+  getEmailActivity: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/integrations/email/activity${query ? `?${query}` : ''}`)
+  },
+
+  // Integration Audit Log
+  getIntegrationAuditLog: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/integrations/audit-log${query ? `?${query}` : ''}`)
+  },
+
+  // Warehouse Management
+  addWarehouse: (warehouse) => request('/integrations/warehouses', {
+    method: 'POST',
+    body: JSON.stringify(warehouse),
+  }),
+  deleteWarehouse: (code) => request(`/integrations/warehouses/${code}`, { method: 'DELETE' }),
+
+  // CSV Export
+  exportExtractionsCsv: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return `${API_BASE}/integrations/extractions/export/csv${query ? `?${query}` : ''}`
+  },
 }
 
 export default api
