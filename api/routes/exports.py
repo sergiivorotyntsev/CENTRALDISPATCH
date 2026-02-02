@@ -614,18 +614,31 @@ async def send_to_cd_with_retry(
     semaphore = get_cd_semaphore()
 
     # Check for existing CD listing (for update with ETag)
+    # Note: Local DB check doesn't require semaphore
     cd_listing_id = None
     etag = None
     is_update = False
 
     if run_id and not force_create:
-        existing = get_cd_listing_info(run_id)
+        existing = get_cd_listing_info(run_id)  # Local DB lookup, no semaphore needed
         if existing:
             cd_listing_id = existing.get("cd_listing_id")
-            # Fetch fresh ETag before update
-            if cd_listing_id:
+
+    last_error = None
+    partner_ref_id = payload.get("partnerReferenceId")
+
+    for attempt in range(CD_RETRY_ATTEMPTS):
+        # All CD API calls go through the semaphore to respect rate limits
+        async with semaphore:
+            loop = asyncio.get_event_loop()
+
+            # If we have existing listing ID, fetch fresh ETag (inside semaphore)
+            if cd_listing_id and not etag:
                 logger.info(f"Found existing CD listing {cd_listing_id}, fetching ETag...")
-                success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
+                success, fresh_etag, _ = await loop.run_in_executor(
+                    None,
+                    lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
+                )
                 if success and fresh_etag:
                     etag = fresh_etag
                     is_update = True
@@ -634,41 +647,42 @@ async def send_to_cd_with_retry(
                     # Listing may have been deleted, force create
                     logger.warning(f"Could not fetch ETag for {cd_listing_id}, creating new listing")
                     cd_listing_id = None
+                    is_update = False
 
-    last_error = None
-    partner_ref_id = payload.get("partnerReferenceId")
-
-    for attempt in range(CD_RETRY_ATTEMPTS):
-        # For POST retries: check if listing was created on previous attempt
-        # (handles network errors where CD created listing but response was lost)
-        if attempt > 0 and not is_update and partner_ref_id:
-            logger.info(f"Retry attempt {attempt + 1}: checking for existing listing by partnerReferenceId")
-            loop = asyncio.get_event_loop()
-            existing_id = await loop.run_in_executor(
-                None,
-                lambda: find_listing_by_partner_ref(partner_ref_id, sandbox=sandbox)
-            )
-            if existing_id:
-                logger.info(f"Found existing listing {existing_id} from previous attempt, treating as success")
-                # Fetch ETag for the found listing
-                success, found_etag, resp_data = get_cd_listing_etag(existing_id, sandbox=sandbox)
-                if run_id:
-                    save_cd_listing_info(
-                        run_id=run_id,
-                        cd_listing_id=existing_id,
-                        etag=found_etag,
-                        external_id=payload.get("externalId"),
-                        sandbox=sandbox,
+            # For POST retries: check if listing was created on previous attempt
+            # (handles network errors where CD created listing but response was lost)
+            if attempt > 0 and not is_update and partner_ref_id:
+                logger.info(f"Retry attempt {attempt + 1}: checking for existing listing by partnerReferenceId")
+                existing_id = await loop.run_in_executor(
+                    None,
+                    lambda pref=partner_ref_id: find_listing_by_partner_ref(pref, sandbox=sandbox)
+                )
+                if existing_id:
+                    logger.info(f"Found existing listing {existing_id} from previous attempt, treating as success")
+                    # Fetch ETag for the found listing
+                    success, found_etag, resp_data = await loop.run_in_executor(
+                        None,
+                        lambda eid=existing_id: get_cd_listing_etag(eid, sandbox=sandbox)
                     )
-                return True, {"id": existing_id, "recovered_from_retry": True}, existing_id
+                    if run_id:
+                        save_cd_listing_info(
+                            run_id=run_id,
+                            cd_listing_id=existing_id,
+                            etag=found_etag,
+                            external_id=payload.get("externalId"),
+                            sandbox=sandbox,
+                        )
+                    return True, {"id": existing_id, "recovered_from_retry": True}, existing_id
 
-        async with semaphore:
-            # Run sync function in thread pool
-            loop = asyncio.get_event_loop()
-            # Note: send_to_cd now returns 4 values: (success, response, new_etag, listing_id)
+            # Send to CD (POST or PUT)
+            # Note: send_to_cd returns 4 values: (success, response, new_etag, listing_id)
             result = await loop.run_in_executor(
                 None,
-                lambda: send_to_cd(payload, sandbox, cd_listing_id if is_update else None, etag if is_update else None)
+                lambda lid=cd_listing_id, et=etag: send_to_cd(
+                    payload, sandbox,
+                    lid if is_update else None,
+                    et if is_update else None
+                )
             )
             success, response, new_etag, result_listing_id = result
 
@@ -690,9 +704,12 @@ async def send_to_cd_with_retry(
             status_code = response.get("status_code")
 
             if error_code == "ETAG_MISMATCH":
-                # Refresh ETag and retry immediately
+                # Refresh ETag and retry immediately (already inside semaphore)
                 if cd_listing_id:
-                    success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
+                    success, fresh_etag, _ = await loop.run_in_executor(
+                        None,
+                        lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
+                    )
                     if success and fresh_etag:
                         etag = fresh_etag
                         logger.info(f"Refreshed ETag after 412: {etag}")

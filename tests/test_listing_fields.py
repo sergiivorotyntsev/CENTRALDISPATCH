@@ -146,8 +146,8 @@ class TestListingFieldRegistry:
         assert 'warehouse' in issue_fields  # Warehouse not selected
         assert any('pickup' in f for f in issue_fields)
 
-    def test_blocking_issues_same_address(self):
-        """Should block when pickup and delivery addresses are the same."""
+    def test_same_address_allowed(self):
+        """Same addresses should NOT be blocked (CD only requires 2 stops, not different addresses)."""
         registry = get_registry()
 
         data = {
@@ -161,7 +161,7 @@ class TestListingFieldRegistry:
             'pickup_city': 'Dallas',
             'pickup_state': 'TX',
             'pickup_zip': '75001',
-            'delivery_address': '123 Main St',  # Same as pickup
+            'delivery_address': '123 Main St',  # Same as pickup - should be allowed
             'delivery_city': 'Dallas',
             'delivery_state': 'TX',
             'delivery_zip': '75001',
@@ -171,7 +171,8 @@ class TestListingFieldRegistry:
 
         issues = registry.get_blocking_issues(data, warehouse_selected=True)
         issue_messages = [i['issue'] for i in issues]
-        assert any('different' in msg.lower() for msg in issue_messages)
+        # Should NOT contain any "different addresses" error
+        assert not any('different' in msg.lower() for msg in issue_messages)
 
     def test_blocking_issues_external_id_too_long(self):
         """Should block when external_id exceeds 50 characters."""
@@ -256,6 +257,100 @@ class TestListingFieldRegistry:
         issues = registry.get_blocking_issues(data, warehouse_selected=True)
         issue_fields = [i['field'] for i in issues]
         assert 'available_date' in issue_fields
+
+    def test_blocking_issues_desired_delivery_date_in_past(self):
+        """Should block when desired_delivery_date is in the past."""
+        registry = get_registry()
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': datetime.now().strftime('%Y-%m-%d'),
+            'desired_delivery_date': '2020-01-01',  # In the past
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        assert 'desired_delivery_date' in issue_fields
+
+    def test_blocking_issues_desired_delivery_date_before_available(self):
+        """Should block when desired_delivery_date is before available_date."""
+        registry = get_registry()
+
+        today = datetime.now()
+        available = (today + timedelta(days=7)).strftime('%Y-%m-%d')
+        desired = (today + timedelta(days=3)).strftime('%Y-%m-%d')  # Before available
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': available,
+            'desired_delivery_date': desired,  # Before available_date
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        issue_messages = [i['issue'] for i in issues]
+        assert 'desired_delivery_date' in issue_fields
+        assert any('after available' in msg.lower() for msg in issue_messages)
+
+    def test_blocking_issues_desired_delivery_date_too_far_future(self):
+        """Should block when desired_delivery_date is more than 30 days ahead."""
+        registry = get_registry()
+
+        today = datetime.now()
+        available = today.strftime('%Y-%m-%d')
+        desired = (today + timedelta(days=60)).strftime('%Y-%m-%d')  # 60 days ahead
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': available,
+            'desired_delivery_date': desired,  # 60 days ahead
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        assert 'desired_delivery_date' in issue_fields
 
     def test_to_json_schema(self):
         """Should export as JSON schema."""

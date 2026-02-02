@@ -707,30 +707,10 @@ class ListingFieldRegistry:
                     "issue": "Warehouse not selected (delivery address incomplete)",
                 })
 
-        # CD API Rule: 2 unique stops required (pickup != delivery)
-        pickup_addr = (
-            data.get("pickup_address", "").strip().lower(),
-            data.get("pickup_city", "").strip().lower(),
-            data.get("pickup_state", "").strip().upper(),
-            data.get("pickup_zip", "").strip(),
-        )
-        delivery_addr = (
-            data.get("delivery_address", "").strip().lower(),
-            data.get("delivery_city", "").strip().lower(),
-            data.get("delivery_state", "").strip().upper(),
-            data.get("delivery_zip", "").strip(),
-        )
-
-        # Only check if both addresses are filled
-        pickup_filled = all(pickup_addr[:4])  # address, city, state, zip
-        delivery_filled = all(delivery_addr[:4])
-
-        if pickup_filled and delivery_filled:
-            if pickup_addr == delivery_addr:
-                issues.append({
-                    "field": "delivery_address",
-                    "issue": "Pickup and delivery addresses must be different (CD requires 2 unique stops)",
-                })
+        # CD API Rule: exactly 2 stops required
+        # Note: CD docs require 2 stops but do NOT require different addresses.
+        # Same-address check removed per CD API V2 spec review.
+        # If business logic requires different addresses, make it configurable.
 
         # CD API Rule: 1-12 vehicles (we currently support single vehicle, so just check VIN exists)
         vehicle_vin = data.get("vehicle_vin")
@@ -807,6 +787,43 @@ class ListingFieldRegistry:
                     })
             except Exception:
                 pass  # Expiration date is optional
+
+        # Check desiredDeliveryDate rules (CD API requirement)
+        # Must be: >= availableDate, >= today, <= today + 30 days
+        desired_delivery_date = data.get("desired_delivery_date")
+        if desired_delivery_date:
+            try:
+                if isinstance(desired_delivery_date, str):
+                    date_str = desired_delivery_date.replace("Z", "+00:00")
+                    if "T" in date_str:
+                        dd_date = datetime.fromisoformat(date_str)
+                    else:
+                        dd_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
+                else:
+                    dd_date = desired_delivery_date
+
+                dd_date_naive = dd_date.replace(tzinfo=None) if hasattr(dd_date, 'tzinfo') else dd_date
+
+                if dd_date_naive < today:
+                    issues.append({
+                        "field": "desired_delivery_date",
+                        "issue": "Desired delivery date cannot be in the past (CD API requirement)",
+                    })
+                if dd_date_naive > max_date:
+                    issues.append({
+                        "field": "desired_delivery_date",
+                        "issue": "Desired delivery date cannot be more than 30 days in the future (CD API requirement)",
+                    })
+
+                # desiredDeliveryDate must be >= availableDate
+                if available_date and 'av_date_naive' in dir():
+                    if dd_date_naive < av_date_naive:
+                        issues.append({
+                            "field": "desired_delivery_date",
+                            "issue": "Desired delivery date must be on or after available date (CD API requirement)",
+                        })
+            except Exception:
+                pass  # Desired delivery date is optional
 
         # Validation errors
         validation_errors = self.validate_all(data)
