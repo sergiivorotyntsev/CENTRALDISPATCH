@@ -70,6 +70,16 @@ function TestLab() {
   const [fieldMappings, setFieldMappings] = useState([])
   const [loadingFields, setLoadingFields] = useState(false)
 
+  // New field form
+  const [showNewFieldForm, setShowNewFieldForm] = useState(false)
+  const [newFieldForm, setNewFieldForm] = useState({
+    field_key: '',
+    display_name: '',
+    field_type: 'text',
+    is_required: false,
+    description: '',
+  })
+
   // Warehouses
   const [warehouses, setWarehouses] = useState([])
   const [showWarehouseForm, setShowWarehouseForm] = useState(false)
@@ -247,6 +257,72 @@ function TestLab() {
     } catch (err) {
       setError('Failed to save field mappings: ' + err.message)
     }
+  }
+
+  function handleAddField(e) {
+    e.preventDefault()
+    if (!newFieldForm.field_key || !newFieldForm.display_name) {
+      alert('Field key and display name are required')
+      return
+    }
+
+    // Check for duplicate field key
+    if (fieldMappings.some(f => f.field_key === newFieldForm.field_key)) {
+      alert('A field with this key already exists')
+      return
+    }
+
+    // Add new field to the list
+    const newField = {
+      id: null, // Will be created when saved
+      field_key: newFieldForm.field_key,
+      display_name: newFieldForm.display_name,
+      field_type: newFieldForm.field_type,
+      is_required: newFieldForm.is_required,
+      description: newFieldForm.description,
+      sort_order: fieldMappings.length,
+      is_active: true,
+      value_source: 'extracted',
+      default_value: '',
+      cd_key: newFieldForm.field_key,
+      internal_key: newFieldForm.field_key,
+      source_key: newFieldForm.field_key,
+    }
+
+    setFieldMappings([...fieldMappings, newField])
+    setShowNewFieldForm(false)
+    setNewFieldForm({
+      field_key: '',
+      display_name: '',
+      field_type: 'text',
+      is_required: false,
+      description: '',
+    })
+  }
+
+  async function handleDeleteField(idx) {
+    const field = fieldMappings[idx]
+    if (!field) return
+
+    const confirmMsg = field.id
+      ? 'Delete this field? It will be removed from the database.'
+      : 'Remove this field from the list?'
+
+    if (!confirm(confirmMsg)) return
+
+    if (field.id && editingAuctionType) {
+      // Delete from API
+      try {
+        await api.deleteField(editingAuctionType.id, field.id, true)
+      } catch (err) {
+        alert('Error deleting field: ' + err.message)
+        return
+      }
+    }
+
+    // Remove from local state
+    const updated = fieldMappings.filter((_, i) => i !== idx)
+    setFieldMappings(updated)
   }
 
   async function handleCreateWarehouse(e) {
@@ -1052,6 +1128,7 @@ function TestLab() {
                               <th>Source</th>
                               <th>Required</th>
                               <th>Default Value</th>
+                              <th className="w-10"></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1146,11 +1223,90 @@ function TestLab() {
                                     <span className="text-xs text-gray-400">-</span>
                                   )}
                                 </td>
+                                <td>
+                                  <button
+                                    onClick={() => handleDeleteField(idx)}
+                                    className="text-red-500 hover:text-red-700 p-1"
+                                    title="Delete field"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
+                      {/* Add Field Form */}
+                      {showNewFieldForm && (
+                        <div className="p-4 border-t bg-blue-50">
+                          <h3 className="font-medium text-gray-900 mb-3">Add Custom Field</h3>
+                          <form onSubmit={handleAddField} className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="form-label text-xs">Field Key (API name)</label>
+                                <input
+                                  type="text"
+                                  value={newFieldForm.field_key}
+                                  onChange={(e) => setNewFieldForm(f => ({ ...f, field_key: e.target.value.toLowerCase().replace(/\s+/g, '_') }))}
+                                  className="form-input form-input-sm w-full font-mono"
+                                  placeholder="e.g., custom_field"
+                                  required
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label text-xs">Display Name</label>
+                                <input
+                                  type="text"
+                                  value={newFieldForm.display_name}
+                                  onChange={(e) => setNewFieldForm(f => ({ ...f, display_name: e.target.value }))}
+                                  className="form-input form-input-sm w-full"
+                                  placeholder="e.g., Custom Field"
+                                  required
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div>
+                                <label className="form-label text-xs">Type</label>
+                                <select
+                                  value={newFieldForm.field_type}
+                                  onChange={(e) => setNewFieldForm(f => ({ ...f, field_type: e.target.value }))}
+                                  className="form-select form-select-sm w-full"
+                                >
+                                  <option value="text">Text</option>
+                                  <option value="number">Number</option>
+                                  <option value="date">Date</option>
+                                  <option value="textarea">Text Area</option>
+                                  <option value="select">Select</option>
+                                </select>
+                              </div>
+                              <div className="flex items-end">
+                                <label className="flex items-center space-x-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={newFieldForm.is_required}
+                                    onChange={(e) => setNewFieldForm(f => ({ ...f, is_required: e.target.checked }))}
+                                    className="form-checkbox"
+                                  />
+                                  <span className="text-sm">Required</span>
+                                </label>
+                              </div>
+                              <div className="flex items-end justify-end space-x-2">
+                                <button type="button" onClick={() => setShowNewFieldForm(false)} className="btn btn-sm btn-secondary">
+                                  Cancel
+                                </button>
+                                <button type="submit" className="btn btn-sm btn-primary">
+                                  Add Field
+                                </button>
+                              </div>
+                            </div>
+                          </form>
+                        </div>
+                      )}
+
                       <div className="p-4 border-t bg-gray-50">
                         <div className="flex justify-between items-center mb-3">
                           <div className="text-sm text-gray-500">
@@ -1158,9 +1314,17 @@ function TestLab() {
                             <span className="mx-2">|</span>
                             <span className="text-blue-600">{fieldMappings.filter(f => f.value_source === 'constant').length}</span> constants
                           </div>
-                          <button onClick={handleSaveFieldMappings} className="btn btn-primary">
-                            Save Field Mappings
-                          </button>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => setShowNewFieldForm(!showNewFieldForm)}
+                              className="btn btn-sm btn-secondary"
+                            >
+                              {showNewFieldForm ? 'Cancel' : '+ Add Field'}
+                            </button>
+                            <button onClick={handleSaveFieldMappings} className="btn btn-primary">
+                              Save Field Mappings
+                            </button>
+                          </div>
                         </div>
                         <div className="text-xs text-gray-500 bg-white p-2 rounded border">
                           <strong>Tip:</strong> Set fields to "Constant" when the value is always the same for this auction type
