@@ -4,6 +4,7 @@ import Settings from './pages/Settings'
 import TestLab from './pages/TestLab'
 import Runs from './pages/Runs'
 import Documents from './pages/Documents'
+import DocumentDetail from './pages/DocumentDetail'
 import Review from './pages/Review'
 
 function App() {
@@ -54,6 +55,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/documents" element={<Documents />} />
+          <Route path="/documents/:id" element={<DocumentDetail />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/review/:runId" element={<Review />} />
           <Route path="/test-lab" element={<TestLab />} />

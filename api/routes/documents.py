@@ -352,6 +352,7 @@ async def upload_document(
 async def list_documents(
     auction_type_id: Optional[int] = Query(None, description="Filter by auction type"),
     dataset_split: Optional[str] = Query(None, description="Filter by split: train or test"),
+    exclude_test_lab: bool = Query(True, description="Exclude Test Lab documents from list"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -374,6 +375,11 @@ async def list_documents(
             sql += " AND dataset_split = ?"
             params.append(dataset_split)
 
+        # Exclude Test Lab documents by default for production Documents page
+        if exclude_test_lab:
+            sql += " AND (is_test IS NULL OR is_test = 0)"
+            sql += " AND (source IS NULL OR source != 'test_lab')"
+
         sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
@@ -381,12 +387,16 @@ async def list_documents(
             rows = conn.execute(sql, params).fetchall()
             docs = [Document(**dict(row)) for row in rows]
 
-            # Get counts
+            # Get counts (also excluding test lab docs)
+            count_filter = ""
+            if exclude_test_lab:
+                count_filter = " AND (is_test IS NULL OR is_test = 0) AND (source IS NULL OR source != 'test_lab')"
+
             train_count = conn.execute(
-                "SELECT COUNT(*) FROM documents WHERE dataset_split = 'train'"
+                f"SELECT COUNT(*) FROM documents WHERE dataset_split = 'train'{count_filter}"
             ).fetchone()[0]
             test_count = conn.execute(
-                "SELECT COUNT(*) FROM documents WHERE dataset_split = 'test'"
+                f"SELECT COUNT(*) FROM documents WHERE dataset_split = 'test'{count_filter}"
             ).fetchone()[0]
             counts = {"train": train_count, "test": test_count}
 
@@ -480,6 +490,117 @@ async def get_document_stats():
         ))
 
     return stats
+
+
+@router.get("/{id}/export-preview")
+async def get_document_export_preview(id: int):
+    """
+    Get document export preview with all fields ready for Central Dispatch.
+
+    Returns:
+    - Document metadata
+    - Latest extraction with all fields
+    - Export validation status
+    - Field mapping information
+    """
+    from api.database import get_connection
+
+    doc = DocumentRepository.get_by_id(id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    at = AuctionTypeRepository.get_by_id(doc.auction_type_id)
+
+    # Check if document can be exported
+    can_export = True
+    blocking_issues = []
+
+    if doc.is_test:
+        can_export = False
+        blocking_issues.append("Document is marked as test - cannot export to production")
+
+    # Get latest extraction run
+    with get_connection() as conn:
+        run_row = conn.execute("""
+            SELECT * FROM extraction_runs
+            WHERE document_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (id,)).fetchone()
+
+        extraction = None
+        extracted_fields = {}
+        if run_row:
+            extraction = dict(run_row)
+
+            # Get extraction outputs (fields)
+            fields_rows = conn.execute("""
+                SELECT * FROM extraction_outputs
+                WHERE run_id = ?
+            """, (extraction['id'],)).fetchall()
+
+            for field_row in fields_rows:
+                f = dict(field_row)
+                extracted_fields[f['field_key']] = {
+                    'value': f['extracted_value'],
+                    'confidence': f.get('confidence', 0),
+                    'source': f.get('source', 'extracted'),
+                    'is_corrected': f.get('is_corrected', False),
+                }
+
+            # Check extraction status
+            if extraction['status'] not in ['approved', 'reviewed']:
+                can_export = False
+                blocking_issues.append(f"Extraction status is '{extraction['status']}' - needs review")
+
+        else:
+            can_export = False
+            blocking_issues.append("No extraction run found - please run extraction first")
+
+        # Get field mappings for this auction type
+        field_mappings = []
+        mapping_rows = conn.execute("""
+            SELECT * FROM field_mappings
+            WHERE auction_type_id = ?
+            ORDER BY display_order, cd_field_name
+        """, (doc.auction_type_id,)).fetchall()
+
+        for m_row in mapping_rows:
+            m = dict(m_row)
+            field_key = m['cd_field_name']
+            field_data = extracted_fields.get(field_key, {})
+
+            # Check if required field is missing
+            if m.get('is_required') and not field_data.get('value'):
+                can_export = False
+                blocking_issues.append(f"Required field '{field_key}' is empty")
+
+            field_mappings.append({
+                'cd_field': field_key,
+                'display_name': m.get('display_name', field_key),
+                'source': m.get('source_type', 'extracted'),
+                'is_required': m.get('is_required', False),
+                'is_active': m.get('is_active', True),
+                'value': field_data.get('value'),
+                'confidence': field_data.get('confidence'),
+                'default_value': m.get('default_value'),
+            })
+
+    return {
+        'document': {
+            'id': doc.id,
+            'filename': doc.filename,
+            'auction_type': at.code if at else None,
+            'auction_type_name': at.name if at else None,
+            'is_test': doc.is_test,
+            'created_at': doc.created_at,
+        },
+        'extraction': extraction,
+        'fields': field_mappings,
+        'can_export': can_export,
+        'blocking_issues': blocking_issues,
+        'order_id': extracted_fields.get('order_id', {}).get('value'),
+    }
 
 
 @router.delete("/{id}", status_code=204)

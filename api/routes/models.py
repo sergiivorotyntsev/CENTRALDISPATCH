@@ -476,59 +476,48 @@ class TrainingStatsOverview(BaseModel):
 async def get_training_stats_overview():
     """Get training stats overview for the Test Lab dashboard."""
     from api.database import get_connection
+    from api.training_db import engine
+    from sqlmodel import Session, select
+    from models.training import TrainingExample, FieldCorrection
 
+    # Get auction types from main database
     with get_connection() as conn:
-        # Get all auction types
         auction_types = conn.execute(
             "SELECT id, code FROM auction_types WHERE is_active = TRUE"
         ).fetchall()
 
-        by_auction_type = {}
-        total_examples = 0
-        total_validated = 0
+    by_auction_type = {}
+    total_examples = 0
+    total_validated = 0
 
+    # Query training database for stats
+    with Session(engine) as session:
         for at in auction_types:
             at_id = at["id"]
             at_code = at["code"]
 
-            # Count from training_examples (new system)
+            # Count from training_examples in training.db
             try:
-                total = conn.execute(
-                    "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-                    (at_id,)
-                ).fetchone()[0]
-
-                validated = conn.execute(
-                    "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = 1",
-                    (at_id,)
-                ).fetchone()[0]
-            except:
+                examples = session.exec(
+                    select(TrainingExample).where(TrainingExample.auction_type_id == at_id)
+                ).all()
+                total = len(examples)
+                validated = sum(1 for ex in examples if ex.is_validated)
+            except Exception:
                 total = 0
                 validated = 0
 
-            # Count from field_corrections (new training system)
+            # Count unique runs from field_corrections in training.db
             try:
-                corrections_count = conn.execute(
-                    "SELECT COUNT(DISTINCT extraction_run_id) FROM field_corrections WHERE auction_type_id = ?",
-                    (at_id,)
-                ).fetchone()[0]
-                total += corrections_count
-                validated += corrections_count
-            except:
-                pass
-
-            # Also count reviewed items as training data (legacy)
-            try:
-                reviewed_count = conn.execute(
-                    """SELECT COUNT(DISTINCT er.id)
-                       FROM extraction_runs er
-                       WHERE er.auction_type_id = ? AND er.status = 'approved'""",
-                    (at_id,)
-                ).fetchone()[0]
-
-                total += reviewed_count
-                validated += reviewed_count
-            except:
+                corrections = session.exec(
+                    select(FieldCorrection).where(FieldCorrection.auction_type_id == at_id)
+                ).all()
+                unique_runs = len(set(c.extraction_run_id for c in corrections))
+                # Add unique correction runs to totals (deduplicated with examples)
+                if unique_runs > total:
+                    total = unique_runs
+                    validated = unique_runs
+            except Exception:
                 pass
 
             by_auction_type[at_code] = {
@@ -552,45 +541,63 @@ async def get_training_stats():
     Get training data statistics per auction type.
 
     Shows which auction types have enough data for training.
+    Reads from training.db (separate training database).
     """
     from api.database import get_connection
+    from api.training_db import engine
+    from sqlmodel import Session, select
+    from models.training import TrainingExample, FieldCorrection, ExtractionRule
 
+    # Get auction types from main database
     with get_connection() as conn:
-        # Get all auction types
         auction_types = conn.execute(
             "SELECT id, code FROM auction_types WHERE is_active = TRUE"
         ).fetchall()
 
-        stats = []
+    stats = []
+
+    # Query training database for stats
+    with Session(engine) as session:
         for at in auction_types:
             at_id = at["id"]
             at_code = at["code"]
 
-            # Count examples
-            total = conn.execute(
-                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-                (at_id,)
-            ).fetchone()[0]
+            # Count training examples from training.db
+            total_examples = session.exec(
+                select(TrainingExample).where(TrainingExample.auction_type_id == at_id)
+            ).all()
+            total = len(total_examples)
 
-            # Use is_validated column (maps to is_correct conceptually)
-            validated = conn.execute(
-                "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = TRUE",
-                (at_id,)
-            ).fetchone()[0]
-
+            # Count validated examples
+            validated = sum(1 for ex in total_examples if ex.is_validated)
             incorrect = total - validated
 
             # Count unique documents
-            unique_docs = conn.execute(
-                "SELECT COUNT(DISTINCT document_id) FROM training_examples WHERE auction_type_id = ?",
-                (at_id,)
-            ).fetchone()[0]
+            unique_doc_ids = set(ex.document_id for ex in total_examples)
+            unique_docs = len(unique_doc_ids)
 
-            # Count unique fields by parsing labels_json (simplified - just count examples with labels)
-            unique_fields = 0
-            if total > 0:
-                # Estimate unique fields based on typical extraction
-                unique_fields = min(total, 18)  # Max 18 typical fields
+            # Count field corrections
+            corrections = session.exec(
+                select(FieldCorrection).where(FieldCorrection.auction_type_id == at_id)
+            ).all()
+            correction_count = len(corrections)
+
+            # Count unique fields from corrections
+            unique_field_keys = set(c.field_key for c in corrections)
+            unique_fields = len(unique_field_keys)
+
+            # Count extraction rules
+            rules = session.exec(
+                select(ExtractionRule)
+                .where(ExtractionRule.auction_type_id == at_id)
+                .where(ExtractionRule.is_active == True)
+            ).all()
+            rules_count = len(rules)
+
+            # Calculate average confidence
+            avg_confidence = 0.0
+            if rules:
+                avg_confidence = sum(r.confidence for r in rules) / len(rules)
 
             stats.append(TrainingDataStats(
                 auction_type_id=at_id,
@@ -598,9 +605,12 @@ async def get_training_stats():
                 total_examples=total,
                 correct_examples=validated,
                 incorrect_examples=incorrect,
-                unique_fields=unique_fields,
+                unique_fields=unique_fields if unique_fields > 0 else correction_count,
                 unique_documents=unique_docs,
                 ready_for_training=total >= 10,
+                # Additional stats
+                rules_count=rules_count if hasattr(TrainingDataStats, 'rules_count') else None,
+                avg_confidence=avg_confidence if hasattr(TrainingDataStats, 'avg_confidence') else None,
             ))
 
     return stats

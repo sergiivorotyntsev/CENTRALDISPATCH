@@ -125,8 +125,14 @@ function Documents() {
     fetchDocExtractions()
   }, [fetchDocExtractions, documents])
 
-  // Navigate to extraction results / review
+  // Navigate to document detail / export preview
   function handleViewExtraction(docId) {
+    // Navigate to document detail page (export preview)
+    navigate(`/documents/${docId}`)
+  }
+
+  // Navigate to extraction results / review page (for editing)
+  function handleViewExtractionOld(docId) {
     const extraction = docExtractions[docId]
     if (extraction) {
       // Navigate to review page for this run
@@ -224,9 +230,9 @@ function Documents() {
             : 'bg-red-50 border border-red-200 text-red-700'
         }`}>
           <strong>{extractionResult.success ? 'Success:' : 'Error:'}</strong> {extractionResult.message}
-          {extractionResult.success && extractionResult.runId && (
+          {extractionResult.success && extractionResult.docId && (
             <a
-              href={`/runs?run=${extractionResult.runId}`}
+              href={`/documents/${extractionResult.docId}`}
               className="ml-4 text-sm underline"
             >
               View Results →
@@ -507,12 +513,21 @@ function Documents() {
                         )}
                         {extraction ? (
                           <>
-                            <button
-                              onClick={() => navigate(`/review/${extraction.id}`)}
-                              className="text-sm text-blue-600 hover:text-blue-800"
-                            >
-                              {extraction.status === 'needs_review' ? 'Review' : 'View'}
-                            </button>
+                            {extraction.status === 'needs_review' ? (
+                              <button
+                                onClick={() => navigate(`/review/${extraction.id}`)}
+                                className="text-sm text-yellow-600 hover:text-yellow-800"
+                              >
+                                Review
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => navigate(`/documents/${doc.id}`)}
+                                className="text-sm text-blue-600 hover:text-blue-800"
+                              >
+                                View
+                              </button>
+                            )}
                             <button
                               onClick={() => handleRunExtraction(doc.id, true)}
                               disabled={extractingDocId === doc.id}

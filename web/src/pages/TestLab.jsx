@@ -131,7 +131,7 @@ function TestLab() {
 
   async function loadTrainingStats() {
     try {
-      const response = await fetch('/api/models/training-stats')
+      const response = await fetch('/api/models/training-stats/overview')
       if (response.ok) {
         const data = await response.json()
         setTrainingStats(data)

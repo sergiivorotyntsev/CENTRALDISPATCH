@@ -130,6 +130,7 @@ export const api = {
   },
   getDocument: (id) => request(`/documents/${id}`),
   getDocumentText: (id) => request(`/documents/${id}/text`),
+  getDocumentExportPreview: (id) => request(`/documents/${id}/export-preview`),
   deleteDocument: (id) => request(`/documents/${id}`, { method: 'DELETE' }),
   uploadDocument: async (file, auctionTypeId, datasetSplit = 'train') => {
     const formData = new FormData()
