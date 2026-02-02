@@ -254,9 +254,14 @@ class ManheimExtractor(BaseExtractor):
         return ""
 
     def _extract_vehicle(self, text: str) -> Optional[Vehicle]:
+        # YMMT = Year Make Model Trim
+        # Model extraction should stop at newline, VIN, Color, Body, or other field markers
         ymmt_patterns = [
-            r'YMMT\s+(\d{4})\s+([A-Za-z\-]+)\s+([A-Za-z0-9\s\-]+)',
-            r'Vehicle\s*Information\s*\n.*?(\d{4})\s+([A-Za-z\-]+)\s+([A-Za-z0-9\s\-]+)',
+            # Pattern that stops at newline or field markers
+            r'YMMT\s+(\d{4})\s+([A-Za-z\-]+)\s+([A-Za-z0-9\s\-]+?)(?:\n|VIN|Color|Body|Entry|Odo|Mile)',
+            r'Vehicle\s*Information\s*\n.*?(\d{4})\s+([A-Za-z\-]+)\s+([A-Za-z0-9\s\-]+?)(?:\n|VIN)',
+            # Fallback - take less greedy match
+            r'YMMT\s+(\d{4})\s+([A-Za-z\-]+)\s+([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)',
         ]
 
         year, make, model = None, None, None
@@ -267,7 +272,11 @@ class ManheimExtractor(BaseExtractor):
                 year = int(match.group(1))
                 make = match.group(2).strip()
                 model = match.group(3).strip()
-                break
+                # Clean up model - remove any trailing markers that slipped through
+                model = re.sub(r'\s*(VIN|Color|Body|Entry|Odo|Mile).*$', '', model, flags=re.IGNORECASE)
+                model = model.strip()
+                if model:
+                    break
 
         vin = self.extract_vin(text)
 
