@@ -127,8 +127,8 @@ class ManheimExtractor(BaseExtractor):
         if work_order_match:
             invoice.stock_number = work_order_match.group(1)
 
-        # Extract pickup location with phone
-        pickup_location = self._extract_pickup_location(full_text)
+        # Extract pickup location with phone (using universal method)
+        pickup_location = self._extract_pickup_location(full_text, pdf_path)
         if pickup_location:
             invoice.pickup_address = pickup_location
 
@@ -162,78 +162,27 @@ class ManheimExtractor(BaseExtractor):
                 return LocationType.OFFSITE
         return LocationType.ONSITE
 
-    def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        """Extract pickup address using learned rules or shared parser."""
-        # First check for learned rules
-        rule = self.get_learned_rule('pickup_address')
+    def _extract_pickup_location(self, text: str, pdf_path: str = None) -> Optional[Address]:
+        """
+        Extract pickup address using universal base class method.
 
-        if rule and rule.label_patterns:
-            logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
-            # Try learned patterns first
-            for label_pattern in rule.label_patterns:
-                lines = extract_lines_after_label(text, label_pattern)
-                if lines:
-                    # Parse address from lines
-                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns)
-                    if addr:
-                        return addr
+        Manheim-specific label patterns are passed to the universal extractor.
+        """
+        # Manheim-specific label patterns
+        manheim_patterns = [
+            r'Pickup\s*Location\s*Address[:\s]*',
+            r'Manheim\s*Location[:\s]*',
+            r'Vehicle\s*Location[:\s]*',
+            r'Release\s*Location[:\s]*',
+            r'Pickup\s*Address[:\s]*',
+        ]
 
-        # Fallback to default extraction
-        return extract_pickup_address(
-            text,
-            source="Manheim",
-            custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
+        return self.extract_pickup_address_universal(
+            text=text,
+            pdf_path=pdf_path,
+            label_patterns=manheim_patterns,
+            source_name="Manheim"
         )
-
-    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
-        """Parse address from extracted lines."""
-        if not lines:
-            return None
-
-        # Filter out excluded patterns
-        if exclude_patterns:
-            filtered_lines = []
-            for line in lines:
-                excluded = False
-                for pattern in exclude_patterns:
-                    if pattern.lower() in line.lower():
-                        excluded = True
-                        break
-                if not excluded:
-                    filtered_lines.append(line)
-            lines = filtered_lines
-
-        if not lines:
-            return None
-
-        # Try to parse address
-        street = lines[0] if lines else ""
-
-        # Look for city/state/zip in remaining lines
-        city, state, zip_code = "", "", ""
-        for line in lines[1:]:
-            parsed_city, parsed_state, parsed_zip = self.parse_address(line)
-            if parsed_city and parsed_state:
-                city, state, zip_code = parsed_city, parsed_state, parsed_zip
-                break
-
-        # Also check first line for city/state/zip format
-        if not city:
-            parsed_city, parsed_state, parsed_zip = self.parse_address(street)
-            if parsed_city and parsed_state:
-                city, state, zip_code = parsed_city, parsed_state, parsed_zip
-                street = ""
-
-        if street or (city and state):
-            return Address(
-                name="Manheim",
-                street=street,
-                city=city,
-                state=state,
-                postal_code=zip_code,
-            )
-
-        return None
 
     def _extract_buyer_name(self, text: str) -> str:
         """Extract buyer name using learned rules or defaults."""

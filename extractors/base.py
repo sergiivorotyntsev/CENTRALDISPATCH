@@ -395,3 +395,193 @@ class BaseExtractor(ABC):
             amount = match.group(1).replace(',', '')
             return float(amount)
         return None
+
+    # =========================================================================
+    # UNIVERSAL ADDRESS EXTRACTION (for all auction types)
+    # =========================================================================
+
+    def extract_pickup_address_universal(
+        self,
+        text: str,
+        pdf_path: str = None,
+        label_patterns: List[str] = None,
+        source_name: str = None
+    ) -> Optional[Address]:
+        """
+        Universal pickup address extraction using multiple strategies.
+
+        Works for all auction types (Copart, IAA, Manheim).
+
+        Strategies (in order):
+        1. Learned rules from training
+        2. Spatial parsing (block-based, if pdf_path provided)
+        3. Text-based extraction with label patterns
+        4. Fallback to generic address parser
+
+        Args:
+            text: Document text
+            pdf_path: Optional PDF path for spatial parsing
+            label_patterns: Custom label patterns for this auction type
+            source_name: Source name (Copart, IAA, etc.) for Address object
+
+        Returns:
+            Address object or None
+        """
+        from extractors.address_parser import extract_pickup_address, extract_lines_after_label
+
+        # Default label patterns that work for most auction documents
+        default_patterns = [
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*',
+            r'LOT\s*(?:LOCATION|ADDRESS)[:\s]*',
+            r'PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*',
+            r'BRANCH[:\s]*',
+            r'YARD\s*(?:LOCATION|ADDRESS)[:\s]*',
+        ]
+
+        patterns = label_patterns or default_patterns
+        source = source_name or self.auction_type_code
+
+        # Strategy 1: Check for learned rules first
+        rule = self.get_learned_rule('pickup_address')
+        if rule and rule.label_patterns:
+            logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
+            for label_pattern in rule.label_patterns:
+                lines = extract_lines_after_label(text, label_pattern)
+                if lines:
+                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns, source)
+                    if addr and (addr.street or addr.city):
+                        return addr
+
+        # Strategy 2: Try spatial parsing if we have the PDF path
+        if pdf_path:
+            try:
+                from extractors.spatial_parser import parse_document
+                structure = parse_document(pdf_path)
+                addr = self._extract_address_spatial(structure, patterns, source)
+                if addr and (addr.street or addr.city):
+                    logger.debug(f"Extracted address using spatial parsing: {addr.city}, {addr.state}")
+                    return addr
+            except Exception as e:
+                logger.warning(f"Spatial parsing failed: {e}")
+
+        # Strategy 3: Text-based extraction with label patterns
+        for pattern in patterns:
+            lines = extract_lines_after_label(text, pattern, max_lines=4)
+            if lines:
+                addr = self._parse_address_from_lines(lines, source_name=source)
+                if addr and (addr.street or addr.city):
+                    return addr
+
+        # Strategy 4: Final fallback to shared parser
+        return extract_pickup_address(text, source=source, custom_labels=patterns)
+
+    def _extract_address_spatial(
+        self,
+        structure: 'DocumentStructure',
+        label_patterns: List[str],
+        source_name: str = None
+    ) -> Optional[Address]:
+        """Extract address using spatial document structure."""
+        for pattern in label_patterns:
+            block = structure.get_block_by_label(pattern)
+            if block:
+                lines = block.lines
+                # Find lines after the label
+                found_label = False
+                address_lines = []
+
+                for line in lines:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        found_label = True
+                        # Check for inline value
+                        after = re.split(pattern, line, flags=re.IGNORECASE)[-1].strip()
+                        after = re.sub(r'^[:\s]+', '', after)
+                        if after and len(after) > 3:
+                            address_lines.append(after)
+                        continue
+
+                    if found_label and line.strip():
+                        # Skip common noise patterns
+                        if re.search(r'SELLER|SOLD\s*THROUGH|INSURANCE|MEMBER|BUYER', line, re.IGNORECASE):
+                            break
+                        address_lines.append(line.strip())
+                        if len(address_lines) >= 3:
+                            break
+
+                if address_lines:
+                    return self._parse_address_from_lines(address_lines, source_name=source_name)
+
+        return None
+
+    def _parse_address_from_lines(
+        self,
+        lines: List[str],
+        exclude_patterns: List[str] = None,
+        source_name: str = None
+    ) -> Optional[Address]:
+        """
+        Parse an Address object from extracted text lines.
+
+        Args:
+            lines: List of text lines (street, city/state/zip, etc.)
+            exclude_patterns: Patterns to filter out
+            source_name: Source name for Address object
+
+        Returns:
+            Address object or None
+        """
+        if not lines:
+            return None
+
+        # Filter out excluded patterns
+        if exclude_patterns:
+            filtered_lines = []
+            for line in lines:
+                excluded = False
+                for pattern in exclude_patterns:
+                    if pattern.lower() in line.lower():
+                        excluded = True
+                        break
+                if not excluded:
+                    filtered_lines.append(line)
+            lines = filtered_lines
+
+        if not lines:
+            return None
+
+        # First line is usually street address
+        street = lines[0].strip() if lines else ""
+
+        # Look for city/state/zip in remaining lines
+        city, state, zip_code = "", "", ""
+        for line in lines[1:]:
+            parsed_city, parsed_state, parsed_zip = self.parse_address(line)
+            if parsed_city and parsed_state:
+                city, state, zip_code = parsed_city, parsed_state, parsed_zip
+                break
+
+        # If no city/state found in subsequent lines, try parsing the first line
+        if not city and not state and len(lines) == 1:
+            # Single line address like "123 Main St, Dallas TX 75001"
+            parts = lines[0].split(',')
+            if len(parts) >= 2:
+                street = parts[0].strip()
+                parsed_city, parsed_state, parsed_zip = self.parse_address(parts[-1])
+                if parsed_city and parsed_state:
+                    city, state, zip_code = parsed_city, parsed_state, parsed_zip
+
+        # If we still don't have city/state, try parsing the second line if exists
+        if not city and not state and len(lines) >= 2:
+            parsed_city, parsed_state, parsed_zip = self.parse_address(lines[1])
+            city, state, zip_code = parsed_city, parsed_state, parsed_zip
+
+        if street or (city and state):
+            return Address(
+                name=source_name or self.auction_type_code,
+                street=street,
+                city=city,
+                state=state,
+                postal_code=zip_code,
+            )
+
+        return None

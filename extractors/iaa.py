@@ -108,8 +108,8 @@ class IAAExtractor(BaseExtractor):
                 except ValueError:
                     continue
 
-        # Extract pickup location with phone
-        pickup_location = self._extract_pickup_location(text)
+        # Extract pickup location with phone (using universal method)
+        pickup_location = self._extract_pickup_location(text, pdf_path)
         if pickup_location:
             invoice.pickup_address = pickup_location
 
@@ -142,35 +142,30 @@ class IAAExtractor(BaseExtractor):
         invoice.location_type = LocationType.ONSITE
         return invoice
 
-    def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        """Extract pickup address using learned rules or shared parser."""
+    def _extract_pickup_location(self, text: str, pdf_path: str = None) -> Optional[Address]:
+        """
+        Extract pickup address using universal base class method.
+
+        IAA-specific label patterns are passed to the universal extractor.
+        """
         # First, try to extract branch/location name for better identification
-        location_name = self._extract_branch_name(text)
+        location_name = self._extract_branch_name(text) or "IAA"
 
-        # Check for learned rules
-        rule = self.get_learned_rule('pickup_address')
+        # IAA-specific label patterns
+        iaa_patterns = [
+            r'Pick[-\s]?Up\s*Location[:\s]*',
+            r'Sold\s*At\s*Branch[:\s]*',
+            r'Branch\s*(?:Location)?[:\s]*',
+            r'Pickup\s*Address[:\s]*',
+            r'IAAI?\s*[-–]\s*',
+        ]
 
-        if rule and rule.label_patterns:
-            logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
-            # Try learned patterns first
-            for label_pattern in rule.label_patterns:
-                lines = extract_lines_after_label(text, label_pattern)
-                if lines:
-                    # Parse address from lines
-                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns, location_name)
-                    if addr:
-                        return addr
-
-        # Fallback to default extraction
-        addr = extract_pickup_address(
-            text,
-            source="IAA",
-            custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
+        addr = self.extract_pickup_address_universal(
+            text=text,
+            pdf_path=pdf_path,
+            label_patterns=iaa_patterns,
+            source_name=location_name
         )
-
-        # If we found an address but no name, use the extracted branch name
-        if addr and (not addr.name or addr.name == "IAA") and location_name:
-            addr.name = location_name
 
         return addr
 
