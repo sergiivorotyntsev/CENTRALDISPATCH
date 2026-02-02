@@ -632,9 +632,9 @@ async def get_training_stats():
                     ready_for_training=total >= 10,
                     # Additional stats
                     rules_count=rules_count if hasattr(TrainingDataStats, "rules_count") else None,
-                    avg_confidence=avg_confidence
-                    if hasattr(TrainingDataStats, "avg_confidence")
-                    else None,
+                    avg_confidence=(
+                        avg_confidence if hasattr(TrainingDataStats, "avg_confidence") else None
+                    ),
                 )
             )
 

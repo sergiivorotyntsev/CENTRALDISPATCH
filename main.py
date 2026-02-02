@@ -342,18 +342,20 @@ def cmd_batch_extract(args):
                             "buyer_name": inv.buyer_name,
                             "reference_id": inv.reference_id,
                             "total_amount": inv.total_amount,
-                            "vehicles": [
-                                {
-                                    "vin": v.vin,
-                                    "year": v.year,
-                                    "make": v.make,
-                                    "model": v.model,
-                                    "lot_number": v.lot_number,
-                                }
-                                for v in inv.vehicles
-                            ]
-                            if inv.vehicles
-                            else [],
+                            "vehicles": (
+                                [
+                                    {
+                                        "vin": v.vin,
+                                        "year": v.year,
+                                        "make": v.make,
+                                        "model": v.model,
+                                        "lot_number": v.lot_number,
+                                    }
+                                    for v in inv.vehicles
+                                ]
+                                if inv.vehicles
+                                else []
+                            ),
                         }
                     )
                     # Extract first vehicle info for flat output

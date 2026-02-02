@@ -246,9 +246,9 @@ async def get_quality_metrics(
                 exported_count=row["exported_count"] or 0,
                 fill_rate=row["fill_rate"] or 0,
                 required_fill_rate=row["required_fill_rate"] or 0,
-                pickup_parse_success_rate=(row["pickup_success"] or 0) / total * 100
-                if total > 0
-                else 0,
+                pickup_parse_success_rate=(
+                    (row["pickup_success"] or 0) / total * 100 if total > 0 else 0
+                ),
                 classification_confidence_avg=row["classification_confidence_avg"] or 0,
             )
         )

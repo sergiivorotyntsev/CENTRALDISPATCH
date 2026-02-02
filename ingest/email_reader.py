@@ -446,12 +446,16 @@ class GraphEmailReader(BaseEmailReader):
             subject=data.get("subject", ""),
             sender=data.get("from", {}).get("emailAddress", {}).get("address", ""),
             date=date,
-            body_text=data.get("body", {}).get("content", "")
-            if data.get("body", {}).get("contentType") == "text"
-            else "",
-            body_html=data.get("body", {}).get("content", "")
-            if data.get("body", {}).get("contentType") == "html"
-            else "",
+            body_text=(
+                data.get("body", {}).get("content", "")
+                if data.get("body", {}).get("contentType") == "text"
+                else ""
+            ),
+            body_html=(
+                data.get("body", {}).get("content", "")
+                if data.get("body", {}).get("contentType") == "html"
+                else ""
+            ),
             attachments=attachments,
             in_reply_to=data.get("inReplyTo"),
             references=None,  # Graph doesn't expose References header directly

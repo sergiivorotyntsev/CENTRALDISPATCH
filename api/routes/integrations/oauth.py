@@ -125,9 +125,11 @@ def get_token(provider: str, email: str) -> Optional[dict[str, Any]]:
 
     return {
         "access_token": decrypt_secret(row["access_token_encrypted"]),
-        "refresh_token": decrypt_secret(row["refresh_token_encrypted"])
-        if row["refresh_token_encrypted"]
-        else None,
+        "refresh_token": (
+            decrypt_secret(row["refresh_token_encrypted"])
+            if row["refresh_token_encrypted"]
+            else None
+        ),
         "expires_at": row["expires_at"],
         "scope": row["scope"],
     }

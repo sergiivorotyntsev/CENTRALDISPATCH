@@ -272,16 +272,18 @@ async def upload_and_extract(
                     }
                     for v in inv.vehicles
                 ],
-                "pickup_address": {
-                    "name": inv.pickup_address.name,
-                    "street": inv.pickup_address.street,
-                    "city": inv.pickup_address.city,
-                    "state": inv.pickup_address.state,
-                    "postal_code": inv.pickup_address.postal_code,
-                    "phone": inv.pickup_address.phone,
-                }
-                if inv.pickup_address
-                else None,
+                "pickup_address": (
+                    {
+                        "name": inv.pickup_address.name,
+                        "street": inv.pickup_address.street,
+                        "city": inv.pickup_address.city,
+                        "state": inv.pickup_address.state,
+                        "postal_code": inv.pickup_address.postal_code,
+                        "phone": inv.pickup_address.phone,
+                    }
+                    if inv.pickup_address
+                    else None
+                ),
             }
 
         # Optional: auto-save document and create run
@@ -636,11 +638,13 @@ async def dry_run(
             vehicles=vehicles,
             pickup_location=pickup_location,
             gate_pass=(
-                getattr(result.invoice, "gate_pass", None)
-                or getattr(result.invoice, "release_id", None)
-            )
-            if result.invoice
-            else None,
+                (
+                    getattr(result.invoice, "gate_pass", None)
+                    or getattr(result.invoice, "release_id", None)
+                )
+                if result.invoice
+                else None
+            ),
             buyer_id=result.invoice.buyer_id if result.invoice else None,
             reference_id=result.invoice.reference_id if result.invoice else None,
             total_amount=result.invoice.total_amount if result.invoice else None,

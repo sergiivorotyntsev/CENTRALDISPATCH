@@ -357,9 +357,9 @@ async def receive_email_webhook(
 
     return WebhookResponse(
         status="ok" if processed > 0 else "no_pdfs",
-        message=f"Processed {processed} PDF attachment(s)"
-        if processed
-        else "No PDF attachments found",
+        message=(
+            f"Processed {processed} PDF attachment(s)" if processed else "No PDF attachments found"
+        ),
         processed=processed,
         documents=documents,
         errors=errors,
@@ -493,9 +493,9 @@ async def test_webhook_endpoint(
 
     return {
         "status": "ok" if auth_valid else "auth_required",
-        "message": "Webhook endpoint is ready"
-        if auth_valid
-        else "Invalid or missing X-Webhook-Secret",
+        "message": (
+            "Webhook endpoint is ready" if auth_valid else "Invalid or missing X-Webhook-Secret"
+        ),
         "authentication": "valid" if auth_valid else "invalid",
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }

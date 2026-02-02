@@ -212,9 +212,9 @@ class BatchQueue:
             "skipped": skipped,
             "pending": pending,
             "processing": processing,
-            "progress_percent": int((completed + failed + skipped) / len(job.items) * 100)
-            if job.items
-            else 0,
+            "progress_percent": (
+                int((completed + failed + skipped) / len(job.items) * 100) if job.items else 0
+            ),
             "created_at": job.created_at,
             "started_at": job.started_at,
             "completed_at": job.completed_at,

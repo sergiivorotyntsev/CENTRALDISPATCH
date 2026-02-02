@@ -58,9 +58,11 @@ class ExtractionEvidence:
             "block_id": self.db_block_id,  # Use db_block_id for storage
             "text_snippet": self.text_snippet[:200] if self.text_snippet else None,
             "page_num": self.page_num,
-            "bbox": {"x0": self.bbox[0], "y0": self.bbox[1], "x1": self.bbox[2], "y1": self.bbox[3]}
-            if self.bbox
-            else None,
+            "bbox": (
+                {"x0": self.bbox[0], "y0": self.bbox[1], "x1": self.bbox[2], "y1": self.bbox[3]}
+                if self.bbox
+                else None
+            ),
             "rule_id": self.rule_id,
             "extraction_method": self.extraction_method,
             "confidence": self.confidence,

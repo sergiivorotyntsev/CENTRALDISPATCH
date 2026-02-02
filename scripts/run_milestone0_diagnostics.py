@@ -215,9 +215,9 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
 
                 # Build extracted fields dict
                 fields = {
-                    "auction_source": extraction_result.source.value
-                    if extraction_result.source
-                    else None,
+                    "auction_source": (
+                        extraction_result.source.value if extraction_result.source else None
+                    ),
                     "reference_id": inv.reference_id,
                     "buyer_id": inv.buyer_id,
                     "buyer_name": inv.buyer_name,

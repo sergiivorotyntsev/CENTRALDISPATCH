@@ -554,9 +554,11 @@ class EmailWorker:
                             "skipped",
                             sender=msg.sender,
                             rule_matched=rule.get("name"),
-                            error="No PDF attachment"
-                            if not msg.has_pdf
-                            else f"Unsupported action: {action}",
+                            error=(
+                                "No PDF attachment"
+                                if not msg.has_pdf
+                                else f"Unsupported action: {action}"
+                            ),
                         )
                         results.append(
                             ProcessingResult(
