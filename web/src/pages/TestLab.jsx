@@ -1249,22 +1249,45 @@ function TestLab() {
                           </tbody>
                         </table>
                       </div>
-                      {/* Add Field Form */}
+                      {/* Add Field Form - Uses CD API fields dropdown only */}
                       {showNewFieldForm && (
                         <div className="p-4 border-t bg-blue-50">
-                          <h3 className="font-medium text-gray-900 mb-3">Add Custom Field</h3>
+                          <h3 className="font-medium text-gray-900 mb-3">Add Central Dispatch Field</h3>
+                          <p className="text-xs text-gray-500 mb-3">
+                            Only fields from the Central Dispatch API can be added. Custom fields are not supported.
+                          </p>
                           <form onSubmit={handleAddField} className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                               <div>
-                                <label className="form-label text-xs">Field Key (API name)</label>
-                                <input
-                                  type="text"
+                                <label className="form-label text-xs">CD API Field</label>
+                                <select
                                   value={newFieldForm.field_key}
-                                  onChange={(e) => setNewFieldForm(f => ({ ...f, field_key: e.target.value.toLowerCase().replace(/\s+/g, '_') }))}
-                                  className="form-input form-input-sm w-full font-mono"
-                                  placeholder="e.g., custom_field"
+                                  onChange={(e) => {
+                                    const selectedField = CD_FIELDS.find(f => f.key === e.target.value)
+                                    if (selectedField) {
+                                      setNewFieldForm(f => ({
+                                        ...f,
+                                        field_key: selectedField.key,
+                                        display_name: selectedField.label,
+                                        field_type: selectedField.type,
+                                        is_required: selectedField.required,
+                                        description: selectedField.description,
+                                      }))
+                                    }
+                                  }}
+                                  className="form-select form-select-sm w-full"
                                   required
-                                />
+                                >
+                                  <option value="">Select a field...</option>
+                                  {CD_FIELDS
+                                    .filter(f => !fieldMappings.some(m => m.field_key === f.key))
+                                    .map(f => (
+                                      <option key={f.key} value={f.key}>
+                                        {f.label} ({f.key})
+                                      </option>
+                                    ))
+                                  }
+                                </select>
                               </div>
                               <div>
                                 <label className="form-label text-xs">Display Name</label>
@@ -1273,7 +1296,7 @@ function TestLab() {
                                   value={newFieldForm.display_name}
                                   onChange={(e) => setNewFieldForm(f => ({ ...f, display_name: e.target.value }))}
                                   className="form-input form-input-sm w-full"
-                                  placeholder="e.g., Custom Field"
+                                  placeholder="Auto-filled from selection"
                                   required
                                 />
                               </div>
@@ -1285,6 +1308,7 @@ function TestLab() {
                                   value={newFieldForm.field_type}
                                   onChange={(e) => setNewFieldForm(f => ({ ...f, field_type: e.target.value }))}
                                   className="form-select form-select-sm w-full"
+                                  disabled
                                 >
                                   <option value="text">Text</option>
                                   <option value="number">Number</option>
@@ -1292,6 +1316,7 @@ function TestLab() {
                                   <option value="textarea">Text Area</option>
                                   <option value="select">Select</option>
                                 </select>
+                                <p className="text-xs text-gray-400 mt-1">Auto-set from CD API</p>
                               </div>
                               <div className="flex items-end">
                                 <label className="flex items-center space-x-2">
@@ -1308,11 +1333,16 @@ function TestLab() {
                                 <button type="button" onClick={() => setShowNewFieldForm(false)} className="btn btn-sm btn-secondary">
                                   Cancel
                                 </button>
-                                <button type="submit" className="btn btn-sm btn-primary">
+                                <button type="submit" className="btn btn-sm btn-primary" disabled={!newFieldForm.field_key}>
                                   Add Field
                                 </button>
                               </div>
                             </div>
+                            {newFieldForm.description && (
+                              <p className="text-xs text-gray-500 bg-white p-2 rounded border">
+                                {newFieldForm.description}
+                              </p>
+                            )}
                           </form>
                         </div>
                       )}

@@ -684,3 +684,75 @@ async def get_extraction_run(id: int):
         fields=fields,
         raw_text_preview=doc.raw_text[:1000] if doc and doc.raw_text else None,
     )
+
+
+class ExtractionUpdateRequest(BaseModel):
+    """Request model for updating extraction run."""
+    outputs_json: Optional[dict] = Field(None, description="Updated extracted fields")
+    status: Optional[str] = Field(None, description="New status")
+    warehouse_id: Optional[int] = Field(None, description="Selected warehouse ID")
+
+
+@router.put("/{id}", response_model=ExtractionRunResponse)
+async def update_extraction_run(id: int, data: ExtractionUpdateRequest):
+    """
+    Update extraction run with corrected field values or status change.
+
+    Used by the Review & Listing page to save field edits before export.
+    """
+    import json
+
+    run = ExtractionRunRepository.get_by_id(id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+
+    # Can't update exported runs
+    if run.status == 'exported' and data.status != 'exported':
+        raise HTTPException(status_code=400, detail="Cannot modify exported extraction")
+
+    # Build updates
+    updates = {}
+
+    if data.outputs_json is not None:
+        # Merge with existing outputs
+        existing_outputs = run.outputs_json or {}
+        if isinstance(existing_outputs, str):
+            existing_outputs = json.loads(existing_outputs)
+
+        # Merge new outputs
+        merged = {**existing_outputs, **data.outputs_json}
+
+        # Add warehouse_id if provided
+        if data.warehouse_id is not None:
+            merged['warehouse_id'] = data.warehouse_id
+
+        updates['outputs_json'] = json.dumps(merged)
+
+    if data.status is not None:
+        updates['status'] = data.status
+
+    if updates:
+        ExtractionRunRepository.update(id, **updates)
+
+    # Reload and return
+    run = ExtractionRunRepository.get_by_id(id)
+    doc = DocumentRepository.get_by_id(run.document_id)
+    at = AuctionTypeRepository.get_by_id(run.auction_type_id)
+
+    return ExtractionRunResponse(
+        id=run.id,
+        uuid=run.uuid,
+        document_id=run.document_id,
+        document_filename=doc.filename if doc else None,
+        auction_type_id=run.auction_type_id,
+        auction_type_code=at.code if at else None,
+        extractor_kind=run.extractor_kind,
+        model_version_id=run.model_version_id,
+        status=run.status,
+        extraction_score=run.extraction_score,
+        outputs=run.outputs_json,
+        errors=run.errors_json,
+        processing_time_ms=run.processing_time_ms,
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+    )

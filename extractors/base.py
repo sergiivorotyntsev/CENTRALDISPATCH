@@ -99,8 +99,8 @@ class BaseExtractor(ABC):
         self._learned_rules = {}
 
         try:
-            # Try to load rules from database
-            from database import get_session
+            # Try to load rules from training database
+            from api.training_db import get_session
             from services.training_service import TrainingService
 
             with get_session() as session:

@@ -159,7 +159,18 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ document_id: documentId, force_ml: forceMl }),
   }),
+  updateExtraction: (id, data) => request(`/extractions/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
   listNeedsReview: (limit = 50) => request(`/extractions/needs-review?limit=${limit}`),
+
+  // Central Dispatch Export
+  getCDPayloadPreview: (runId) => request(`/exports/central-dispatch/preview/${runId}`),
+  exportToCentralDispatch: (runId, sandbox = true) => request('/exports/central-dispatch', {
+    method: 'POST',
+    body: JSON.stringify({ run_ids: [runId], dry_run: false, sandbox }),
+  }),
 
   // Reviews (endpoint is /api/review, not /api/reviews)
   getReviewItems: async (runId) => {

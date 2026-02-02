@@ -6,6 +6,7 @@ import Runs from './pages/Runs'
 import Documents from './pages/Documents'
 import DocumentDetail from './pages/DocumentDetail'
 import Review from './pages/Review'
+import ListingReview from './pages/ListingReview'
 
 function App() {
   const navItems = [
@@ -55,6 +56,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/documents" element={<Documents />} />
           <Route path="/documents/:id" element={<DocumentDetail />} />
+          <Route path="/listing/:id" element={<ListingReview />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/review/:runId" element={<Review />} />
           <Route path="/test-lab" element={<TestLab />} />

@@ -2,12 +2,19 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api'
 
+/**
+ * Documents Page - Production Workflow
+ *
+ * Lists documents ready for Central Dispatch export.
+ * Different from Test Lab which is for training.
+ */
 function Documents() {
   const navigate = useNavigate()
   const [documents, setDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [auctionTypes, setAuctionTypes] = useState([])
+  const [warehouses, setWarehouses] = useState([])
 
   // Track extraction runs per document
   const [docExtractions, setDocExtractions] = useState({})
@@ -15,17 +22,23 @@ function Documents() {
   // Filters
   const [filter, setFilter] = useState({
     auction_type_id: '',
-    dataset_split: '',
+    status: '',
+    export_status: '',
   })
 
   // Stats
-  const [stats, setStats] = useState({ train_count: 0, test_count: 0 })
+  const [stats, setStats] = useState({
+    total: 0,
+    needs_review: 0,
+    ready_to_export: 0,
+    exported: 0,
+  })
 
   // Upload state
   const [showUpload, setShowUpload] = useState(false)
   const [uploadFile, setUploadFile] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const [selectedAuctionType, setSelectedAuctionType] = useState('auto') // Default to auto-detect
+  const [selectedAuctionType, setSelectedAuctionType] = useState('auto')
   const [uploadResult, setUploadResult] = useState(null)
 
   // Fetch documents
@@ -33,15 +46,20 @@ function Documents() {
     setLoading(true)
     setError(null)
     try {
-      const params = {}
+      const params = { dataset_split: 'train' } // Only production docs, not test
       if (filter.auction_type_id) params.auction_type_id = filter.auction_type_id
-      if (filter.dataset_split) params.dataset_split = filter.dataset_split
 
       const result = await api.listDocuments(params)
-      setDocuments(result.items || [])
+      // Filter out test documents
+      const prodDocs = (result.items || []).filter(d => !d.is_test)
+      setDocuments(prodDocs)
+
+      // Calculate stats
       setStats({
-        train_count: result.train_count || 0,
-        test_count: result.test_count || 0,
+        total: prodDocs.length,
+        needs_review: 0,
+        ready_to_export: 0,
+        exported: 0,
       })
     } catch (err) {
       setError(err.message)
@@ -50,23 +68,63 @@ function Documents() {
     }
   }, [filter])
 
-  // Fetch auction types
+  // Fetch auction types and warehouses
   useEffect(() => {
-    async function fetchAuctionTypes() {
+    async function fetchData() {
       try {
-        const result = await api.listAuctionTypes()
-        setAuctionTypes(result.items || [])
-        // Keep 'auto' as default, don't auto-select first type
+        const [atResult, whResult] = await Promise.all([
+          api.listAuctionTypes(),
+          api.listWarehouses(),
+        ])
+        setAuctionTypes(atResult.items || [])
+        setWarehouses(whResult.items || [])
       } catch (err) {
-        console.error('Failed to fetch auction types:', err)
+        console.error('Failed to fetch data:', err)
       }
     }
-    fetchAuctionTypes()
+    fetchData()
   }, [])
 
   useEffect(() => {
     fetchDocuments()
   }, [fetchDocuments])
+
+  // Fetch latest extraction status for each document
+  const fetchDocExtractions = useCallback(async () => {
+    try {
+      const result = await api.listExtractions({ limit: 200 })
+      const extractionsByDoc = {}
+      let needsReview = 0
+      let readyToExport = 0
+      let exported = 0
+
+      for (const run of (result.items || [])) {
+        // Keep the latest extraction per document
+        if (!extractionsByDoc[run.document_id] || run.id > extractionsByDoc[run.document_id].id) {
+          extractionsByDoc[run.document_id] = run
+        }
+
+        // Count stats
+        if (run.status === 'needs_review') needsReview++
+        else if (run.status === 'reviewed' || run.status === 'approved') readyToExport++
+        else if (run.status === 'exported') exported++
+      }
+
+      setDocExtractions(extractionsByDoc)
+      setStats(prev => ({
+        ...prev,
+        needs_review: needsReview,
+        ready_to_export: readyToExport,
+        exported: exported,
+      }))
+    } catch (err) {
+      console.error('Failed to fetch extractions:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchDocExtractions()
+  }, [fetchDocExtractions, documents])
 
   // Handle upload
   async function handleUpload() {
@@ -75,23 +133,22 @@ function Documents() {
     setUploading(true)
     setUploadResult(null)
     try {
-      // If auto-detect, pass null for auction_type_id
       const auctionTypeId = selectedAuctionType === 'auto' ? null : parseInt(selectedAuctionType)
+      // Use 'train' split for production documents (not test)
       const result = await api.uploadDocument(uploadFile, auctionTypeId, 'train')
 
-      // Show upload result with classification info
       setUploadResult({
         success: true,
         document: result.document,
         detectedSource: result.detected_source,
         classificationScore: result.classification_score,
         isDuplicate: result.is_duplicate,
-        needsOcr: result.needs_ocr,
         runStatus: result.run_status,
       })
 
       setUploadFile(null)
       fetchDocuments()
+      fetchDocExtractions()
     } catch (err) {
       setError(`Upload failed: ${err.message}`)
       setUploadResult({ success: false, error: err.message })
@@ -102,99 +159,50 @@ function Documents() {
 
   // Extraction state
   const [extractingDocId, setExtractingDocId] = useState(null)
-  const [extractionResult, setExtractionResult] = useState(null)
 
-  // Fetch latest extraction status for each document
-  const fetchDocExtractions = useCallback(async () => {
-    try {
-      const result = await api.listExtractions({ limit: 100 })
-      const extractionsByDoc = {}
-      for (const run of (result.items || [])) {
-        // Keep the latest extraction per document
-        if (!extractionsByDoc[run.document_id] || run.id > extractionsByDoc[run.document_id].id) {
-          extractionsByDoc[run.document_id] = run
-        }
-      }
-      setDocExtractions(extractionsByDoc)
-    } catch (err) {
-      console.error('Failed to fetch extractions:', err)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchDocExtractions()
-  }, [fetchDocExtractions, documents])
-
-  // Navigate to document detail / export preview
-  function handleViewExtraction(docId) {
-    // Navigate to document detail page (export preview)
-    navigate(`/documents/${docId}`)
-  }
-
-  // Navigate to extraction results / review page (for editing)
-  function handleViewExtractionOld(docId) {
-    const extraction = docExtractions[docId]
-    if (extraction) {
-      // Navigate to review page for this run
-      navigate(`/review/${extraction.id}`)
-    } else {
-      // No extraction yet - show message
-      setExtractionResult({
-        success: false,
-        docId,
-        message: 'No extraction found. Click Extract to process this document.'
-      })
-    }
-  }
-
-  // Run extraction on document (with check for existing)
+  // Run extraction on document
   async function handleRunExtraction(docId, forceNew = false) {
-    // Check if extraction already exists
     const existingExtraction = docExtractions[docId]
     if (existingExtraction && !forceNew) {
-      // Extraction exists - navigate to review instead
       if (existingExtraction.status === 'needs_review') {
-        navigate(`/review/${existingExtraction.id}`)
+        navigate(`/listing/${existingExtraction.id}`)
         return
-      } else if (existingExtraction.status === 'reviewed' || existingExtraction.status === 'approved') {
-        // Already reviewed - ask if they want to re-extract
-        if (!confirm('This document has already been processed. Run extraction again?')) {
-          return
-        }
+      } else if (['reviewed', 'approved'].includes(existingExtraction.status)) {
+        if (!confirm('Document already processed. Run extraction again?')) return
       }
     }
 
     setExtractingDocId(docId)
-    setExtractionResult(null)
     try {
-      const result = await api.runExtraction(docId)
-      setExtractionResult({
-        success: true,
-        docId,
-        runId: result.id,
-        status: result.status,
-        message: result.status === 'needs_review'
-          ? 'Extraction complete! Click to review results.'
-          : result.status === 'failed'
-          ? 'Extraction failed. Check the error details.'
-          : 'Extraction started.'
-      })
+      await api.runExtraction(docId)
       fetchDocuments()
       fetchDocExtractions()
     } catch (err) {
-      setExtractionResult({
-        success: false,
-        docId,
-        message: `Extraction failed: ${err.message}`
-      })
+      setError(`Extraction failed: ${err.message}`)
     } finally {
       setExtractingDocId(null)
     }
   }
 
+  // Update warehouse for document
+  async function handleWarehouseChange(docId, warehouseId, e) {
+    e.stopPropagation()
+    const extraction = docExtractions[docId]
+    if (!extraction) return
+
+    try {
+      // Update extraction with warehouse
+      await api.updateExtraction(extraction.id, { warehouse_id: warehouseId })
+      fetchDocExtractions()
+    } catch (err) {
+      console.error('Failed to update warehouse:', err)
+    }
+  }
+
   // Delete document
-  async function handleDelete(docId) {
-    if (!confirm('Are you sure you want to delete this document?')) return
+  async function handleDelete(docId, e) {
+    e.stopPropagation()
+    if (!confirm('Delete this document and all related data?')) return
     try {
       await api.deleteDocument(docId)
       fetchDocuments()
@@ -203,10 +211,53 @@ function Documents() {
     }
   }
 
+  // Get source display
+  function getSourceDisplay(doc) {
+    if (doc.source === 'email') {
+      return { label: 'Email', color: 'bg-blue-100 text-blue-800' }
+    } else if (doc.source === 'webhook') {
+      return { label: 'Webhook', color: 'bg-purple-100 text-purple-800' }
+    } else if (doc.source === 'test_lab') {
+      return { label: 'Test Lab', color: 'bg-yellow-100 text-yellow-800' }
+    }
+    return { label: 'Manual', color: 'bg-gray-100 text-gray-800' }
+  }
+
+  // Get export status
+  function getExportStatus(extraction) {
+    if (!extraction) return { label: 'No Data', color: 'bg-gray-100 text-gray-500' }
+
+    if (extraction.status === 'exported') {
+      return { label: 'Exported', color: 'bg-green-100 text-green-800' }
+    } else if (extraction.status === 'reviewed' || extraction.status === 'approved') {
+      return { label: 'Ready', color: 'bg-blue-100 text-blue-800' }
+    } else if (extraction.status === 'needs_review') {
+      return { label: 'Pending', color: 'bg-yellow-100 text-yellow-800' }
+    } else if (extraction.status === 'failed') {
+      return { label: 'Failed', color: 'bg-red-100 text-red-800' }
+    }
+    return { label: extraction.status, color: 'bg-gray-100 text-gray-600' }
+  }
+
+  // Navigate to listing review page
+  function handleRowClick(doc) {
+    const extraction = docExtractions[doc.id]
+    if (extraction) {
+      navigate(`/listing/${extraction.id}`)
+    } else {
+      navigate(`/documents/${doc.id}`)
+    }
+  }
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Production documents for Central Dispatch export
+          </p>
+        </div>
         <button
           onClick={() => setShowUpload(true)}
           className="btn btn-primary"
@@ -222,44 +273,23 @@ function Documents() {
         </div>
       )}
 
-      {/* Extraction Result Notification */}
-      {extractionResult && (
-        <div className={`mb-6 p-4 rounded-lg ${
-          extractionResult.success
-            ? 'bg-green-50 border border-green-200 text-green-700'
-            : 'bg-red-50 border border-red-200 text-red-700'
-        }`}>
-          <strong>{extractionResult.success ? 'Success:' : 'Error:'}</strong> {extractionResult.message}
-          {extractionResult.success && extractionResult.docId && (
-            <a
-              href={`/documents/${extractionResult.docId}`}
-              className="ml-4 text-sm underline"
-            >
-              View Results →
-            </a>
-          )}
-          <button
-            onClick={() => setExtractionResult(null)}
-            className="ml-4 text-sm underline"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="bg-white p-4 rounded-lg shadow">
-          <p className="text-sm text-gray-500">Total Documents</p>
-          <p className="text-2xl font-bold text-gray-900">{documents.length}</p>
+          <p className="text-sm text-gray-500">Total</p>
+          <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
         </div>
         <div className="bg-white p-4 rounded-lg shadow">
-          <p className="text-sm text-gray-500">Training Set</p>
-          <p className="text-2xl font-bold text-green-600">{stats.train_count}</p>
+          <p className="text-sm text-gray-500">Needs Review</p>
+          <p className="text-2xl font-bold text-yellow-600">{stats.needs_review}</p>
         </div>
         <div className="bg-white p-4 rounded-lg shadow">
-          <p className="text-sm text-gray-500">Test Set</p>
-          <p className="text-2xl font-bold text-blue-600">{stats.test_count}</p>
+          <p className="text-sm text-gray-500">Ready to Export</p>
+          <p className="text-2xl font-bold text-blue-600">{stats.ready_to_export}</p>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow">
+          <p className="text-sm text-gray-500">Exported</p>
+          <p className="text-2xl font-bold text-green-600">{stats.exported}</p>
         </div>
       </div>
 
@@ -280,22 +310,21 @@ function Documents() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Dataset</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
             <select
-              value={filter.dataset_split}
-              onChange={(e) => setFilter({ ...filter, dataset_split: e.target.value })}
+              value={filter.status}
+              onChange={(e) => setFilter({ ...filter, status: e.target.value })}
               className="form-select"
             >
-              <option value="">All</option>
-              <option value="train">Training</option>
-              <option value="test">Test</option>
+              <option value="">All Status</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="reviewed">Ready to Export</option>
+              <option value="exported">Exported</option>
+              <option value="failed">Failed</option>
             </select>
           </div>
           <div className="flex items-end">
-            <button
-              onClick={fetchDocuments}
-              className="btn btn-secondary"
-            >
+            <button onClick={fetchDocuments} className="btn btn-secondary">
               Refresh
             </button>
           </div>
@@ -315,16 +344,11 @@ function Documents() {
                 onChange={(e) => setSelectedAuctionType(e.target.value)}
                 className="form-select w-full"
               >
-                <option value="auto">🔍 Auto-detect (Recommended)</option>
+                <option value="auto">Auto-detect (Recommended)</option>
                 {auctionTypes.map((at) => (
                   <option key={at.id} value={at.id}>{at.name}</option>
                 ))}
               </select>
-              <p className="text-xs text-gray-500 mt-1">
-                {selectedAuctionType === 'auto'
-                  ? 'System will automatically detect the auction type from document content'
-                  : 'Manual override - use when auto-detection fails'}
-              </p>
             </div>
 
             <div className="mb-4">
@@ -338,35 +362,21 @@ function Documents() {
                 }}
                 className="form-input w-full"
               />
-              {uploadFile && (
-                <p className="text-sm text-gray-500 mt-1">{uploadFile.name}</p>
-              )}
             </div>
 
-            {/* Upload Result */}
             {uploadResult && (
               <div className={`mb-4 p-3 rounded-lg ${uploadResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
                 {uploadResult.success ? (
                   <div>
-                    <p className="font-medium text-green-800">
-                      {uploadResult.isDuplicate ? '⚠️ Duplicate detected' : '✅ Upload successful!'}
-                    </p>
+                    <p className="font-medium text-green-800">Upload successful!</p>
                     {uploadResult.detectedSource && (
                       <p className="text-sm text-green-700 mt-1">
                         Detected: <strong>{uploadResult.detectedSource}</strong>
-                        {uploadResult.classificationScore && ` (${uploadResult.classificationScore}% confidence)`}
                       </p>
                     )}
-                    <p className="text-sm text-green-700">
-                      Status: <span className={`px-2 py-0.5 rounded text-xs ${
-                        uploadResult.runStatus === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
-                        uploadResult.runStatus === 'failed' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>{uploadResult.runStatus || 'pending'}</span>
-                    </p>
                   </div>
                 ) : (
-                  <p className="text-red-800">❌ {uploadResult.error}</p>
+                  <p className="text-red-800">{uploadResult.error}</p>
                 )}
               </div>
             )}
@@ -406,10 +416,7 @@ function Documents() {
       ) : documents.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-8 text-center">
           <p className="text-gray-500 mb-4">No documents found</p>
-          <button
-            onClick={() => setShowUpload(true)}
-            className="btn btn-primary"
-          >
+          <button onClick={() => setShowUpload(true)} className="btn btn-primary">
             Upload First Document
           </button>
         </div>
@@ -418,22 +425,31 @@ function Documents() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Document
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Auction
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Order ID
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  Auction
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  Pickup
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  Warehouse
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  Export
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  Source
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Created
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
                   Actions
                 </th>
               </tr>
@@ -441,120 +457,126 @@ function Documents() {
             <tbody className="bg-white divide-y divide-gray-200">
               {documents.map((doc) => {
                 const extraction = docExtractions[doc.id]
-                // Get auction_source and order_id from extraction outputs
-                const outputs = extraction?.outputs || {}
-                const auctionSource = outputs.auction_source || doc.auction_type_code || 'Unknown'
-                const orderId = outputs.order_id || '-'
+                const outputs = extraction?.outputs_json ? (
+                  typeof extraction.outputs_json === 'string'
+                    ? JSON.parse(extraction.outputs_json)
+                    : extraction.outputs_json
+                ) : {}
+
+                const orderId = outputs.lot_number || outputs.stock_number || outputs.order_id || '-'
+                const pickupState = outputs.pickup_state || '-'
+                const pickupZip = outputs.pickup_zip || ''
+                const pickupLocation = pickupState !== '-' ? `${pickupState} ${pickupZip}`.trim() : '-'
+
+                const sourceDisplay = getSourceDisplay(doc)
+                const exportStatus = getExportStatus(extraction)
+                const isExported = extraction?.status === 'exported'
+
                 return (
                   <tr
                     key={doc.id}
                     className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => handleViewExtraction(doc.id)}
+                    onClick={() => handleRowClick(doc)}
                   >
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="font-medium text-gray-900">{doc.filename}</p>
-                        <p className="text-sm text-gray-500 font-mono">ID: {doc.id}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 text-xs font-medium rounded ${
-                        auctionSource === 'COPART' ? 'bg-blue-100 text-blue-800' :
-                        auctionSource === 'IAA' ? 'bg-purple-100 text-purple-800' :
-                        auctionSource === 'MANHEIM' ? 'bg-green-100 text-green-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {auctionSource}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-mono text-sm text-gray-700">
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-sm font-medium text-gray-900">
                         {orderId}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${
+                        doc.auction_type_code === 'COPART' ? 'bg-blue-100 text-blue-800' :
+                        doc.auction_type_code === 'IAA' ? 'bg-purple-100 text-purple-800' :
+                        doc.auction_type_code === 'MANHEIM' ? 'bg-green-100 text-green-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {doc.auction_type_code || 'Unknown'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-gray-700">{pickupLocation}</span>
+                    </td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <select
+                        value={outputs.warehouse_id || ''}
+                        onChange={(e) => handleWarehouseChange(doc.id, e.target.value, e)}
+                        disabled={isExported || !extraction}
+                        className={`form-select form-select-sm text-xs ${
+                          isExported ? 'bg-gray-100 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        <option value="">Select...</option>
+                        {warehouses.map((wh) => (
+                          <option key={wh.id} value={wh.id}>
+                            {wh.name} - {wh.city}, {wh.state}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
                       {extraction ? (
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${
-                            extraction.status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
-                            extraction.status === 'reviewed' || extraction.status === 'approved' ? 'bg-green-100 text-green-800' :
-                            extraction.status === 'failed' ? 'bg-red-100 text-red-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {extraction.status === 'needs_review' ? 'Needs Review' :
-                             extraction.status === 'reviewed' ? 'Reviewed' :
-                             extraction.status === 'approved' ? 'Approved' :
-                             extraction.status === 'failed' ? 'Failed' :
-                             extraction.status}
-                          </span>
-                          {extraction.extraction_score && (
-                            <span className="text-xs text-gray-500">
-                              {(extraction.extraction_score * 100).toFixed(0)}%
-                            </span>
-                          )}
-                        </div>
+                        <span className={`px-2 py-1 text-xs font-medium rounded ${
+                          extraction.status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
+                          extraction.status === 'reviewed' || extraction.status === 'approved' ? 'bg-green-100 text-green-800' :
+                          extraction.status === 'exported' ? 'bg-blue-100 text-blue-800' :
+                          extraction.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {extraction.status === 'needs_review' ? 'Needs Review' :
+                           extraction.status === 'reviewed' || extraction.status === 'approved' ? 'Reviewed' :
+                           extraction.status === 'exported' ? 'Exported' :
+                           extraction.status}
+                        </span>
                       ) : (
                         <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-600">
                           Not Processed
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${exportStatus.color}`}>
+                        {exportStatus.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${sourceDisplay.color}`}>
+                        {sourceDisplay.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
                       {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '-'}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex justify-end items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                        {extractionResult?.docId === doc.id && (
-                          <span className={`text-xs px-2 py-1 rounded ${
-                            extractionResult.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                          }`}>
-                            {extractionResult.success ? '✓' : '✗'}
-                          </span>
-                        )}
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex justify-end items-center space-x-2">
                         {extraction ? (
                           <>
-                            {extraction.status === 'needs_review' ? (
+                            <button
+                              onClick={() => navigate(`/listing/${extraction.id}`)}
+                              className="text-sm text-blue-600 hover:text-blue-800"
+                            >
+                              {extraction.status === 'needs_review' ? 'Review' : 'View'}
+                            </button>
+                            {!isExported && (
                               <button
-                                onClick={() => navigate(`/review/${extraction.id}`)}
-                                className="text-sm text-yellow-600 hover:text-yellow-800"
+                                onClick={() => handleRunExtraction(doc.id, true)}
+                                disabled={extractingDocId === doc.id}
+                                className="text-sm text-orange-600 hover:text-orange-800"
                               >
-                                Review
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => navigate(`/documents/${doc.id}`)}
-                                className="text-sm text-blue-600 hover:text-blue-800"
-                              >
-                                View
+                                {extractingDocId === doc.id ? '...' : 'Re-extract'}
                               </button>
                             )}
-                            <button
-                              onClick={() => handleRunExtraction(doc.id, true)}
-                              disabled={extractingDocId === doc.id}
-                              className={`text-sm ${
-                                extractingDocId === doc.id
-                                  ? 'text-gray-400 cursor-not-allowed'
-                                  : 'text-orange-600 hover:text-orange-800'
-                              }`}
-                            >
-                              {extractingDocId === doc.id ? 'Extracting...' : 'Re-extract'}
-                            </button>
                           </>
                         ) : (
                           <button
                             onClick={() => handleRunExtraction(doc.id)}
                             disabled={extractingDocId === doc.id}
-                            className={`text-sm ${
-                              extractingDocId === doc.id
-                                ? 'text-gray-400 cursor-not-allowed'
-                                : 'text-blue-600 hover:text-blue-800'
-                            }`}
+                            className="text-sm text-blue-600 hover:text-blue-800"
                           >
-                            {extractingDocId === doc.id ? 'Extracting...' : 'Extract'}
+                            {extractingDocId === doc.id ? 'Processing...' : 'Extract'}
                           </button>
                         )}
                         <button
-                          onClick={() => handleDelete(doc.id)}
+                          onClick={(e) => handleDelete(doc.id, e)}
                           className="text-sm text-red-600 hover:text-red-800"
                         >
                           Delete

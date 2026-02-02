@@ -5,6 +5,7 @@ Upload and manage documents for extraction and training.
 """
 
 import os
+import json
 import hashlib
 import tempfile
 from typing import Optional, List
@@ -533,20 +534,43 @@ async def get_document_export_preview(id: int):
         if run_row:
             extraction = dict(run_row)
 
-            # Get extraction outputs (fields)
-            fields_rows = conn.execute("""
-                SELECT * FROM extraction_outputs
+            # Get extraction outputs from outputs_json field
+            outputs_json = extraction.get('outputs_json')
+            if outputs_json:
+                try:
+                    outputs = json.loads(outputs_json) if isinstance(outputs_json, str) else outputs_json
+                    for field_key, value in outputs.items():
+                        if isinstance(value, dict):
+                            extracted_fields[field_key] = value
+                        else:
+                            extracted_fields[field_key] = {
+                                'value': value,
+                                'confidence': 1.0,
+                                'source': 'extracted',
+                                'is_corrected': False,
+                            }
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Also check review_items for corrected values
+            review_rows = conn.execute("""
+                SELECT source_key, predicted_value, corrected_value, is_match_ok
+                FROM review_items
                 WHERE run_id = ?
             """, (extraction['id'],)).fetchall()
 
-            for field_row in fields_rows:
-                f = dict(field_row)
-                extracted_fields[f['field_key']] = {
-                    'value': f['extracted_value'],
-                    'confidence': f.get('confidence', 0),
-                    'source': f.get('source', 'extracted'),
-                    'is_corrected': f.get('is_corrected', False),
-                }
+            for review_row in review_rows:
+                r = dict(review_row)
+                field_key = r['source_key']
+                # Use corrected value if available, otherwise predicted
+                value = r['corrected_value'] if r['corrected_value'] else r['predicted_value']
+                if value:
+                    extracted_fields[field_key] = {
+                        'value': value,
+                        'confidence': 1.0 if r['is_match_ok'] else 0.5,
+                        'source': 'corrected' if r['corrected_value'] else 'extracted',
+                        'is_corrected': bool(r['corrected_value']),
+                    }
 
             # Check extraction status
             if extraction['status'] not in ['approved', 'reviewed']:
@@ -562,26 +586,33 @@ async def get_document_export_preview(id: int):
         mapping_rows = conn.execute("""
             SELECT * FROM field_mappings
             WHERE auction_type_id = ?
-            ORDER BY display_order, cd_field_name
+            ORDER BY display_order, cd_key
         """, (doc.auction_type_id,)).fetchall()
 
         for m_row in mapping_rows:
             m = dict(m_row)
-            field_key = m['cd_field_name']
+            # Use cd_key as the field key (maps to Central Dispatch API field)
+            field_key = m.get('cd_key') or m.get('source_key') or m.get('internal_key')
+            if not field_key:
+                continue
+
             field_data = extracted_fields.get(field_key, {})
+            # Also try to find by source_key if not found by cd_key
+            if not field_data.get('value') and m.get('source_key'):
+                field_data = extracted_fields.get(m['source_key'], {})
 
             # Check if required field is missing
-            if m.get('is_required') and not field_data.get('value'):
+            if m.get('is_required') and not field_data.get('value') and not m.get('default_value'):
                 can_export = False
                 blocking_issues.append(f"Required field '{field_key}' is empty")
 
             field_mappings.append({
                 'cd_field': field_key,
-                'display_name': m.get('display_name', field_key),
-                'source': m.get('source_type', 'extracted'),
+                'display_name': m.get('description') or field_key.replace('_', ' ').title(),
+                'source': 'constant' if m.get('default_value') else 'extracted',
                 'is_required': m.get('is_required', False),
                 'is_active': m.get('is_active', True),
-                'value': field_data.get('value'),
+                'value': field_data.get('value') or m.get('default_value'),
                 'confidence': field_data.get('confidence'),
                 'default_value': m.get('default_value'),
             })
