@@ -16,7 +16,7 @@ import json
 import uuid
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
 
 from api.database import get_connection
@@ -80,6 +80,22 @@ class ExportStatus(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     VALIDATION_ERROR = "validation_error"
+
+
+class TextSourceType(str, Enum):
+    """Source of text extraction."""
+    NATIVE = "native"        # Text layer from PDF
+    OCR = "ocr"              # OCR processed
+    HYBRID = "hybrid"        # Mix of native and OCR
+
+
+class FieldValueSource(str, Enum):
+    """Source of field value (precedence order high to low)."""
+    USER_OVERRIDE = "user_override"      # Manual user correction
+    WAREHOUSE_CONST = "warehouse_const"  # Warehouse-specific constant
+    AUCTION_CONST = "auction_const"      # Auction profile constant
+    EXTRACTED = "extracted"              # Extracted from document
+    DEFAULT = "default"                  # Default value from field mapping
 
 
 # =============================================================================
@@ -357,6 +373,71 @@ def init_extended_schema():
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_export_jobs_dispatch_id ON export_jobs(dispatch_id)
+        """)
+
+        # -----------------------------------------------------------------
+        # LAYOUT BLOCKS (spatial document structure)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS layout_blocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL,
+                block_id TEXT NOT NULL,
+                page_num INTEGER NOT NULL DEFAULT 0,
+                x0 REAL NOT NULL,
+                y0 REAL NOT NULL,
+                x1 REAL NOT NULL,
+                y1 REAL NOT NULL,
+                text TEXT,
+                block_type TEXT DEFAULT 'data',
+                label TEXT,
+                text_source TEXT DEFAULT 'native' CHECK (text_source IN ('native', 'ocr', 'hybrid')),
+                confidence REAL DEFAULT 1.0,
+                element_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (document_id) REFERENCES documents(id),
+                UNIQUE(document_id, block_id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_layout_blocks_document ON layout_blocks(document_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_layout_blocks_label ON layout_blocks(label)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_layout_blocks_type ON layout_blocks(block_type)
+        """)
+
+        # -----------------------------------------------------------------
+        # FIELD EVIDENCE (tracks which blocks contributed to field values)
+        # -----------------------------------------------------------------
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS field_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                field_key TEXT NOT NULL,
+                block_id INTEGER,
+                text_snippet TEXT,
+                page_num INTEGER,
+                bbox_json TEXT,
+                rule_id TEXT,
+                extraction_method TEXT,
+                confidence REAL DEFAULT 1.0,
+                value_source TEXT DEFAULT 'extracted',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES extraction_runs(id),
+                FOREIGN KEY (block_id) REFERENCES layout_blocks(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_evidence_run ON field_evidence(run_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_evidence_field ON field_evidence(field_key)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_field_evidence_block ON field_evidence(block_id)
         """)
 
         conn.commit()
@@ -705,6 +786,74 @@ class ExportJob:
     created_at: Optional[str] = None
     submitted_at: Optional[str] = None
     completed_at: Optional[str] = None
+
+
+@dataclass
+class LayoutBlock:
+    """
+    Layout block entity for spatial document structure.
+
+    Represents a logical block/region in a document with bounding box
+    coordinates and text content. Used for layout-aware extraction.
+    """
+    id: int
+    document_id: int
+    block_id: str
+    page_num: int = 0
+    x0: float = 0.0
+    y0: float = 0.0
+    x1: float = 0.0
+    y1: float = 0.0
+    text: Optional[str] = None
+    block_type: str = "data"  # header, label, data, table, footer
+    label: Optional[str] = None
+    text_source: str = "native"  # native, ocr, hybrid
+    confidence: float = 1.0
+    element_count: int = 0
+    created_at: Optional[str] = None
+
+    @property
+    def bbox(self) -> Tuple[float, float, float, float]:
+        """Get bounding box as tuple (x0, y0, x1, y1)."""
+        return (self.x0, self.y0, self.x1, self.y1)
+
+    @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
+    @property
+    def center_x(self) -> float:
+        return (self.x0 + self.x1) / 2
+
+    @property
+    def center_y(self) -> float:
+        return (self.y0 + self.y1) / 2
+
+
+@dataclass
+class FieldEvidence:
+    """
+    Field evidence entity tracks which blocks contributed to field values.
+
+    Links extracted field values to their source blocks in the document,
+    enabling transparency and debugging of extraction logic.
+    """
+    id: int
+    run_id: int
+    field_key: str
+    block_id: Optional[int] = None
+    text_snippet: Optional[str] = None
+    page_num: Optional[int] = None
+    bbox_json: Optional[Dict] = None  # {x0, y0, x1, y1}
+    rule_id: Optional[str] = None
+    extraction_method: Optional[str] = None  # pattern, spatial, ml, learned_rule
+    confidence: float = 1.0
+    value_source: str = "extracted"  # user_override, warehouse_const, auction_const, extracted, default
+    created_at: Optional[str] = None
 
 
 # =============================================================================
@@ -1633,6 +1782,280 @@ class TrainingJobRepository:
             conn.execute(f"UPDATE training_jobs SET {set_clause} WHERE id = ?", values)
             conn.commit()
             return True
+
+
+# =============================================================================
+# LAYOUT BLOCK REPOSITORY
+# =============================================================================
+
+class LayoutBlockRepository:
+    """Repository for LayoutBlock operations (spatial document structure)."""
+
+    @staticmethod
+    def create(document_id: int, block_id: str, page_num: int,
+               x0: float, y0: float, x1: float, y1: float,
+               text: str = None, block_type: str = "data",
+               label: str = None, text_source: str = "native",
+               confidence: float = 1.0, element_count: int = 0) -> int:
+        """Create a new layout block."""
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO layout_blocks
+                   (document_id, block_id, page_num, x0, y0, x1, y1,
+                    text, block_type, label, text_source, confidence, element_count)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (document_id, block_id, page_num, x0, y0, x1, y1,
+                 text, block_type, label, text_source, confidence, element_count)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def create_batch(document_id: int, blocks: List[Dict]) -> List[int]:
+        """Create multiple layout blocks for a document."""
+        ids = []
+        with get_connection() as conn:
+            for block in blocks:
+                cursor = conn.execute(
+                    """INSERT INTO layout_blocks
+                       (document_id, block_id, page_num, x0, y0, x1, y1,
+                        text, block_type, label, text_source, confidence, element_count)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (document_id, block.get("block_id", f"block_{len(ids)}"),
+                     block.get("page_num", 0),
+                     block.get("x0", 0), block.get("y0", 0),
+                     block.get("x1", 0), block.get("y1", 0),
+                     block.get("text"), block.get("block_type", "data"),
+                     block.get("label"), block.get("text_source", "native"),
+                     block.get("confidence", 1.0), block.get("element_count", 0))
+                )
+                ids.append(cursor.lastrowid)
+            conn.commit()
+        return ids
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[LayoutBlock]:
+        """Get layout block by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM layout_blocks WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                return LayoutBlock(**dict(row))
+            return None
+
+    @staticmethod
+    def get_by_document(document_id: int) -> List[LayoutBlock]:
+        """Get all layout blocks for a document."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM layout_blocks
+                   WHERE document_id = ?
+                   ORDER BY page_num, y0, x0""",
+                (document_id,)
+            ).fetchall()
+            return [LayoutBlock(**dict(row)) for row in rows]
+
+    @staticmethod
+    def get_by_label(document_id: int, label_pattern: str) -> List[LayoutBlock]:
+        """Get blocks matching a label pattern."""
+        import re
+        blocks = LayoutBlockRepository.get_by_document(document_id)
+        pattern = re.compile(label_pattern, re.IGNORECASE)
+        return [b for b in blocks if b.label and pattern.search(b.label)]
+
+    @staticmethod
+    def get_by_type(document_id: int, block_type: str) -> List[LayoutBlock]:
+        """Get blocks by type."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT * FROM layout_blocks
+                   WHERE document_id = ? AND block_type = ?
+                   ORDER BY page_num, y0, x0""",
+                (document_id, block_type)
+            ).fetchall()
+            return [LayoutBlock(**dict(row)) for row in rows]
+
+    @staticmethod
+    def delete_by_document(document_id: int) -> int:
+        """Delete all layout blocks for a document."""
+        with get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM layout_blocks WHERE document_id = ?",
+                (document_id,)
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    @staticmethod
+    def save_from_spatial_parser(document_id: int, structure) -> int:
+        """
+        Save layout blocks from a spatial parser DocumentStructure.
+
+        Args:
+            document_id: Database document ID
+            structure: DocumentStructure from spatial_parser
+
+        Returns:
+            Number of blocks saved
+        """
+        # First delete existing blocks
+        LayoutBlockRepository.delete_by_document(document_id)
+
+        blocks = []
+        for block in structure.blocks:
+            blocks.append({
+                "block_id": block.id,
+                "page_num": block.page,
+                "x0": block.x0,
+                "y0": block.y0,
+                "x1": block.x1,
+                "y1": block.y1,
+                "text": block.text,
+                "block_type": block.block_type,
+                "label": block.label,
+                "text_source": "native",  # Default; could be enhanced
+                "confidence": 1.0,
+                "element_count": len(block.elements),
+            })
+
+        if blocks:
+            LayoutBlockRepository.create_batch(document_id, blocks)
+
+        return len(blocks)
+
+
+# =============================================================================
+# FIELD EVIDENCE REPOSITORY
+# =============================================================================
+
+class FieldEvidenceRepository:
+    """Repository for FieldEvidence operations (extraction provenance)."""
+
+    @staticmethod
+    def create(run_id: int, field_key: str, block_id: int = None,
+               text_snippet: str = None, page_num: int = None,
+               bbox: Dict = None, rule_id: str = None,
+               extraction_method: str = None, confidence: float = 1.0,
+               value_source: str = "extracted") -> int:
+        """Create a new field evidence record."""
+        with get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO field_evidence
+                   (run_id, field_key, block_id, text_snippet, page_num,
+                    bbox_json, rule_id, extraction_method, confidence, value_source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (run_id, field_key, block_id, text_snippet, page_num,
+                 json.dumps(bbox) if bbox else None, rule_id,
+                 extraction_method, confidence, value_source)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    @staticmethod
+    def create_batch(run_id: int, evidence_items: List[Dict]) -> List[int]:
+        """Create multiple field evidence records for an extraction run."""
+        ids = []
+        with get_connection() as conn:
+            for item in evidence_items:
+                bbox = item.get("bbox")
+                cursor = conn.execute(
+                    """INSERT INTO field_evidence
+                       (run_id, field_key, block_id, text_snippet, page_num,
+                        bbox_json, rule_id, extraction_method, confidence, value_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (run_id, item.get("field_key"), item.get("block_id"),
+                     item.get("text_snippet"), item.get("page_num"),
+                     json.dumps(bbox) if bbox else None, item.get("rule_id"),
+                     item.get("extraction_method"), item.get("confidence", 1.0),
+                     item.get("value_source", "extracted"))
+                )
+                ids.append(cursor.lastrowid)
+            conn.commit()
+        return ids
+
+    @staticmethod
+    def get_by_id(id: int) -> Optional[FieldEvidence]:
+        """Get field evidence by ID."""
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM field_evidence WHERE id = ?", (id,)
+            ).fetchone()
+            if row:
+                data = dict(row)
+                if data.get("bbox_json"):
+                    data["bbox_json"] = json.loads(data["bbox_json"])
+                return FieldEvidence(**data)
+            return None
+
+    @staticmethod
+    def get_by_run(run_id: int) -> List[FieldEvidence]:
+        """Get all field evidence for an extraction run."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM field_evidence WHERE run_id = ? ORDER BY field_key",
+                (run_id,)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("bbox_json"):
+                    data["bbox_json"] = json.loads(data["bbox_json"])
+                result.append(FieldEvidence(**data))
+            return result
+
+    @staticmethod
+    def get_by_field(run_id: int, field_key: str) -> List[FieldEvidence]:
+        """Get evidence for a specific field in a run."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM field_evidence WHERE run_id = ? AND field_key = ?",
+                (run_id, field_key)
+            ).fetchall()
+            result = []
+            for row in rows:
+                data = dict(row)
+                if data.get("bbox_json"):
+                    data["bbox_json"] = json.loads(data["bbox_json"])
+                result.append(FieldEvidence(**data))
+            return result
+
+    @staticmethod
+    def get_evidence_summary(run_id: int) -> Dict[str, Any]:
+        """Get summary of field evidence for a run."""
+        with get_connection() as conn:
+            rows = conn.execute(
+                """SELECT field_key, value_source, extraction_method,
+                          COUNT(*) as count, AVG(confidence) as avg_confidence
+                   FROM field_evidence WHERE run_id = ?
+                   GROUP BY field_key, value_source, extraction_method""",
+                (run_id,)
+            ).fetchall()
+
+            summary = {}
+            for row in rows:
+                field = row["field_key"]
+                if field not in summary:
+                    summary[field] = []
+                summary[field].append({
+                    "value_source": row["value_source"],
+                    "extraction_method": row["extraction_method"],
+                    "count": row["count"],
+                    "avg_confidence": row["avg_confidence"],
+                })
+
+            return summary
+
+    @staticmethod
+    def delete_by_run(run_id: int) -> int:
+        """Delete all field evidence for a run."""
+        with get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM field_evidence WHERE run_id = ?",
+                (run_id,)
+            )
+            conn.commit()
+            return cursor.rowcount
 
 
 # =============================================================================
