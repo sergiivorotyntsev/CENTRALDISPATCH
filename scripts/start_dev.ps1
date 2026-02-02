@@ -47,7 +47,7 @@ elseif ($BackendOnly) {
     uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 }
 else {
-    Write-Host "Starting both backend and frontend..." -ForegroundColor Green
+    Write-Host "Starting both backend and frontend in separate windows..." -ForegroundColor Green
     Write-Host ""
     Write-Host "Backend:" -ForegroundColor Yellow
     Write-Host "  -> http://localhost:8000"
@@ -56,63 +56,25 @@ else {
     Write-Host "Frontend:" -ForegroundColor Yellow
     Write-Host "  -> http://localhost:5173"
     Write-Host ""
-    Write-Host "Press Ctrl+C to stop all servers" -ForegroundColor Cyan
-    Write-Host ""
 
-    # Start backend as background job
-    $backendJob = Start-Job -ScriptBlock {
-        param($projectRoot)
-        Set-Location $projectRoot
-        if (Test-Path ".venv\Scripts\Activate.ps1") {
-            & .\.venv\Scripts\Activate.ps1
-        }
-        uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
-    } -ArgumentList $ProjectRoot
+    # Start backend in new window
+    $backendCmd = "Set-Location '$ProjectRoot'; "
+    $backendCmd += "if (Test-Path '.venv\Scripts\Activate.ps1') { & '.\.venv\Scripts\Activate.ps1' }; "
+    $backendCmd += "uvicorn api.main:app --reload --host 0.0.0.0 --port 8000; "
+    $backendCmd += "Read-Host 'Press Enter to close'"
+
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
     # Give backend time to start
     Start-Sleep -Seconds 2
 
-    # Start frontend as background job
-    $frontendJob = Start-Job -ScriptBlock {
-        param($projectRoot)
-        Set-Location "$projectRoot\web"
-        npm run dev
-    } -ArgumentList $ProjectRoot
+    # Start frontend in new window
+    $frontendCmd = "Set-Location '$ProjectRoot\web'; npm run dev; Read-Host 'Press Enter to close'"
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCmd
 
-    # Wait and handle Ctrl+C
-    try {
-        Write-Host "Backend job: $($backendJob.Id)" -ForegroundColor Gray
-        Write-Host "Frontend job: $($frontendJob.Id)" -ForegroundColor Gray
-        Write-Host ""
-
-        # Monitor jobs
-        while ($true) {
-            $backendState = (Get-Job -Id $backendJob.Id).State
-            $frontendState = (Get-Job -Id $frontendJob.Id).State
-
-            if ($backendState -eq "Failed" -or $frontendState -eq "Failed") {
-                Write-Host "A server failed. Check output:" -ForegroundColor Red
-                if ($backendState -eq "Failed") {
-                    Write-Host "Backend error:" -ForegroundColor Red
-                    Receive-Job -Id $backendJob.Id
-                }
-                if ($frontendState -eq "Failed") {
-                    Write-Host "Frontend error:" -ForegroundColor Red
-                    Receive-Job -Id $frontendJob.Id
-                }
-                break
-            }
-
-            Start-Sleep -Seconds 2
-        }
-    }
-    finally {
-        Write-Host ""
-        Write-Host "Stopping servers..." -ForegroundColor Yellow
-        Stop-Job -Id $backendJob.Id -ErrorAction SilentlyContinue
-        Stop-Job -Id $frontendJob.Id -ErrorAction SilentlyContinue
-        Remove-Job -Id $backendJob.Id -Force -ErrorAction SilentlyContinue
-        Remove-Job -Id $frontendJob.Id -Force -ErrorAction SilentlyContinue
-        Write-Host "Servers stopped." -ForegroundColor Green
-    }
+    Write-Host "Two new PowerShell windows opened:" -ForegroundColor Cyan
+    Write-Host "  - Backend server window"
+    Write-Host "  - Frontend server window"
+    Write-Host ""
+    Write-Host "Close those windows to stop the servers." -ForegroundColor Cyan
 }
