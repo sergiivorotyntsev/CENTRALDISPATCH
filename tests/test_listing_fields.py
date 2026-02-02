@@ -146,6 +146,117 @@ class TestListingFieldRegistry:
         assert 'warehouse' in issue_fields  # Warehouse not selected
         assert any('pickup' in f for f in issue_fields)
 
+    def test_blocking_issues_same_address(self):
+        """Should block when pickup and delivery addresses are the same."""
+        registry = get_registry()
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Dallas',
+            'pickup_state': 'TX',
+            'pickup_zip': '75001',
+            'delivery_address': '123 Main St',  # Same as pickup
+            'delivery_city': 'Dallas',
+            'delivery_state': 'TX',
+            'delivery_zip': '75001',
+            'available_date': datetime.now().strftime('%Y-%m-%d'),
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_messages = [i['issue'] for i in issues]
+        assert any('different' in msg.lower() for msg in issue_messages)
+
+    def test_blocking_issues_external_id_too_long(self):
+        """Should block when external_id exceeds 50 characters."""
+        registry = get_registry()
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': datetime.now().strftime('%Y-%m-%d'),
+            'trailer_type': 'OPEN',
+            'external_id': 'X' * 60,  # 60 chars, exceeds 50 limit
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        assert 'external_id' in issue_fields
+
+    def test_blocking_issues_date_in_past(self):
+        """Should block when available_date is in the past."""
+        registry = get_registry()
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': '2020-01-01',  # In the past
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        assert 'available_date' in issue_fields
+
+    def test_blocking_issues_date_too_far_future(self):
+        """Should block when available_date is more than 30 days ahead."""
+        registry = get_registry()
+
+        future_date = (datetime.now() + timedelta(days=60)).strftime('%Y-%m-%d')
+
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_type': 'SUV',
+            'vehicle_condition': 'OPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'available_date': future_date,  # 60 days ahead
+            'trailer_type': 'OPEN',
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=True)
+        issue_fields = [i['field'] for i in issues]
+        assert 'available_date' in issue_fields
+
     def test_to_json_schema(self):
         """Should export as JSON schema."""
         registry = get_registry()
@@ -277,6 +388,29 @@ class TestBuildCDPayload:
 
         assert payload['hasInOpVehicle'] is True
         assert payload['vehicles'][0]['isOperable'] is False
+
+    def test_external_id_truncation(self):
+        """Should truncate external_id to 50 characters (CD API limit)."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'external_id': 'A' * 100,  # 100 chars, should be truncated
+        }
+
+        payload = build_cd_payload(data)
+
+        assert len(payload['externalId']) == 50
+        assert payload['externalId'] == 'A' * 50
 
 
 class TestFieldDefinitions:

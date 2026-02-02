@@ -4,16 +4,38 @@ Export API Routes
 Export data to Central Dispatch API V2.
 Includes:
 - Field registry endpoint (single source of truth)
-- Single and batch posting
+- Single and batch posting with ETag support
+- Throttling with exponential backoff
 - Production corrections → training ingestion
 """
 
 import time
 import json
-from typing import Optional, List, Dict, Any
+import asyncio
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Throttling configuration for CD API
+CD_MAX_CONCURRENT_REQUESTS = 3  # Max concurrent requests to CD API
+CD_RETRY_ATTEMPTS = 3  # Number of retry attempts on failure
+CD_BACKOFF_BASE = 2.0  # Base for exponential backoff (seconds)
+CD_BACKOFF_MAX = 30.0  # Maximum backoff time (seconds)
+
+# Semaphore for rate limiting
+_cd_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def get_cd_semaphore() -> asyncio.Semaphore:
+    """Get or create the CD API rate limiting semaphore."""
+    global _cd_semaphore
+    if _cd_semaphore is None:
+        _cd_semaphore = asyncio.Semaphore(CD_MAX_CONCURRENT_REQUESTS)
+    return _cd_semaphore
 
 from api.models import (
     ExportJobRepository,
@@ -236,11 +258,89 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
     return payload, errors
 
 
-def send_to_cd(payload: dict, sandbox: bool = True) -> tuple[bool, dict]:
-    """
-    Send payload to Central Dispatch API V2.
+def _init_cd_listings_table():
+    """Initialize the cd_listings table for tracking CD listing IDs and ETags."""
+    from api.database import get_connection
 
-    Returns (success, response_data).
+    with get_connection() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cd_listings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL UNIQUE,
+                cd_listing_id TEXT NOT NULL,
+                etag TEXT,
+                external_id TEXT,
+                sandbox BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES extraction_runs(id)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cd_listings_run_id ON cd_listings(run_id)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_cd_listings_cd_id ON cd_listings(cd_listing_id)
+        """)
+        conn.commit()
+
+
+def get_cd_listing_info(run_id: int) -> Optional[Dict[str, Any]]:
+    """Get stored CD listing info (listing_id, etag) for a run."""
+    from api.database import get_connection
+
+    _init_cd_listings_table()
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM cd_listings WHERE run_id = ?",
+            (run_id,)
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
+def save_cd_listing_info(
+    run_id: int,
+    cd_listing_id: str,
+    etag: Optional[str] = None,
+    external_id: Optional[str] = None,
+    sandbox: bool = True,
+):
+    """Save or update CD listing info after successful POST/PUT."""
+    from api.database import get_connection
+
+    _init_cd_listings_table()
+
+    with get_connection() as conn:
+        # Upsert: update if exists, insert if not
+        existing = conn.execute(
+            "SELECT id FROM cd_listings WHERE run_id = ?",
+            (run_id,)
+        ).fetchone()
+
+        if existing:
+            conn.execute("""
+                UPDATE cd_listings
+                SET cd_listing_id = ?, etag = ?, external_id = ?,
+                    sandbox = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?
+            """, (cd_listing_id, etag, external_id, sandbox, run_id))
+        else:
+            conn.execute("""
+                INSERT INTO cd_listings (run_id, cd_listing_id, etag, external_id, sandbox)
+                VALUES (?, ?, ?, ?, ?)
+            """, (run_id, cd_listing_id, etag, external_id, sandbox))
+
+        conn.commit()
+
+
+def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool, Optional[str], dict]:
+    """
+    GET a listing from CD to retrieve current ETag.
+
+    Returns (success, etag, response_data).
+    Required before PUT/update operations (If-Match header).
     """
     import requests
 
@@ -249,7 +349,60 @@ def send_to_cd(payload: dict, sandbox: bool = True) -> tuple[bool, dict]:
     else:
         base_url = "https://api.centraldispatch.com"
 
-    endpoint = f"{base_url}/listings"
+    endpoint = f"{base_url}/listings/{cd_listing_id}"
+
+    headers = {
+        "Accept": "application/vnd.coxauto.v2+json",
+        # Note: Real implementation would include auth
+        # "Authorization": f"Bearer {token}"
+    }
+
+    try:
+        response = requests.get(
+            endpoint,
+            headers=headers,
+            timeout=30,
+        )
+
+        if response.status_code == 200:
+            etag = response.headers.get("ETag")
+            return True, etag, response.json()
+        else:
+            return False, None, {
+                "status_code": response.status_code,
+                "error": response.text,
+            }
+
+    except requests.RequestException as e:
+        return False, None, {"error": str(e)}
+
+
+def send_to_cd(
+    payload: dict,
+    sandbox: bool = True,
+    cd_listing_id: Optional[str] = None,
+    etag: Optional[str] = None,
+) -> Tuple[bool, dict, Optional[str]]:
+    """
+    Send payload to Central Dispatch API V2.
+
+    For new listings: POST /listings
+    For updates: PUT /listings/{id} with If-Match header
+
+    Args:
+        payload: The listing payload
+        sandbox: Use sandbox environment
+        cd_listing_id: Existing listing ID (for updates)
+        etag: ETag for If-Match header (required for updates)
+
+    Returns (success, response_data, new_etag).
+    """
+    import requests
+
+    if sandbox:
+        base_url = "https://api.sandbox.centraldispatch.com"
+    else:
+        base_url = "https://api.centraldispatch.com"
 
     # CD V2 uses Content-Type versioning
     headers = {
@@ -260,23 +413,165 @@ def send_to_cd(payload: dict, sandbox: bool = True) -> tuple[bool, dict]:
     }
 
     try:
-        response = requests.post(
-            endpoint,
-            json=payload,
-            headers=headers,
-            timeout=30,
-        )
+        if cd_listing_id and etag:
+            # UPDATE existing listing with If-Match
+            endpoint = f"{base_url}/listings/{cd_listing_id}"
+            headers["If-Match"] = etag
+            logger.info(f"PUT {endpoint} with If-Match: {etag}")
+
+            response = requests.put(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+        else:
+            # CREATE new listing
+            endpoint = f"{base_url}/listings"
+            logger.info(f"POST {endpoint}")
+
+            response = requests.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+
+        # Extract new ETag from response
+        new_etag = response.headers.get("ETag")
 
         if response.status_code in (200, 201):
-            return True, response.json()
+            return True, response.json(), new_etag
+        elif response.status_code == 412:
+            # Precondition Failed - ETag mismatch (concurrent modification)
+            return False, {
+                "status_code": 412,
+                "error": "ETag mismatch - listing was modified. Please refresh and retry.",
+                "error_code": "ETAG_MISMATCH",
+            }, None
+        elif response.status_code == 429:
+            # Rate limited
+            return False, {
+                "status_code": 429,
+                "error": "Rate limited by CD API. Please wait and retry.",
+                "error_code": "RATE_LIMITED",
+                "retry_after": response.headers.get("Retry-After", "60"),
+            }, None
         else:
             return False, {
                 "status_code": response.status_code,
                 "error": response.text,
-            }
+            }, None
 
     except requests.RequestException as e:
-        return False, {"error": str(e)}
+        return False, {"error": str(e)}, None
+
+
+async def send_to_cd_with_retry(
+    payload: dict,
+    sandbox: bool = True,
+    run_id: Optional[int] = None,
+    force_create: bool = False,
+) -> Tuple[bool, dict, Optional[str]]:
+    """
+    Send to CD with rate limiting and retry logic.
+
+    Handles:
+    - Concurrent request throttling (max 3 concurrent)
+    - Exponential backoff on 429/5xx errors
+    - ETag-based updates for existing listings
+
+    Args:
+        payload: The listing payload
+        sandbox: Use sandbox environment
+        run_id: Extraction run ID (for ETag tracking)
+        force_create: Force POST even if listing exists
+
+    Returns (success, response_data, cd_listing_id).
+    """
+    semaphore = get_cd_semaphore()
+
+    # Check for existing CD listing (for update with ETag)
+    cd_listing_id = None
+    etag = None
+
+    if run_id and not force_create:
+        existing = get_cd_listing_info(run_id)
+        if existing:
+            cd_listing_id = existing.get("cd_listing_id")
+            # Fetch fresh ETag before update
+            if cd_listing_id:
+                logger.info(f"Found existing CD listing {cd_listing_id}, fetching ETag...")
+                success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
+                if success and fresh_etag:
+                    etag = fresh_etag
+                    logger.info(f"Got fresh ETag: {etag}")
+                else:
+                    # Listing may have been deleted, force create
+                    logger.warning(f"Could not fetch ETag for {cd_listing_id}, creating new listing")
+                    cd_listing_id = None
+
+    last_error = None
+
+    for attempt in range(CD_RETRY_ATTEMPTS):
+        async with semaphore:
+            # Run sync function in thread pool
+            loop = asyncio.get_event_loop()
+            success, response, new_etag = await loop.run_in_executor(
+                None,
+                lambda: send_to_cd(payload, sandbox, cd_listing_id, etag)
+            )
+
+            if success:
+                # Extract listing ID from response
+                result_listing_id = response.get("id") or response.get("listingId") or cd_listing_id
+
+                # Save listing info with new ETag
+                if run_id and result_listing_id:
+                    save_cd_listing_info(
+                        run_id=run_id,
+                        cd_listing_id=result_listing_id,
+                        etag=new_etag,
+                        external_id=payload.get("externalId"),
+                        sandbox=sandbox,
+                    )
+
+                return True, response, result_listing_id
+
+            # Handle specific error codes
+            error_code = response.get("error_code")
+            status_code = response.get("status_code")
+
+            if error_code == "ETAG_MISMATCH":
+                # Refresh ETag and retry immediately
+                if cd_listing_id:
+                    success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
+                    if success and fresh_etag:
+                        etag = fresh_etag
+                        continue
+
+            if status_code in (429, 500, 502, 503, 504):
+                # Retry with exponential backoff
+                backoff = min(CD_BACKOFF_BASE ** attempt, CD_BACKOFF_MAX)
+                if status_code == 429:
+                    # Use Retry-After if provided
+                    retry_after = response.get("retry_after")
+                    if retry_after:
+                        try:
+                            backoff = min(float(retry_after), CD_BACKOFF_MAX)
+                        except ValueError:
+                            pass
+
+                logger.warning(f"CD API error {status_code}, retrying in {backoff}s (attempt {attempt + 1}/{CD_RETRY_ATTEMPTS})")
+                await asyncio.sleep(backoff)
+                last_error = response
+                continue
+
+            # Non-retryable error
+            return False, response, None
+
+    # All retries exhausted
+    return False, last_error or {"error": "Max retries exceeded"}, None
 
 
 # =============================================================================
@@ -381,8 +676,13 @@ async def export_to_cd(
         previews.append(preview)
 
         if not data.dry_run and is_valid:
-            # Actually send to CD
-            success, response = send_to_cd(payload, sandbox=data.sandbox)
+            # Actually send to CD with throttling and retry
+            success, response, cd_listing_id = await send_to_cd_with_retry(
+                payload,
+                sandbox=data.sandbox,
+                run_id=run_id,
+                force_create=force,
+            )
 
             # Create export job record (always creates new record for audit trail)
             job_id = ExportJobRepository.create(
@@ -396,17 +696,24 @@ async def export_to_cd(
                     job_id,
                     status="completed",
                     response_json=response,
+                    cd_listing_id=cd_listing_id,
                 )
                 exported_count += 1
 
                 # Update run status
                 ExtractionRunRepository.update(run_id, status="exported")
             else:
+                error_msg = response.get("error", "Unknown error")
+                if response.get("error_code") == "ETAG_MISMATCH":
+                    error_msg = "Listing was modified externally. Please refresh and retry."
+                elif response.get("error_code") == "RATE_LIMITED":
+                    error_msg = "Rate limited by CD API after retries."
+
                 ExportJobRepository.update(
                     job_id,
                     status="failed",
                     response_json=response,
-                    error_message=response.get("error", "Unknown error"),
+                    error_message=error_msg,
                 )
                 failed_count += 1
 
@@ -574,6 +881,42 @@ async def retry_export_job(job_id: int, sandbox: bool = Query(True)):
 # FIELD REGISTRY ENDPOINT (Single Source of Truth)
 # =============================================================================
 
+@router.get("/cd-listing/{run_id}")
+async def get_cd_listing(run_id: int):
+    """
+    Get CD listing info for a run.
+
+    Returns stored cd_listing_id, etag, and other tracking info.
+    Useful for checking if a listing exists and needs update vs. create.
+    """
+    run = ExtractionRunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+
+    listing_info = get_cd_listing_info(run_id)
+
+    if not listing_info:
+        return {
+            "run_id": run_id,
+            "has_listing": False,
+            "cd_listing_id": None,
+            "etag": None,
+            "external_id": None,
+            "sandbox": None,
+        }
+
+    return {
+        "run_id": run_id,
+        "has_listing": True,
+        "cd_listing_id": listing_info.get("cd_listing_id"),
+        "etag": listing_info.get("etag"),
+        "external_id": listing_info.get("external_id"),
+        "sandbox": listing_info.get("sandbox"),
+        "created_at": listing_info.get("created_at"),
+        "updated_at": listing_info.get("updated_at"),
+    }
+
+
 @router.get("/field-registry")
 async def get_field_registry():
     """
@@ -661,10 +1004,12 @@ async def batch_post(request: BatchPostRequest):
     """
     Batch post multiple extraction runs to Central Dispatch.
 
-    Includes preflight check to show:
-    - How many are ready
-    - How many have blocking issues
-    - Option to post only ready ones
+    Features:
+    - Preflight check showing ready/not-ready counts
+    - Throttling: max 3 concurrent requests to CD API
+    - Exponential backoff on 429/5xx errors
+    - ETag-based updates for re-posts
+    - Option to post only ready runs
     """
     from api.database import get_connection
 
@@ -676,16 +1021,18 @@ async def batch_post(request: BatchPostRequest):
     failed_count = 0
     skipped_count = 0
 
-    for run_id in request.run_ids:
+    # Prepare tasks for async processing
+    async def process_run(run_id: int) -> BatchPostResult:
+        nonlocal ready_count, not_ready_count, posted_count, failed_count, skipped_count
+
         run = ExtractionRunRepository.get_by_id(run_id)
         if not run:
-            results.append(BatchPostResult(
+            failed_count += 1
+            return BatchPostResult(
                 run_id=run_id,
                 status="failed",
                 message="Extraction run not found",
-            ))
-            failed_count += 1
-            continue
+            )
 
         doc = DocumentRepository.get_by_id(run.document_id)
 
@@ -697,25 +1044,26 @@ async def batch_post(request: BatchPostRequest):
                     (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
-                    results.append(BatchPostResult(
+                    skipped_count += 1
+                    return BatchPostResult(
                         run_id=run_id,
                         document_filename=doc.filename,
                         status="skipped",
                         message="Test document - cannot export to Central Dispatch",
-                    ))
-                    skipped_count += 1
-                    continue
+                    )
 
-        # Check if already exported
-        if run.status == "exported":
-            results.append(BatchPostResult(
+        # Check if already exported (allow re-post with ETag)
+        existing_listing = get_cd_listing_info(run_id)
+        is_repost = existing_listing is not None
+
+        if run.status == "exported" and not is_repost:
+            skipped_count += 1
+            return BatchPostResult(
                 run_id=run_id,
                 document_filename=doc.filename if doc else None,
                 status="skipped",
                 message="Already exported",
-            ))
-            skipped_count += 1
-            continue
+            )
 
         # Get field data
         items = ReviewItemRepository.get_by_run(run_id)
@@ -737,33 +1085,35 @@ async def batch_post(request: BatchPostRequest):
         if issues:
             not_ready_count += 1
             if request.post_only_ready:
-                results.append(BatchPostResult(
+                return BatchPostResult(
                     run_id=run_id,
                     document_filename=doc.filename if doc else None,
                     status="blocked",
                     message="Has blocking issues",
                     blocking_issues=[i["issue"] for i in issues],
-                ))
-                continue
+                )
         else:
             ready_count += 1
 
-        # Build and send payload
+        # Build payload
         payload, errors = build_cd_payload(run_id)
 
         if errors:
-            results.append(BatchPostResult(
+            failed_count += 1
+            return BatchPostResult(
                 run_id=run_id,
                 document_filename=doc.filename if doc else None,
                 status="failed",
                 message="; ".join(errors),
                 blocking_issues=errors,
-            ))
-            failed_count += 1
-            continue
+            )
 
-        # Send to CD
-        success, response = send_to_cd(payload, sandbox=request.sandbox)
+        # Send to CD with throttling and retry
+        success, response, cd_listing_id = await send_to_cd_with_retry(
+            payload,
+            sandbox=request.sandbox,
+            run_id=run_id,
+        )
 
         # Create export job
         job_id = ExportJobRepository.create(
@@ -773,7 +1123,6 @@ async def batch_post(request: BatchPostRequest):
         )
 
         if success:
-            cd_listing_id = response.get("id") or response.get("listingId")
             ExportJobRepository.update(
                 job_id,
                 status="completed",
@@ -782,27 +1131,39 @@ async def batch_post(request: BatchPostRequest):
             )
             ExtractionRunRepository.update(run_id, status="exported")
             posted_count += 1
-            results.append(BatchPostResult(
+            action = "Updated" if is_repost else "Posted"
+            return BatchPostResult(
                 run_id=run_id,
                 document_filename=doc.filename if doc else None,
                 status="success",
-                message="Posted successfully",
+                message=f"{action} successfully",
                 cd_listing_id=cd_listing_id,
-            ))
+            )
         else:
+            error_msg = response.get("error", "Export failed")
+            if response.get("error_code") == "ETAG_MISMATCH":
+                error_msg = "Listing was modified externally. Please refresh and retry."
+            elif response.get("error_code") == "RATE_LIMITED":
+                error_msg = "Rate limited by CD API after retries."
+
             ExportJobRepository.update(
                 job_id,
                 status="failed",
                 response_json=response,
-                error_message=response.get("error", "Unknown error"),
+                error_message=error_msg,
             )
             failed_count += 1
-            results.append(BatchPostResult(
+            return BatchPostResult(
                 run_id=run_id,
                 document_filename=doc.filename if doc else None,
                 status="failed",
-                message=response.get("error", "Export failed"),
-            ))
+                message=error_msg,
+            )
+
+    # Process all runs with throttling
+    # Note: The semaphore inside send_to_cd_with_retry handles concurrent request limiting
+    tasks = [process_run(run_id) for run_id in request.run_ids]
+    results = await asyncio.gather(*tasks)
 
     return BatchPostResponse(
         total=len(request.run_ids),
@@ -811,7 +1172,7 @@ async def batch_post(request: BatchPostRequest):
         posted=posted_count,
         failed=failed_count,
         skipped=skipped_count,
-        results=results,
+        results=list(results),
     )
 
 

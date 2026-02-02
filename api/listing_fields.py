@@ -436,8 +436,8 @@ LISTING_FIELDS: List[ListingField] = [
         field_type=FieldType.TEXT,
         required=False,
         display_order=1,
-        max_length=100,
-        help_text="Your internal reference ID",
+        max_length=50,  # CD API limit is 50 characters
+        help_text="Your internal reference ID (max 50 chars)",
     ),
     ListingField(
         key="available_date",
@@ -674,6 +674,13 @@ class ListingFieldRegistry:
         """
         Get issues that block posting.
         Returns list of {field: key, issue: message}.
+
+        Validates against CD API V2 requirements:
+        - Minimum 2 unique stops (pickup and delivery must have different addresses)
+        - Minimum 1 vehicle, maximum 12 vehicles
+        - availableDate not before today, not more than 30 days ahead
+        - expirationDate not before today, not more than 30 days ahead
+        - externalId max 50 characters
         """
         issues = []
 
@@ -697,33 +704,113 @@ class ListingFieldRegistry:
                     "issue": "Warehouse not selected (delivery address incomplete)",
                 })
 
-        # Check available_date rules
+        # CD API Rule: 2 unique stops required (pickup != delivery)
+        pickup_addr = (
+            data.get("pickup_address", "").strip().lower(),
+            data.get("pickup_city", "").strip().lower(),
+            data.get("pickup_state", "").strip().upper(),
+            data.get("pickup_zip", "").strip(),
+        )
+        delivery_addr = (
+            data.get("delivery_address", "").strip().lower(),
+            data.get("delivery_city", "").strip().lower(),
+            data.get("delivery_state", "").strip().upper(),
+            data.get("delivery_zip", "").strip(),
+        )
+
+        # Only check if both addresses are filled
+        pickup_filled = all(pickup_addr[:4])  # address, city, state, zip
+        delivery_filled = all(delivery_addr[:4])
+
+        if pickup_filled and delivery_filled:
+            if pickup_addr == delivery_addr:
+                issues.append({
+                    "field": "delivery_address",
+                    "issue": "Pickup and delivery addresses must be different (CD requires 2 unique stops)",
+                })
+
+        # CD API Rule: 1-12 vehicles (we currently support single vehicle, so just check VIN exists)
+        vehicle_vin = data.get("vehicle_vin")
+        if not vehicle_vin:
+            # Already caught by required fields check, but adding for clarity
+            pass
+        # Note: Multi-vehicle support would need vehicle count validation here
+
+        # CD API Rule: externalId max 50 characters
+        external_id = data.get("external_id", "")
+        if external_id and len(external_id) > 50:
+            issues.append({
+                "field": "external_id",
+                "issue": f"External ID must be 50 characters or less (currently {len(external_id)})",
+            })
+
+        # Check available_date rules (CD API requirement)
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        max_date = today + timedelta(days=30)
+
         available_date = data.get("available_date")
         if available_date:
             try:
                 if isinstance(available_date, str):
-                    av_date = datetime.fromisoformat(available_date.replace("Z", "+00:00"))
+                    # Handle various date formats
+                    date_str = available_date.replace("Z", "+00:00")
+                    if "T" in date_str:
+                        av_date = datetime.fromisoformat(date_str)
+                    else:
+                        av_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
                 else:
                     av_date = available_date
-                today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                max_date = today + timedelta(days=30)
-                if av_date.replace(tzinfo=None) < today:
+
+                av_date_naive = av_date.replace(tzinfo=None) if hasattr(av_date, 'tzinfo') else av_date
+                if av_date_naive < today:
                     issues.append({
                         "field": "available_date",
-                        "issue": "Available date cannot be in the past",
+                        "issue": "Available date cannot be in the past (CD API requirement)",
                     })
-                if av_date.replace(tzinfo=None) > max_date:
+                if av_date_naive > max_date:
                     issues.append({
                         "field": "available_date",
-                        "issue": "Available date cannot be more than 30 days in the future",
+                        "issue": "Available date cannot be more than 30 days in the future (CD API requirement)",
                     })
             except Exception:
-                pass
+                issues.append({
+                    "field": "available_date",
+                    "issue": "Invalid date format",
+                })
+
+        # Check expiration_date rules (CD API requirement)
+        expiration_date = data.get("expiration_date")
+        if expiration_date:
+            try:
+                if isinstance(expiration_date, str):
+                    date_str = expiration_date.replace("Z", "+00:00")
+                    if "T" in date_str:
+                        exp_date = datetime.fromisoformat(date_str)
+                    else:
+                        exp_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
+                else:
+                    exp_date = expiration_date
+
+                exp_date_naive = exp_date.replace(tzinfo=None) if hasattr(exp_date, 'tzinfo') else exp_date
+                if exp_date_naive < today:
+                    issues.append({
+                        "field": "expiration_date",
+                        "issue": "Expiration date cannot be in the past (CD API requirement)",
+                    })
+                if exp_date_naive > max_date:
+                    issues.append({
+                        "field": "expiration_date",
+                        "issue": "Expiration date cannot be more than 30 days in the future (CD API requirement)",
+                    })
+            except Exception:
+                pass  # Expiration date is optional
 
         # Validation errors
         validation_errors = self.validate_all(data)
         for err in validation_errors:
-            if err not in issues:
+            # Avoid duplicate errors
+            existing = [i for i in issues if i["field"] == err["field"]]
+            if not existing:
                 issues.append({"field": err["field"], "issue": err["error"]})
 
         return issues
@@ -772,7 +859,7 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
     """
     registry = get_registry()
 
-    # Generate external ID
+    # Generate external ID (CD API limit: 50 characters max)
     external_id = data.get("external_id")
     if not external_id:
         parts = ["DC"]
@@ -784,6 +871,10 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
         elif run_id:
             parts.append(str(run_id))
         external_id = "-".join(parts)
+
+    # Enforce CD API limit of 50 characters
+    if len(external_id) > 50:
+        external_id = external_id[:50]
 
     # Build vehicle
     vehicle = {

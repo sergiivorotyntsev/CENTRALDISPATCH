@@ -321,6 +321,9 @@ export const api = {
   getFieldRegistry: () => request('/exports/field-registry'),
   getBlockingIssues: (runId) => request(`/exports/field-registry/blocking-issues/${runId}`),
 
+  // CD Listing Info (ETag tracking)
+  getCDListingInfo: (runId) => request(`/exports/cd-listing/${runId}`),
+
   // Batch Posting
   batchPostPreflight: (runIds) => request('/exports/batch-post/preflight', {
     method: 'POST',
