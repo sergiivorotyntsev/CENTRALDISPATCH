@@ -11,17 +11,18 @@ Key rules:
 - Pickup address is extracted from auction documents
 """
 
-import re
 import logging
+import re
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple, Any
 from enum import Enum
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class LocationType(Enum):
     """Type of location in the transport order."""
+
     PICKUP = "pickup"
     DELIVERY = "delivery"
     UNKNOWN = "unknown"
@@ -29,18 +30,20 @@ class LocationType(Enum):
 
 class LocationConfidence(Enum):
     """Confidence level in location classification."""
-    HIGH = "high"        # Clear keyword match or profile rule
-    MEDIUM = "medium"    # Partial match or spatial inference
-    LOW = "low"          # Best guess
+
+    HIGH = "high"  # Clear keyword match or profile rule
+    MEDIUM = "medium"  # Partial match or spatial inference
+    LOW = "low"  # Best guess
 
 
 @dataclass
 class ClassifiedLocation:
     """A classified location with type and confidence."""
+
     location_type: LocationType
     confidence: LocationConfidence
     address_text: str
-    matched_keywords: List[str] = None
+    matched_keywords: list[str] = None
     matched_rule: Optional[str] = None
     source: str = "keyword"  # keyword, spatial, profile, default
 
@@ -48,7 +51,7 @@ class ClassifiedLocation:
         if self.matched_keywords is None:
             self.matched_keywords = []
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": self.location_type.value,
             "confidence": self.confidence.value,
@@ -72,44 +75,44 @@ class LocationClassifier:
 
     # Pickup keywords (strong indicators)
     PICKUP_KEYWORDS_STRONG = [
-        r'\bPICK[-\s]?UP\b',
-        r'\bRELEASE\b',
-        r'\bLOT\s*LOCATION\b',
-        r'\bBUYER\s*PICKUP\b',
-        r'\bVEHICLE\s*LOCATION\b',
-        r'\bSELLER\b',
-        r'\bAUCTION\s*(LOCATION|FACILITY|YARD)\b',
-        r'\bPHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT\b',
+        r"\bPICK[-\s]?UP\b",
+        r"\bRELEASE\b",
+        r"\bLOT\s*LOCATION\b",
+        r"\bBUYER\s*PICKUP\b",
+        r"\bVEHICLE\s*LOCATION\b",
+        r"\bSELLER\b",
+        r"\bAUCTION\s*(LOCATION|FACILITY|YARD)\b",
+        r"\bPHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT\b",
     ]
 
     # Pickup keywords (weak indicators)
     PICKUP_KEYWORDS_WEAK = [
-        r'\bFROM\b',
-        r'\bORIGIN\b',
-        r'\bSTART\b',
-        r'\bCOPART\b',
-        r'\bIAA\b',
-        r'\bMANHEIM\b',
-        r'\bADESA\b',
+        r"\bFROM\b",
+        r"\bORIGIN\b",
+        r"\bSTART\b",
+        r"\bCOPART\b",
+        r"\bIAA\b",
+        r"\bMANHEIM\b",
+        r"\bADESA\b",
     ]
 
     # Delivery keywords (should NOT be in pickup address)
     DELIVERY_KEYWORDS = [
-        r'\bDELIVER(?:Y|ED|S)?\b',
-        r'\bDROP[-\s]?OFF\b',
-        r'\bDESTINATION\b',
-        r'\bSHIP\s*TO\b',
-        r'\bBUYER\s*ADDRESS\b',
-        r'\bTO\s*LOCATION\b',
+        r"\bDELIVER(?:Y|ED|S)?\b",
+        r"\bDROP[-\s]?OFF\b",
+        r"\bDESTINATION\b",
+        r"\bSHIP\s*TO\b",
+        r"\bBUYER\s*ADDRESS\b",
+        r"\bTO\s*LOCATION\b",
     ]
 
     # Warehouse indicators (should be delivery ONLY)
     WAREHOUSE_KEYWORDS = [
-        r'\bWAREHOUSE\b',
-        r'\bDISTRIBUTION\b',
-        r'\bSTORAGE\b',
-        r'\bTERMINAL\b',
-        r'\bYARD\b(?!\s*(?:LOCATION|ADDRESS))',  # Not "yard location"
+        r"\bWAREHOUSE\b",
+        r"\bDISTRIBUTION\b",
+        r"\bSTORAGE\b",
+        r"\bTERMINAL\b",
+        r"\bYARD\b(?!\s*(?:LOCATION|ADDRESS))",  # Not "yard location"
     ]
 
     # Auction profiles with pickup zone hints
@@ -248,7 +251,7 @@ class LocationClassifier:
             source="default",
         )
 
-    def _match_patterns(self, text: str, patterns: List[re.Pattern]) -> List[str]:
+    def _match_patterns(self, text: str, patterns: list[re.Pattern]) -> list[str]:
         """Find all matching patterns in text."""
         matches = []
         for pattern in patterns:
@@ -261,7 +264,7 @@ class LocationClassifier:
         address_text: str,
         context_text: str = None,
         auction_code: str = None,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Check if an address is definitely a pickup location.
 
@@ -289,7 +292,7 @@ class LocationClassifier:
         self,
         address_text: str,
         context_text: str = None,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Check if an address is likely a delivery location.
 
@@ -314,7 +317,7 @@ class LocationClassifier:
         self,
         location_type: LocationType,
         auction_code: str = None,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Check if a location type should be extracted from document.
 

@@ -9,14 +9,14 @@ Includes:
 - Production corrections → training ingestion
 """
 
-import time
-import json
 import asyncio
-from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timedelta
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
-from pydantic import BaseModel, Field
+import json
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +37,16 @@ def get_cd_semaphore() -> asyncio.Semaphore:
         _cd_semaphore = asyncio.Semaphore(CD_MAX_CONCURRENT_REQUESTS)
     return _cd_semaphore
 
-from api.models import (
-    ExportJobRepository,
-    ExtractionRunRepository,
-    DocumentRepository,
-    AuctionTypeRepository,
-    ReviewItemRepository,
-    ExportStatus,
-)
+
 from api.listing_fields import (
     get_registry,
-    build_cd_payload as build_cd_payload_v2,
-    ListingField,
-    FieldSection,
-    ValueSource,
+)
+from api.models import (
+    AuctionTypeRepository,
+    DocumentRepository,
+    ExportJobRepository,
+    ExtractionRunRepository,
+    ReviewItemRepository,
 )
 
 router = APIRouter(prefix="/api/exports", tags=["Exports"])
@@ -60,28 +56,32 @@ router = APIRouter(prefix="/api/exports", tags=["Exports"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class CDExportRequest(BaseModel):
     """Request to export to Central Dispatch."""
-    run_ids: List[int] = Field(..., description="Extraction run IDs to export")
+
+    run_ids: list[int] = Field(..., description="Extraction run IDs to export")
     dry_run: bool = Field(True, description="Preview only, don't actually send")
     sandbox: bool = Field(True, description="Use CD sandbox environment")
 
 
 class CDPayloadPreview(BaseModel):
     """Preview of a CD API V2 payload."""
+
     dispatch_id: str
     run_id: int
     document_filename: Optional[str] = None
     payload: dict
-    validation_errors: List[str] = []
+    validation_errors: list[str] = []
     is_valid: bool = True
 
 
 class CDExportResponse(BaseModel):
     """Response after CD export."""
+
     job_id: Optional[int] = None
     status: str
-    previews: List[CDPayloadPreview] = []
+    previews: list[CDPayloadPreview] = []
     exported_count: int = 0
     failed_count: int = 0
     message: str
@@ -89,6 +89,7 @@ class CDExportResponse(BaseModel):
 
 class ExportJobResponse(BaseModel):
     """Export job status."""
+
     id: int
     status: str
     target: str = "central_dispatch"
@@ -104,7 +105,8 @@ class ExportJobResponse(BaseModel):
 
 class ExportJobListResponse(BaseModel):
     """List of export jobs."""
-    items: List[ExportJobResponse]
+
+    items: list[ExportJobResponse]
     total: int
 
 
@@ -112,7 +114,8 @@ class ExportJobListResponse(BaseModel):
 # CD PAYLOAD BUILDER
 # =============================================================================
 
-def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, List[str]]:
+
+def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, list[str]]:
     """
     Build Central Dispatch API V2 payload from extraction run.
 
@@ -153,7 +156,9 @@ def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, Lis
 
     # Also get extracted values from outputs_json
     if run.outputs_json:
-        outputs = run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+        outputs = (
+            run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+        )
         for key, value in outputs.items():
             if key not in extracted_values and value is not None:
                 extracted_values[key] = value
@@ -161,10 +166,10 @@ def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, Lis
         if not warehouse_code and outputs.get("warehouse_id"):
             # Try to get warehouse code from warehouse_id
             from api.database import get_connection
+
             with get_connection() as conn:
                 wh_row = conn.execute(
-                    "SELECT code FROM warehouses WHERE id = ?",
-                    (outputs.get("warehouse_id"),)
+                    "SELECT code FROM warehouses WHERE id = ?", (outputs.get("warehouse_id"),)
                 ).fetchone()
                 if wh_row:
                     warehouse_code = wh_row["code"]
@@ -304,7 +309,7 @@ def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, Lis
             "amount": price_total,
             "paymentMethod": "CASH",
             "paymentLocation": "DELIVERY",
-        }
+        },
     }
 
     # Build notes
@@ -316,7 +321,9 @@ def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, Lis
     notes = "; ".join(notes_parts) if notes_parts else ""
 
     # Add warehouse special instructions (from warehouse constants)
-    transportation_notes = get_field("transportation_release_notes") or get_field("special_instructions")
+    transportation_notes = get_field("transportation_release_notes") or get_field(
+        "special_instructions"
+    )
     if transportation_notes:
         if notes:
             notes = f"{notes}; {transportation_notes}"
@@ -379,17 +386,14 @@ def _init_cd_listings_table():
         conn.commit()
 
 
-def get_cd_listing_info(run_id: int) -> Optional[Dict[str, Any]]:
+def get_cd_listing_info(run_id: int) -> Optional[dict[str, Any]]:
     """Get stored CD listing info (listing_id, etag) for a run."""
     from api.database import get_connection
 
     _init_cd_listings_table()
 
     with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM cd_listings WHERE run_id = ?",
-            (run_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM cd_listings WHERE run_id = ?", (run_id,)).fetchone()
 
     return dict(row) if row else None
 
@@ -408,28 +412,33 @@ def save_cd_listing_info(
 
     with get_connection() as conn:
         # Upsert: update if exists, insert if not
-        existing = conn.execute(
-            "SELECT id FROM cd_listings WHERE run_id = ?",
-            (run_id,)
-        ).fetchone()
+        existing = conn.execute("SELECT id FROM cd_listings WHERE run_id = ?", (run_id,)).fetchone()
 
         if existing:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE cd_listings
                 SET cd_listing_id = ?, etag = ?, external_id = ?,
                     sandbox = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE run_id = ?
-            """, (cd_listing_id, etag, external_id, sandbox, run_id))
+            """,
+                (cd_listing_id, etag, external_id, sandbox, run_id),
+            )
         else:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO cd_listings (run_id, cd_listing_id, etag, external_id, sandbox)
                 VALUES (?, ?, ?, ?, ?)
-            """, (run_id, cd_listing_id, etag, external_id, sandbox))
+            """,
+                (run_id, cd_listing_id, etag, external_id, sandbox),
+            )
 
         conn.commit()
 
 
-def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool, Optional[str], dict]:
+def get_cd_listing_etag(
+    cd_listing_id: str, sandbox: bool = True
+) -> tuple[bool, Optional[str], dict]:
     """
     GET a listing from CD to retrieve current ETag.
 
@@ -468,10 +477,14 @@ def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool,
             return True, etag, response.json()
         else:
             logger.warning(f"GET failed: {response.status_code} - {response.text[:200]}")
-            return False, None, {
-                "status_code": response.status_code,
-                "error": response.text,
-            }
+            return (
+                False,
+                None,
+                {
+                    "status_code": response.status_code,
+                    "error": response.text,
+                },
+            )
 
     except requests.RequestException as e:
         logger.error(f"GET request error: {e}")
@@ -529,7 +542,7 @@ def send_to_cd(
     sandbox: bool = True,
     cd_listing_id: Optional[str] = None,
     etag: Optional[str] = None,
-) -> Tuple[bool, dict, Optional[str], Optional[str]]:
+) -> tuple[bool, dict, Optional[str], Optional[str]]:
     """
     Send payload to Central Dispatch API V2.
 
@@ -617,7 +630,7 @@ def send_to_cd(
 
             # If no ETag in response, fetch it
             if listing_id and not new_etag:
-                logger.info(f"No ETag in POST response, fetching via GET")
+                logger.info("No ETag in POST response, fetching via GET")
                 success, new_etag, _ = get_cd_listing_etag(listing_id, sandbox=sandbox)
 
             try:
@@ -637,29 +650,44 @@ def send_to_cd(
         elif response.status_code == 412:
             # Precondition Failed - ETag mismatch (concurrent modification)
             logger.warning(f"412 Precondition Failed - ETag mismatch for {cd_listing_id}")
-            return False, {
-                "status_code": 412,
-                "error": "ETag mismatch - listing was modified. Please refresh and retry.",
-                "error_code": "ETAG_MISMATCH",
-            }, None, None
+            return (
+                False,
+                {
+                    "status_code": 412,
+                    "error": "ETag mismatch - listing was modified. Please refresh and retry.",
+                    "error_code": "ETAG_MISMATCH",
+                },
+                None,
+                None,
+            )
 
         elif response.status_code == 429:
             # Rate limited
             retry_after = response.headers.get("Retry-After", "60")
             logger.warning(f"429 Rate Limited, Retry-After: {retry_after}")
-            return False, {
-                "status_code": 429,
-                "error": "Rate limited by CD API. Please wait and retry.",
-                "error_code": "RATE_LIMITED",
-                "retry_after": retry_after,
-            }, None, None
+            return (
+                False,
+                {
+                    "status_code": 429,
+                    "error": "Rate limited by CD API. Please wait and retry.",
+                    "error_code": "RATE_LIMITED",
+                    "retry_after": retry_after,
+                },
+                None,
+                None,
+            )
 
         else:
             logger.error(f"CD API error {response.status_code}: {response.text[:500]}")
-            return False, {
-                "status_code": response.status_code,
-                "error": response.text,
-            }, None, None
+            return (
+                False,
+                {
+                    "status_code": response.status_code,
+                    "error": response.text,
+                },
+                None,
+                None,
+            )
 
     except requests.RequestException as e:
         logger.error(f"Request exception: {e}")
@@ -671,7 +699,7 @@ async def send_to_cd_with_retry(
     sandbox: bool = True,
     run_id: Optional[int] = None,
     force_create: bool = False,
-) -> Tuple[bool, dict, Optional[str]]:
+) -> tuple[bool, dict, Optional[str]]:
     """
     Send to CD with rate limiting and retry logic (M3.Export).
 
@@ -692,9 +720,13 @@ async def send_to_cd_with_retry(
     """
     # Import audit logging (M3.Export)
     from api.audit_log import (
-        log_post_create, log_post_update, log_post_fail,
-        log_etag_conflict, log_etag_refresh, log_duplicate_detected,
         generate_request_id,
+        log_duplicate_detected,
+        log_etag_conflict,
+        log_etag_refresh,
+        log_post_create,
+        log_post_fail,
+        log_post_update,
     )
 
     request_id = generate_request_id()
@@ -723,8 +755,7 @@ async def send_to_cd_with_retry(
             if cd_listing_id and not etag:
                 logger.info(f"Found existing CD listing {cd_listing_id}, fetching ETag...")
                 success, fresh_etag, _ = await loop.run_in_executor(
-                    None,
-                    lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
+                    None, lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
                 )
                 if success and fresh_etag:
                     etag = fresh_etag
@@ -732,20 +763,26 @@ async def send_to_cd_with_retry(
                     logger.info(f"Got fresh ETag: {etag}")
                 else:
                     # Listing may have been deleted, force create
-                    logger.warning(f"Could not fetch ETag for {cd_listing_id}, creating new listing")
+                    logger.warning(
+                        f"Could not fetch ETag for {cd_listing_id}, creating new listing"
+                    )
                     cd_listing_id = None
                     is_update = False
 
             # For POST retries: check if listing was created on previous attempt
             # (handles network errors where CD created listing but response was lost)
             if attempt > 0 and not is_update and partner_ref_id:
-                logger.info(f"Retry attempt {attempt + 1}: checking for existing listing by partnerReferenceId")
+                logger.info(
+                    f"Retry attempt {attempt + 1}: checking for existing listing by partnerReferenceId"
+                )
                 existing_id = await loop.run_in_executor(
                     None,
-                    lambda pref=partner_ref_id: find_listing_by_partner_ref(pref, sandbox=sandbox)
+                    lambda pref=partner_ref_id: find_listing_by_partner_ref(pref, sandbox=sandbox),
                 )
                 if existing_id:
-                    logger.info(f"Found existing listing {existing_id} from previous attempt, treating as success")
+                    logger.info(
+                        f"Found existing listing {existing_id} from previous attempt, treating as success"
+                    )
                     # Audit: Duplicate detected during retry
                     if run_id:
                         log_duplicate_detected(
@@ -756,8 +793,7 @@ async def send_to_cd_with_retry(
                         )
                     # Fetch ETag for the found listing
                     success, found_etag, resp_data = await loop.run_in_executor(
-                        None,
-                        lambda eid=existing_id: get_cd_listing_etag(eid, sandbox=sandbox)
+                        None, lambda eid=existing_id: get_cd_listing_etag(eid, sandbox=sandbox)
                     )
                     if run_id:
                         save_cd_listing_info(
@@ -774,10 +810,8 @@ async def send_to_cd_with_retry(
             result = await loop.run_in_executor(
                 None,
                 lambda lid=cd_listing_id, et=etag: send_to_cd(
-                    payload, sandbox,
-                    lid if is_update else None,
-                    et if is_update else None
-                )
+                    payload, sandbox, lid if is_update else None, et if is_update else None
+                ),
             )
             success, response, new_etag, result_listing_id = result
 
@@ -835,8 +869,7 @@ async def send_to_cd_with_retry(
                 if cd_listing_id:
                     old_etag = etag
                     success, fresh_etag, _ = await loop.run_in_executor(
-                        None,
-                        lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
+                        None, lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
                     )
                     if success and fresh_etag:
                         etag = fresh_etag
@@ -855,7 +888,7 @@ async def send_to_cd_with_retry(
 
             if status_code in (429, 500, 502, 503, 504):
                 # Retry with exponential backoff
-                backoff = min(CD_BACKOFF_BASE ** attempt, CD_BACKOFF_MAX)
+                backoff = min(CD_BACKOFF_BASE**attempt, CD_BACKOFF_MAX)
                 if status_code == 429:
                     # Use Retry-After if provided
                     retry_after = response.get("retry_after")
@@ -865,7 +898,9 @@ async def send_to_cd_with_retry(
                         except ValueError:
                             pass
 
-                logger.warning(f"CD API error {status_code}, retrying in {backoff}s (attempt {attempt + 1}/{CD_RETRY_ATTEMPTS})")
+                logger.warning(
+                    f"CD API error {status_code}, retrying in {backoff}s (attempt {attempt + 1}/{CD_RETRY_ATTEMPTS})"
+                )
                 await asyncio.sleep(backoff)
                 last_error = response
                 continue
@@ -899,6 +934,7 @@ async def send_to_cd_with_retry(
 # ROUTES
 # =============================================================================
 
+
 @router.post("/central-dispatch", response_model=CDExportResponse)
 async def export_to_cd(
     data: CDExportRequest,
@@ -924,13 +960,15 @@ async def export_to_cd(
     for run_id in data.run_ids:
         run = ExtractionRunRepository.get_by_id(run_id)
         if not run:
-            previews.append(CDPayloadPreview(
-                dispatch_id="",
-                run_id=run_id,
-                payload={},
-                validation_errors=["Run not found"],
-                is_valid=False,
-            ))
+            previews.append(
+                CDPayloadPreview(
+                    dispatch_id="",
+                    run_id=run_id,
+                    payload={},
+                    validation_errors=["Run not found"],
+                    is_valid=False,
+                )
+            )
             failed_count += 1
             continue
 
@@ -942,20 +980,22 @@ async def export_to_cd(
                     """SELECT id, status, created_at FROM export_jobs
                        WHERE run_id = ? AND status = 'completed'
                        ORDER BY created_at DESC LIMIT 1""",
-                    (run_id,)
+                    (run_id,),
                 ).fetchone()
 
             if existing_job:
-                previews.append(CDPayloadPreview(
-                    dispatch_id="",
-                    run_id=run_id,
-                    payload={},
-                    validation_errors=[
-                        f"Already exported (job #{existing_job['id']} on {existing_job['created_at']}). "
-                        "Use force=true to re-export."
-                    ],
-                    is_valid=False,
-                ))
+                previews.append(
+                    CDPayloadPreview(
+                        dispatch_id="",
+                        run_id=run_id,
+                        payload={},
+                        validation_errors=[
+                            f"Already exported (job #{existing_job['id']} on {existing_job['created_at']}). "
+                            "Use force=true to re-export."
+                        ],
+                        is_valid=False,
+                    )
+                )
                 skipped_count += 1
                 continue
 
@@ -965,20 +1005,21 @@ async def export_to_cd(
         if doc:
             with get_connection() as conn:
                 is_test = conn.execute(
-                    "SELECT is_test FROM documents WHERE id = ?",
-                    (doc.id,)
+                    "SELECT is_test FROM documents WHERE id = ?", (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
-                    previews.append(CDPayloadPreview(
-                        dispatch_id="",
-                        run_id=run_id,
-                        payload={},
-                        validation_errors=[
-                            "Test document - export to Central Dispatch is blocked. "
-                            "Use production documents for real exports."
-                        ],
-                        is_valid=False,
-                    ))
+                    previews.append(
+                        CDPayloadPreview(
+                            dispatch_id="",
+                            run_id=run_id,
+                            payload={},
+                            validation_errors=[
+                                "Test document - export to Central Dispatch is blocked. "
+                                "Use production documents for real exports."
+                            ],
+                            is_valid=False,
+                        )
+                    )
                     skipped_count += 1
                     continue
 
@@ -1109,9 +1150,7 @@ async def list_export_jobs(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM export_jobs WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM export_jobs WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
@@ -1121,16 +1160,18 @@ async def list_export_jobs(
         if data.get("response_json"):
             data["response_json"] = json.loads(data["response_json"])
 
-        items.append(ExportJobResponse(
-            id=data["id"],
-            status=data["status"],
-            target=data["target"],
-            payload_json=data.get("payload_json"),
-            response_json=data.get("response_json"),
-            error_message=data.get("error_message"),
-            created_at=data.get("created_at"),
-            completed_at=data.get("completed_at"),
-        ))
+        items.append(
+            ExportJobResponse(
+                id=data["id"],
+                status=data["status"],
+                target=data["target"],
+                payload_json=data.get("payload_json"),
+                response_json=data.get("response_json"),
+                error_message=data.get("error_message"),
+                created_at=data.get("created_at"),
+                completed_at=data.get("completed_at"),
+            )
+        )
 
     return ExportJobListResponse(items=items, total=total)
 
@@ -1202,6 +1243,7 @@ async def retry_export_job(job_id: int, sandbox: bool = Query(True)):
 # FIELD REGISTRY ENDPOINT (Single Source of Truth)
 # =============================================================================
 
+
 @router.get("/cd-listing/{run_id}")
 async def get_cd_listing(run_id: int):
     """
@@ -1270,7 +1312,9 @@ async def get_blocking_issues(run_id: int):
 
     # Check if outputs_json has more data
     if run.outputs_json:
-        outputs = run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+        outputs = (
+            run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+        )
         for key, value in outputs.items():
             if key not in data:
                 data[key] = value
@@ -1292,32 +1336,36 @@ async def get_blocking_issues(run_id: int):
 # BATCH POSTING
 # =============================================================================
 
+
 class BatchPostRequest(BaseModel):
     """Batch posting request."""
-    run_ids: List[int] = Field(..., description="Extraction run IDs to post")
+
+    run_ids: list[int] = Field(..., description="Extraction run IDs to post")
     post_only_ready: bool = Field(True, description="Only post runs without blocking issues")
     sandbox: bool = Field(True, description="Use CD sandbox environment")
 
 
 class BatchPostResult(BaseModel):
     """Result for a single run in batch."""
+
     run_id: int
     document_filename: Optional[str] = None
     status: str  # "success", "failed", "skipped", "blocked"
     message: str
     cd_listing_id: Optional[str] = None
-    blocking_issues: List[str] = []
+    blocking_issues: list[str] = []
 
 
 class BatchPostResponse(BaseModel):
     """Batch posting response."""
+
     total: int
     ready: int
     not_ready: int
     posted: int
     failed: int
     skipped: int
-    results: List[BatchPostResult]
+    results: list[BatchPostResult]
 
 
 @router.post("/batch-post", response_model=BatchPostResponse)
@@ -1361,8 +1409,7 @@ async def batch_post(request: BatchPostRequest):
         if doc:
             with get_connection() as conn:
                 is_test = conn.execute(
-                    "SELECT is_test FROM documents WHERE id = ?",
-                    (doc.id,)
+                    "SELECT is_test FROM documents WHERE id = ?", (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
                     skipped_count += 1
@@ -1394,7 +1441,11 @@ async def batch_post(request: BatchPostRequest):
             data[item.source_key] = value
 
         if run.outputs_json:
-            outputs = run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+            outputs = (
+                run.outputs_json
+                if isinstance(run.outputs_json, dict)
+                else json.loads(run.outputs_json)
+            )
             for key, value in outputs.items():
                 if key not in data:
                     data[key] = value
@@ -1498,7 +1549,7 @@ async def batch_post(request: BatchPostRequest):
 
 
 @router.post("/batch-post/preflight")
-async def batch_post_preflight(run_ids: List[int]):
+async def batch_post_preflight(run_ids: list[int]):
     """
     Preflight check for batch posting.
 
@@ -1514,10 +1565,12 @@ async def batch_post_preflight(run_ids: List[int]):
     for run_id in run_ids:
         run = ExtractionRunRepository.get_by_id(run_id)
         if not run:
-            not_ready.append({
-                "run_id": run_id,
-                "reason": "Run not found",
-            })
+            not_ready.append(
+                {
+                    "run_id": run_id,
+                    "reason": "Run not found",
+                }
+            )
             continue
 
         doc = DocumentRepository.get_by_id(run.document_id)
@@ -1526,24 +1579,27 @@ async def batch_post_preflight(run_ids: List[int]):
         if doc:
             with get_connection() as conn:
                 is_test = conn.execute(
-                    "SELECT is_test FROM documents WHERE id = ?",
-                    (doc.id,)
+                    "SELECT is_test FROM documents WHERE id = ?", (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
-                    not_ready.append({
-                        "run_id": run_id,
-                        "document_filename": doc.filename,
-                        "reason": "Test document",
-                    })
+                    not_ready.append(
+                        {
+                            "run_id": run_id,
+                            "document_filename": doc.filename,
+                            "reason": "Test document",
+                        }
+                    )
                     continue
 
         # Check if already exported
         if run.status == "exported":
-            not_ready.append({
-                "run_id": run_id,
-                "document_filename": doc.filename if doc else None,
-                "reason": "Already exported",
-            })
+            not_ready.append(
+                {
+                    "run_id": run_id,
+                    "document_filename": doc.filename if doc else None,
+                    "reason": "Already exported",
+                }
+            )
             continue
 
         # Get field data
@@ -1554,7 +1610,11 @@ async def batch_post_preflight(run_ids: List[int]):
             data[item.source_key] = value
 
         if run.outputs_json:
-            outputs = run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+            outputs = (
+                run.outputs_json
+                if isinstance(run.outputs_json, dict)
+                else json.loads(run.outputs_json)
+            )
             for key, value in outputs.items():
                 if key not in data:
                     data[key] = value
@@ -1564,16 +1624,20 @@ async def batch_post_preflight(run_ids: List[int]):
         issues = registry.get_blocking_issues(data, warehouse_selected=warehouse_selected)
 
         if issues:
-            not_ready.append({
-                "run_id": run_id,
-                "document_filename": doc.filename if doc else None,
-                "issues": [i["issue"] for i in issues],
-            })
+            not_ready.append(
+                {
+                    "run_id": run_id,
+                    "document_filename": doc.filename if doc else None,
+                    "issues": [i["issue"] for i in issues],
+                }
+            )
         else:
-            ready.append({
-                "run_id": run_id,
-                "document_filename": doc.filename if doc else None,
-            })
+            ready.append(
+                {
+                    "run_id": run_id,
+                    "document_filename": doc.filename if doc else None,
+                }
+            )
 
     return {
         "total": len(run_ids),
@@ -1588,8 +1652,10 @@ async def batch_post_preflight(run_ids: List[int]):
 # PRODUCTION CORRECTIONS → TRAINING
 # =============================================================================
 
+
 class ProductionCorrectionItem(BaseModel):
     """Single field correction from production."""
+
     field_key: str
     old_value: Optional[str] = None
     new_value: str
@@ -1598,13 +1664,15 @@ class ProductionCorrectionItem(BaseModel):
 
 class ProductionCorrectionsRequest(BaseModel):
     """Submit production corrections for training."""
+
     run_id: int
-    corrections: List[ProductionCorrectionItem]
+    corrections: list[ProductionCorrectionItem]
     save_to_extraction: bool = Field(True, description="Update extraction outputs_json")
 
 
 class ProductionCorrectionsResponse(BaseModel):
     """Response after saving production corrections."""
+
     success: bool
     corrections_saved: int
     training_events_created: int
@@ -1675,21 +1743,24 @@ async def submit_production_corrections(request: ProductionCorrectionsRequest):
         """)
 
         for correction in request.corrections:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO production_corrections
                 (run_id, document_id, auction_type_id, auction_type_code,
                  field_key, old_value, new_value, context_snippet)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                request.run_id,
-                doc.id if doc else None,
-                at.id if at else None,
-                at.code if at else None,
-                correction.field_key,
-                correction.old_value,
-                correction.new_value,
-                correction.context_snippet,
-            ))
+            """,
+                (
+                    request.run_id,
+                    doc.id if doc else None,
+                    at.id if at else None,
+                    at.code if at else None,
+                    correction.field_key,
+                    correction.old_value,
+                    correction.new_value,
+                    correction.context_snippet,
+                ),
+            )
             training_events_created += 1
 
         conn.commit()
@@ -1747,9 +1818,7 @@ async def list_production_corrections(
         rows = conn.execute(sql, params).fetchall()
 
         # Get counts
-        total = conn.execute(
-            "SELECT COUNT(*) FROM production_corrections"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM production_corrections").fetchone()[0]
         applied_count = conn.execute(
             "SELECT COUNT(*) FROM production_corrections WHERE applied_to_training = TRUE"
         ).fetchone()[0]
@@ -1765,7 +1834,7 @@ async def list_production_corrections(
 
 @router.post("/production-corrections/apply-to-training")
 async def apply_production_corrections_to_training(
-    correction_ids: List[int] = None,
+    correction_ids: list[int] = None,
     apply_all_pending: bool = False,
 ):
     """
@@ -1779,8 +1848,7 @@ async def apply_production_corrections_to_training(
 
     if not correction_ids and not apply_all_pending:
         raise HTTPException(
-            status_code=400,
-            detail="Either provide correction_ids or set apply_all_pending=true"
+            status_code=400, detail="Either provide correction_ids or set apply_all_pending=true"
         )
 
     with get_connection() as conn:
@@ -1791,10 +1859,13 @@ async def apply_production_corrections_to_training(
             """).fetchall()
         else:
             placeholders = ",".join("?" * len(correction_ids))
-            rows = conn.execute(f"""
+            rows = conn.execute(
+                f"""
                 SELECT * FROM production_corrections
                 WHERE id IN ({placeholders}) AND applied_to_training = FALSE
-            """, correction_ids).fetchall()
+            """,
+                correction_ids,
+            ).fetchall()
 
         if not rows:
             return {
@@ -1818,17 +1889,19 @@ async def apply_production_corrections_to_training(
         try:
             service = TrainingService(session)
 
-            for at_code, corrections in by_auction.items():
+            for _at_code, corrections in by_auction.items():
                 for corr in corrections:
                     # Create training example from production correction
                     service.save_corrections(
                         run_id=corr["run_id"],
-                        corrections=[{
-                            "field_key": corr["field_key"],
-                            "predicted_value": corr["old_value"],
-                            "corrected_value": corr["new_value"],
-                            "was_correct": False,
-                        }],
+                        corrections=[
+                            {
+                                "field_key": corr["field_key"],
+                                "predicted_value": corr["old_value"],
+                                "corrected_value": corr["new_value"],
+                                "was_correct": False,
+                            }
+                        ],
                         mark_validated=True,
                         source="production",
                     )
@@ -1838,7 +1911,7 @@ async def apply_production_corrections_to_training(
             for row in rows:
                 conn.execute(
                     "UPDATE production_corrections SET applied_to_training = TRUE WHERE id = ?",
-                    (row["id"],)
+                    (row["id"],),
                 )
             conn.commit()
 
@@ -1856,9 +1929,10 @@ async def apply_production_corrections_to_training(
 # BATCH JOB ENDPOINTS (M3.BatchQueue)
 # =============================================================================
 
+
 @router.post("/batch-jobs")
 async def create_batch_export_job(
-    run_ids: List[int],
+    run_ids: list[int],
     sandbox: bool = True,
     post_only_ready: bool = True,
     background_tasks: BackgroundTasks = None,
@@ -1877,7 +1951,7 @@ async def create_batch_export_job(
     Returns:
         Job ID and initial status
     """
-    from api.batch_jobs import create_batch_job, run_batch_job
+    from api.batch_jobs import create_batch_job
 
     if not run_ids:
         raise HTTPException(status_code=400, detail="No run IDs provided")
@@ -1910,6 +1984,7 @@ async def create_batch_export_job(
 def _run_batch_job_sync(job_id: int, sandbox: bool):
     """Synchronous wrapper for async batch job processing."""
     import asyncio
+
     from api.batch_jobs import run_batch_job
 
     loop = asyncio.new_event_loop()
@@ -1918,6 +1993,7 @@ def _run_batch_job_sync(job_id: int, sandbox: bool):
         loop.run_until_complete(run_batch_job(job_id, sandbox=sandbox))
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).error(f"Batch job {job_id} error: {e}")
     finally:
         loop.close()
@@ -1961,6 +2037,7 @@ async def list_batch_jobs(
 # =============================================================================
 # AUDIT TRAIL ENDPOINTS (M3.Export)
 # =============================================================================
+
 
 @router.get("/audit-trail/{run_id}")
 async def get_run_audit_trail(run_id: int):
@@ -2012,8 +2089,7 @@ async def cancel_batch_job(job_id: int):
 
     if job["status"] not in (BatchJobStatus.PENDING.value, BatchJobStatus.RUNNING.value):
         raise HTTPException(
-            status_code=400,
-            detail=f"Cannot cancel job with status: {job['status']}"
+            status_code=400, detail=f"Cannot cancel job with status: {job['status']}"
         )
 
     BatchJobRepository.update(

@@ -18,30 +18,27 @@ import argparse
 import asyncio
 import json
 import logging
-import os
+import random
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from statistics import mean, stdev
-import random
+from statistics import mean
+from typing import Any, Optional
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class TimingMetrics:
     """Timing metrics for a single operation."""
+
     operation: str
     duration_ms: float
     success: bool
@@ -52,6 +49,7 @@ class TimingMetrics:
 @dataclass
 class LoadTestReport:
     """Complete load test report."""
+
     test_name: str
     started_at: str
     completed_at: str
@@ -64,8 +62,8 @@ class LoadTestReport:
     p95_ms: float
     p99_ms: float
     avg_ms: float
-    errors: List[str]
-    details: Dict[str, Any]
+    errors: list[str]
+    details: dict[str, Any]
 
 
 class LoadTestRunner:
@@ -73,7 +71,7 @@ class LoadTestRunner:
 
     def __init__(self, base_url: str = "http://localhost:8000"):
         self.base_url = base_url
-        self.metrics: List[TimingMetrics] = []
+        self.metrics: list[TimingMetrics] = []
 
     async def run_extraction_batch(self, batch_size: int = 50) -> LoadTestReport:
         """
@@ -118,7 +116,7 @@ class LoadTestRunner:
                             async with session.post(
                                 f"{self.base_url}/api/extractions/upload",
                                 data=data,
-                                timeout=aiohttp.ClientTimeout(total=60)
+                                timeout=aiohttp.ClientTimeout(total=60),
                             ) as response:
                                 if response.status in (200, 201):
                                     successful += 1
@@ -143,13 +141,15 @@ class LoadTestRunner:
                 op_duration = (time.time() - op_start) * 1000  # ms
                 timings.append(op_duration)
 
-                self.metrics.append(TimingMetrics(
-                    operation="extraction",
-                    duration_ms=op_duration,
-                    success=error is None,
-                    error=error,
-                    retries=op_retries
-                ))
+                self.metrics.append(
+                    TimingMetrics(
+                        operation="extraction",
+                        duration_ms=op_duration,
+                        success=error is None,
+                        error=error,
+                        retries=op_retries,
+                    )
+                )
 
                 retries += op_retries
 
@@ -184,7 +184,7 @@ class LoadTestRunner:
             details={
                 "target_p95_ms": 30000,
                 "passed_p95": p95 < 30000,
-            }
+            },
         )
 
     async def run_ocr_load(self, num_scans: int = 10) -> LoadTestReport:
@@ -198,6 +198,7 @@ class LoadTestRunner:
         start_time = time.time()
 
         import psutil
+
         initial_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
 
         successful = 0
@@ -227,12 +228,11 @@ class LoadTestRunner:
             op_duration = (time.time() - op_start) * 1000
             timings.append(op_duration)
 
-            self.metrics.append(TimingMetrics(
-                operation="ocr",
-                duration_ms=op_duration,
-                success=error is None,
-                error=error
-            ))
+            self.metrics.append(
+                TimingMetrics(
+                    operation="ocr", duration_ms=op_duration, success=error is None, error=error
+                )
+            )
 
         final_memory = psutil.Process().memory_info().rss / 1024 / 1024
         memory_delta = final_memory - initial_memory
@@ -265,7 +265,7 @@ class LoadTestRunner:
                 "final_memory_mb": final_memory,
                 "memory_delta_mb": memory_delta,
                 "memory_leak_detected": memory_delta > 100,  # >100MB growth is concerning
-            }
+            },
         )
 
     async def run_cd_rate_limit_test(self, num_requests: int = 100) -> LoadTestReport:
@@ -287,7 +287,7 @@ class LoadTestRunner:
 
         import aiohttp
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession():
             # Simulate concurrent requests with semaphore
             semaphore = asyncio.Semaphore(5)  # Max 5 concurrent
 
@@ -352,7 +352,7 @@ class LoadTestRunner:
                 "rate_limited_count": rate_limited_count,
                 "max_concurrency": 5,
                 "requests_per_second": num_requests / duration if duration > 0 else 0,
-            }
+            },
         )
 
     async def run_chaos_network_test(self, duration_seconds: int = 120) -> LoadTestReport:
@@ -372,7 +372,7 @@ class LoadTestRunner:
 
         # Simulate network outage periods
         outage_start = 30  # Start outage at 30s
-        outage_end = 90     # End outage at 90s
+        outage_end = 90  # End outage at 90s
 
         while time.time() - start_time < duration_seconds:
             elapsed = time.time() - start_time
@@ -391,7 +391,7 @@ class LoadTestRunner:
                 if elapsed > outage_end and elapsed < outage_end + 10:
                     recovered += 1
 
-            except ConnectionError as e:
+            except ConnectionError:
                 failed += 1
                 # Should be logged in audit
 
@@ -418,7 +418,7 @@ class LoadTestRunner:
                 "outage_duration_seconds": outage_end - outage_start,
                 "recovered_after_outage": recovered,
                 "controlled_degradation": failed > 0 and successful > 0,
-            }
+            },
         )
 
 
@@ -427,9 +427,16 @@ async def main():
     parser.add_argument("--batch-size", type=int, default=50, help="Batch test size")
     parser.add_argument("--ocr-count", type=int, default=10, help="OCR test count")
     parser.add_argument("--output", type=str, default="load_test_report.json", help="Output file")
-    parser.add_argument("--base-url", type=str, default="http://localhost:8000", help="API base URL")
-    parser.add_argument("--test", type=str, choices=["all", "batch", "ocr", "rate", "chaos"],
-                        default="all", help="Test to run")
+    parser.add_argument(
+        "--base-url", type=str, default="http://localhost:8000", help="API base URL"
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        choices=["all", "batch", "ocr", "rate", "chaos"],
+        default="all",
+        help="Test to run",
+    )
 
     args = parser.parse_args()
 
@@ -442,7 +449,9 @@ async def main():
         logger.info("=" * 60)
         report = await runner.run_extraction_batch(args.batch_size)
         reports.append(asdict(report))
-        logger.info(f"Batch test: {report.successful}/{report.total_operations} successful, p95={report.p95_ms:.0f}ms")
+        logger.info(
+            f"Batch test: {report.successful}/{report.total_operations} successful, p95={report.p95_ms:.0f}ms"
+        )
 
     if args.test in ("all", "ocr"):
         logger.info("=" * 60)
@@ -466,7 +475,9 @@ async def main():
         logger.info("=" * 60)
         report = await runner.run_chaos_network_test(30)  # Shortened for CI
         reports.append(asdict(report))
-        logger.info(f"Chaos test: degradation controlled={report.details.get('controlled_degradation')}")
+        logger.info(
+            f"Chaos test: degradation controlled={report.details.get('controlled_degradation')}"
+        )
 
     # Write report
     final_report = {
@@ -475,7 +486,7 @@ async def main():
         "summary": {
             "total_tests": len(reports),
             "all_passed": all(r.get("failed", 0) == 0 for r in reports),
-        }
+        },
     }
 
     with open(args.output, "w") as f:

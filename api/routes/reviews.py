@@ -4,19 +4,19 @@ Review API Routes
 Manage review items and submit corrections for training.
 """
 
-from typing import Optional, List
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.models import (
-    ReviewItemRepository,
-    TrainingExampleRepository,
-    ExtractionRunRepository,
-    DocumentRepository,
     AuctionTypeRepository,
-    ReviewStatus,
+    DocumentRepository,
+    ExtractionRunRepository,
     FieldEvidenceRepository,
     LayoutBlockRepository,
+    ReviewItemRepository,
+    TrainingExampleRepository,
 )
 
 router = APIRouter(prefix="/api/review", tags=["Review"])
@@ -26,8 +26,10 @@ router = APIRouter(prefix="/api/review", tags=["Review"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class ReviewItemResponse(BaseModel):
     """A single review item."""
+
     id: int
     run_id: int
     source_key: str
@@ -47,6 +49,7 @@ class ReviewItemResponse(BaseModel):
 
 class ReviewRunResponse(BaseModel):
     """Response for a review run with all items."""
+
     run_id: int
     document_id: int
     document_filename: Optional[str] = None
@@ -54,28 +57,33 @@ class ReviewRunResponse(BaseModel):
     auction_type_code: Optional[str] = None
     status: str
     extraction_score: Optional[float] = None
-    items: List[ReviewItemResponse]
+    items: list[ReviewItemResponse]
     reviewed_count: int
     total_count: int
 
 
 class ReviewItemUpdate(BaseModel):
     """Update a single review item. Item_id is REQUIRED for proper binding."""
+
     item_id: int = Field(..., description="Review item ID (required)")
-    corrected_value: Optional[str] = Field(None, description="Corrected value (if different from predicted)")
+    corrected_value: Optional[str] = Field(
+        None, description="Corrected value (if different from predicted)"
+    )
     is_match_ok: bool = Field(..., description="True if predicted value is correct")
     export_field: bool = Field(True, description="Include this field in export")
 
 
 class ReviewSubmitRequest(BaseModel):
     """Submit review corrections for a run."""
+
     run_id: int = Field(..., description="Extraction run ID")
-    items: List[ReviewItemUpdate] = Field(..., description="Updated review items")
+    items: list[ReviewItemUpdate] = Field(..., description="Updated review items")
     mark_as_reviewed: bool = Field(True, description="Mark run as reviewed after submit")
 
 
 class ReviewSubmitResponse(BaseModel):
     """Response after submitting review."""
+
     run_id: int
     status: str
     items_updated: int
@@ -85,6 +93,7 @@ class ReviewSubmitResponse(BaseModel):
 
 class TrainingExampleResponse(BaseModel):
     """A training example created from review."""
+
     id: int
     document_id: int
     auction_type_id: int
@@ -98,12 +107,14 @@ class TrainingExampleResponse(BaseModel):
 
 class TrainingExamplesListResponse(BaseModel):
     """Response for training examples list."""
-    items: List[TrainingExampleResponse]
+
+    items: list[TrainingExampleResponse]
     total: int
 
 
 class BboxResponse(BaseModel):
     """Bounding box coordinates."""
+
     x0: float
     y0: float
     x1: float
@@ -112,6 +123,7 @@ class BboxResponse(BaseModel):
 
 class FieldEvidenceResponse(BaseModel):
     """Evidence for a single field extraction."""
+
     id: int
     field_key: str
     block_id: Optional[int] = None
@@ -125,6 +137,7 @@ class FieldEvidenceResponse(BaseModel):
 
 class LayoutBlockResponse(BaseModel):
     """A layout block from the document."""
+
     id: int
     block_id: Optional[str] = None
     page_num: int
@@ -136,15 +149,17 @@ class LayoutBlockResponse(BaseModel):
 
 class RunEvidenceResponse(BaseModel):
     """All evidence and layout blocks for a run."""
+
     run_id: int
     document_id: int
-    evidence: List[FieldEvidenceResponse]
-    blocks: List[LayoutBlockResponse]
+    evidence: list[FieldEvidenceResponse]
+    blocks: list[LayoutBlockResponse]
     evidence_by_field: dict  # {field_key: [evidence_items]}
 
 
 class PreflightIssue(BaseModel):
     """A preflight validation issue."""
+
     field_key: str
     issue: str
     severity: str  # "blocking", "warning"
@@ -153,16 +168,18 @@ class PreflightIssue(BaseModel):
 
 class PreflightResponse(BaseModel):
     """Preflight validation result for a run."""
+
     run_id: int
     is_ready: bool
     blocking_count: int
     warning_count: int
-    issues: List[PreflightIssue]
+    issues: list[PreflightIssue]
 
 
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.get("/{run_id}", response_model=ReviewRunResponse)
 async def get_review_for_run(run_id: int):
@@ -328,7 +345,9 @@ async def submit_review(data: ReviewSubmitRequest):
 
     # Return 400 if any item_id was invalid
     if errors:
-        raise HTTPException(status_code=400, detail={"message": "Some items not found", "errors": errors})
+        raise HTTPException(
+            status_code=400, detail={"message": "Some items not found", "errors": errors}
+        )
 
     # Mark run as reviewed
     if data.mark_as_reviewed:
@@ -425,9 +444,10 @@ async def export_training_data(
 
     Returns JSONL or CSV format suitable for fine-tuning.
     """
-    from fastapi.responses import StreamingResponse
-    import json
     import io
+    import json
+
+    from fastapi.responses import StreamingResponse
 
     from api.database import get_connection
 
@@ -451,24 +471,40 @@ async def export_training_data(
 
     if format == "csv":
         import csv
+
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow([
-            "id", "document_id", "auction_type_code", "field_key",
-            "predicted_value", "gold_value", "is_correct", "source_text_snippet"
-        ])
+        writer.writerow(
+            [
+                "id",
+                "document_id",
+                "auction_type_code",
+                "field_key",
+                "predicted_value",
+                "gold_value",
+                "is_correct",
+                "source_text_snippet",
+            ]
+        )
         for row in rows:
-            writer.writerow([
-                row["id"], row["document_id"], row["auction_type_code"],
-                row["field_key"], row["predicted_value"], row["gold_value"],
-                row["is_correct"], row["source_text_snippet"][:200] if row["source_text_snippet"] else ""
-            ])
+            writer.writerow(
+                [
+                    row["id"],
+                    row["document_id"],
+                    row["auction_type_code"],
+                    row["field_key"],
+                    row["predicted_value"],
+                    row["gold_value"],
+                    row["is_correct"],
+                    row["source_text_snippet"][:200] if row["source_text_snippet"] else "",
+                ]
+            )
 
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=training_examples.csv"}
+            headers={"Content-Disposition": "attachment; filename=training_examples.csv"},
         )
 
     else:  # jsonl
@@ -490,13 +526,14 @@ async def export_training_data(
         return StreamingResponse(
             iter([content]),
             media_type="application/x-jsonlines",
-            headers={"Content-Disposition": "attachment; filename=training_examples.jsonl"}
+            headers={"Content-Disposition": "attachment; filename=training_examples.jsonl"},
         )
 
 
 # =============================================================================
 # EVIDENCE & PREFLIGHT ENDPOINTS (M3.P2)
 # =============================================================================
+
 
 @router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
 async def get_run_evidence(run_id: int):
@@ -551,20 +588,22 @@ async def get_run_evidence(run_id: int):
     # Build block responses
     block_responses = []
     for block in blocks:
-        block_responses.append(LayoutBlockResponse(
-            id=block.id,
-            block_id=block.block_id,
-            page_num=block.page_num,
-            bbox=BboxResponse(
-                x0=block.x0,
-                y0=block.y0,
-                x1=block.x1,
-                y1=block.y1,
-            ),
-            text=block.text,
-            block_type=block.block_type,
-            label=block.label,
-        ))
+        block_responses.append(
+            LayoutBlockResponse(
+                id=block.id,
+                block_id=block.block_id,
+                page_num=block.page_num,
+                bbox=BboxResponse(
+                    x0=block.x0,
+                    y0=block.y0,
+                    x1=block.x1,
+                    y1=block.y1,
+                ),
+                text=block.text,
+                block_type=block.block_type,
+                label=block.label,
+            )
+        )
 
     return RunEvidenceResponse(
         run_id=run_id,
@@ -583,8 +622,9 @@ async def get_run_preflight(run_id: int):
     Checks for blocking issues like missing required fields,
     warehouse not selected, etc.
     """
-    from api.listing_fields import get_registry
     import json
+
+    from api.listing_fields import get_registry
 
     run = ExtractionRunRepository.get_by_id(run_id)
     if not run:
@@ -596,10 +636,7 @@ async def get_run_preflight(run_id: int):
         outputs = json.loads(outputs)
 
     # Check if warehouse is selected
-    warehouse_selected = bool(
-        outputs.get("warehouse_id") or
-        outputs.get("delivery_address")
-    )
+    warehouse_selected = bool(outputs.get("warehouse_id") or outputs.get("delivery_address"))
 
     # Get blocking issues from field registry
     registry = get_registry()
@@ -617,12 +654,14 @@ async def get_run_preflight(run_id: int):
         else:
             warning_count += 1
 
-        issues.append(PreflightIssue(
-            field_key=issue_data.get("field_key", "unknown"),
-            issue=issue_data.get("issue", "Unknown issue"),
-            severity=severity,
-            cd_key=issue_data.get("cd_key"),
-        ))
+        issues.append(
+            PreflightIssue(
+                field_key=issue_data.get("field_key", "unknown"),
+                issue=issue_data.get("issue", "Unknown issue"),
+                severity=severity,
+                cd_key=issue_data.get("cd_key"),
+            )
+        )
 
     # Also check for low confidence fields
     review_items = ReviewItemRepository.get_by_run(run_id)
@@ -630,12 +669,14 @@ async def get_run_preflight(run_id: int):
         if item.confidence is not None and item.confidence < 0.5:
             if not item.corrected_value and not item.is_match_ok:
                 warning_count += 1
-                issues.append(PreflightIssue(
-                    field_key=item.source_key,
-                    issue=f"Low confidence ({item.confidence:.0%}), needs review",
-                    severity="warning",
-                    cd_key=item.cd_key,
-                ))
+                issues.append(
+                    PreflightIssue(
+                        field_key=item.source_key,
+                        issue=f"Low confidence ({item.confidence:.0%}), needs review",
+                        severity="warning",
+                        cd_key=item.cd_key,
+                    )
+                )
 
     return PreflightResponse(
         run_id=run_id,

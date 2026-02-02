@@ -21,24 +21,18 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Optional
 
 from core.config import SheetsConfig
 from schemas.sheets_schema_v1 import (
     SCHEMA_VERSION,
-    COLUMNS,
-    ColumnClass,
-    get_column_names,
+    column_index_to_letter,
+    compute_final_value,
+    compute_pickup_uid,
     get_column_index,
     get_column_letter,
-    column_index_to_letter,
-    get_immutable_columns,
-    get_user_columns,
+    get_column_names,
     get_updatable_columns_on_ingest,
-    compute_pickup_uid,
-    compute_final_value,
-    compute_payload_hash,
-    get_header_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,7 +56,7 @@ class SheetsExporter:
         self.column_names = get_column_names()
         self._service = None
         self._sheet_id = None
-        self._uid_cache: Dict[str, int] = {}  # pickup_uid -> row_number cache
+        self._uid_cache: dict[str, int] = {}  # pickup_uid -> row_number cache
         self._cache_valid = False
 
     # =========================================================================
@@ -101,9 +95,7 @@ class SheetsExporter:
             return self._sheet_id
 
         service = self._get_service()
-        spreadsheet = service.spreadsheets().get(
-            spreadsheetId=self.config.spreadsheet_id
-        ).execute()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=self.config.spreadsheet_id).execute()
 
         for sheet in spreadsheet.get("sheets", []):
             props = sheet.get("properties", {})
@@ -131,10 +123,14 @@ class SheetsExporter:
                 }
             ]
         }
-        result = service.spreadsheets().batchUpdate(
-            spreadsheetId=self.config.spreadsheet_id,
-            body=request,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=self.config.spreadsheet_id,
+                body=request,
+            )
+            .execute()
+        )
 
         self._sheet_id = result["replies"][0]["addSheet"]["properties"]["sheetId"]
         self.ensure_headers()
@@ -151,10 +147,15 @@ class SheetsExporter:
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.config.sheet_name}!A1:{last_col}1"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         if values and values[0] == self.column_names:
@@ -224,10 +225,15 @@ class SheetsExporter:
 
         # Read column A (pickup_uid)
         range_name = f"{self.config.sheet_name}!A:A"
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         self._uid_cache.clear()
         values = result.get("values", [])
@@ -259,17 +265,22 @@ class SheetsExporter:
     # Row Reading
     # =========================================================================
 
-    def _read_row(self, row_number: int) -> Dict[str, Any]:
+    def _read_row(self, row_number: int) -> dict[str, Any]:
         """Read a full row by row number. Returns dict of column_name -> value."""
         service = self._get_service()
 
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.config.sheet_name}!A{row_number}:{last_col}{row_number}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [[]])[0]
 
@@ -289,10 +300,15 @@ class SheetsExporter:
         col_letter = column_index_to_letter(lock_col_idx)
         range_name = f"{self.config.sheet_name}!{col_letter}{row_number}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [[]])
         if values and values[0]:
@@ -303,7 +319,7 @@ class SheetsExporter:
     # Record to Row Conversion
     # =========================================================================
 
-    def _prepare_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """
         Prepare a record dict for writing.
         Computes pickup_uid and final values.
@@ -355,7 +371,9 @@ class SheetsExporter:
 
         return prepared
 
-    def _compute_final_values(self, base_row: Dict[str, Any], existing_row: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _compute_final_values(
+        self, base_row: dict[str, Any], existing_row: dict[str, Any] = None
+    ) -> dict[str, Any]:
         """
         Compute all *_final values based on base and override.
         If existing_row is provided, use its override values.
@@ -364,9 +382,25 @@ class SheetsExporter:
 
         # Fields that have base/override/final triplets
         triplet_fields = [
-            "vin", "year", "make", "model", "vehicle_type", "running", "mileage", "color",
-            "pickup_address1", "pickup_city", "pickup_state", "pickup_zip", "pickup_contact", "pickup_phone",
-            "warehouse_id", "price", "trailer_type", "pickup_date", "delivery_date",
+            "vin",
+            "year",
+            "make",
+            "model",
+            "vehicle_type",
+            "running",
+            "mileage",
+            "color",
+            "pickup_address1",
+            "pickup_city",
+            "pickup_state",
+            "pickup_zip",
+            "pickup_contact",
+            "pickup_phone",
+            "warehouse_id",
+            "price",
+            "trailer_type",
+            "pickup_date",
+            "delivery_date",
         ]
 
         for field in triplet_fields:
@@ -386,7 +420,7 @@ class SheetsExporter:
 
         return row
 
-    def _row_to_values(self, row: Dict[str, Any]) -> List[Any]:
+    def _row_to_values(self, row: dict[str, Any]) -> list[Any]:
         """Convert row dict to list of values matching column order."""
         values = []
         for col_name in self.column_names:
@@ -410,7 +444,7 @@ class SheetsExporter:
     # Upsert Operations
     # =========================================================================
 
-    def upsert_record(self, record: Dict[str, Any], mode: str = "ingest") -> Dict[str, Any]:
+    def upsert_record(self, record: dict[str, Any], mode: str = "ingest") -> dict[str, Any]:
         """
         Upsert a single record to the Pickups sheet.
 
@@ -441,7 +475,7 @@ class SheetsExporter:
             # Existing record - update
             return self._update_existing_record(prepared, row_number, mode)
 
-    def _append_new_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _append_new_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Append a new record to the sheet."""
         service = self._get_service()
 
@@ -457,13 +491,18 @@ class SheetsExporter:
 
         # Append
         range_name = f"{self.config.sheet_name}!A:A"
-        result = service.spreadsheets().values().append(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-            valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [values]},
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .append(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [values]},
+            )
+            .execute()
+        )
 
         # Update cache
         updated_range = result.get("updates", {}).get("updatedRange", "")
@@ -471,7 +510,8 @@ class SheetsExporter:
         row_number = None
         if updated_range:
             import re
-            match = re.search(r'!A(\d+):', updated_range)
+
+            match = re.search(r"!A(\d+):", updated_range)
             if match:
                 row_number = int(match.group(1))
                 self._uid_cache[record["pickup_uid"]] = row_number
@@ -487,10 +527,10 @@ class SheetsExporter:
 
     def _update_existing_record(
         self,
-        record: Dict[str, Any],
+        record: dict[str, Any],
         row_number: int,
         mode: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Update an existing record, respecting column classes and lock_import."""
         service = self._get_service()
 
@@ -545,10 +585,12 @@ class SheetsExporter:
                 elif isinstance(value, float):
                     value = round(value, 4)
 
-                updates.append({
-                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                    "values": [[value]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                        "values": [[value]],
+                    }
+                )
 
         if updates:
             service.spreadsheets().values().batchUpdate(
@@ -570,9 +612,9 @@ class SheetsExporter:
 
     def upsert_batch(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         mode: str = "ingest",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Upsert multiple records using batch operations.
 
@@ -624,7 +666,9 @@ class SheetsExporter:
                     skipped += 1
             results.extend(update_results)
 
-        logger.info(f"Batch upsert complete: {created} created, {updated} updated, {skipped} skipped")
+        logger.info(
+            f"Batch upsert complete: {created} created, {updated} updated, {skipped} skipped"
+        )
 
         return {
             "created": created,
@@ -633,7 +677,7 @@ class SheetsExporter:
             "results": results,
         }
 
-    def _batch_append(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _batch_append(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Append multiple new records in a single API call."""
         service = self._get_service()
 
@@ -669,9 +713,9 @@ class SheetsExporter:
 
     def _batch_update(
         self,
-        records_with_rows: List[Tuple[Dict[str, Any], int]],
+        records_with_rows: list[tuple[dict[str, Any], int]],
         mode: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Update multiple existing records using batchUpdate."""
         service = self._get_service()
         results = []
@@ -699,16 +743,20 @@ class SheetsExporter:
             if row_number in locked_rows:
                 # Only update timestamp for locked rows
                 timestamp_col = get_column_letter("last_ingested_at")
-                all_updates.append({
-                    "range": f"{self.config.sheet_name}!{timestamp_col}{row_number}",
-                    "values": [[datetime.now().isoformat()]],
-                })
-                results.append({
-                    "action": "skipped",
-                    "pickup_uid": record["pickup_uid"],
-                    "row_number": row_number,
-                    "message": "Row locked",
-                })
+                all_updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{timestamp_col}{row_number}",
+                        "values": [[datetime.now().isoformat()]],
+                    }
+                )
+                results.append(
+                    {
+                        "action": "skipped",
+                        "pickup_uid": record["pickup_uid"],
+                        "row_number": row_number,
+                        "message": "Row locked",
+                    }
+                )
                 continue
 
             # Compute final values with existing overrides
@@ -731,17 +779,21 @@ class SheetsExporter:
                     elif isinstance(value, float):
                         value = round(value, 4)
 
-                    all_updates.append({
-                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                        "values": [[value]],
-                    })
+                    all_updates.append(
+                        {
+                            "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                            "values": [[value]],
+                        }
+                    )
 
-            results.append({
-                "action": "updated",
-                "pickup_uid": record["pickup_uid"],
-                "row_number": row_number,
-                "message": "Batch updated",
-            })
+            results.append(
+                {
+                    "action": "updated",
+                    "pickup_uid": record["pickup_uid"],
+                    "row_number": row_number,
+                    "message": "Batch updated",
+                }
+            )
 
         # Execute batch update
         if all_updates:
@@ -759,7 +811,7 @@ class SheetsExporter:
     # Legacy Compatibility Methods
     # =========================================================================
 
-    def append_record(self, record: Dict[str, Any], run_id: str = None) -> bool:
+    def append_record(self, record: dict[str, Any], run_id: str = None) -> bool:
         """
         Legacy method - now uses upsert internally.
         """
@@ -768,7 +820,7 @@ class SheetsExporter:
         result = self.upsert_record(record)
         return result["action"] in ("created", "updated")
 
-    def write_batch(self, records: List[Dict[str, Any]], run_id: str = None) -> int:
+    def write_batch(self, records: list[dict[str, Any]], run_id: str = None) -> int:
         """
         Legacy method - now uses upsert_batch internally.
         Returns count of rows created/updated.
@@ -790,10 +842,15 @@ class SheetsExporter:
         col_letter = column_index_to_letter(hash_col_idx)
         range_name = f"{self.config.sheet_name}!{col_letter}:{col_letter}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         for i, row in enumerate(values):
@@ -810,7 +867,7 @@ class SheetsExporter:
         """Check if a record with this hash already exists."""
         return self.find_by_hash(attachment_hash) is not None
 
-    def get_row(self, pickup_uid: str) -> Optional[Dict[str, Any]]:
+    def get_row(self, pickup_uid: str) -> Optional[dict[str, Any]]:
         """Get a full row by pickup_uid."""
         row_number = self._find_row_by_uid(pickup_uid)
         if row_number:

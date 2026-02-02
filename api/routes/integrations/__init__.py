@@ -13,16 +13,15 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Query
 
+from api.routes.integrations import cd, clickup, csv_export, email, oauth, sheets, webhook
 from api.routes.integrations.utils import (
     AuditLogEntry,
-    get_audit_log,
-    encrypt_secret,
     decrypt_secret,
-    mask_secret,
+    encrypt_secret,
+    get_audit_log,
     log_integration_action,
+    mask_secret,
 )
-from api.routes.integrations import clickup, sheets, cd, email, csv_export, oauth, webhook
-
 
 # Main router that includes all sub-routers
 router = APIRouter(prefix="/api/integrations", tags=["Integrations"])
@@ -41,7 +40,8 @@ router.include_router(webhook.router)
 # AUDIT LOG ENDPOINT
 # =============================================================================
 
-@router.get("/audit-log", response_model=List[AuditLogEntry])
+
+@router.get("/audit-log", response_model=list[AuditLogEntry])
 async def get_integration_audit_log(
     integration: Optional[str] = Query(None, description="Filter by integration"),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -60,6 +60,7 @@ from pydantic import BaseModel, Field
 
 class WarehouseCreate(BaseModel):
     """Request to create a warehouse (legacy)."""
+
     code: str = Field(..., min_length=1, max_length=20)
     name: str = Field(..., min_length=1, max_length=100)
     address: Optional[str] = None
@@ -70,6 +71,7 @@ class WarehouseCreate(BaseModel):
 
 class WarehouseResponse(BaseModel):
     """Warehouse data (legacy)."""
+
     code: str
     name: str
     address: Optional[str] = None
@@ -89,15 +91,19 @@ async def add_warehouse_legacy(warehouse: WarehouseCreate):
     for w in warehouses:
         if w.get("code") == warehouse.code:
             from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Warehouse with code '{warehouse.code}' already exists")
+
+            raise HTTPException(
+                status_code=400, detail=f"Warehouse with code '{warehouse.code}' already exists"
+            )
 
     new_warehouse = warehouse.model_dump()
     warehouses.append(new_warehouse)
     settings["warehouses"] = warehouses
     save_settings(settings)
 
-    log_integration_action("warehouses", "add", "success",
-                          details={"code": warehouse.code, "name": warehouse.name})
+    log_integration_action(
+        "warehouses", "add", "success", details={"code": warehouse.code, "name": warehouse.name}
+    )
 
     return WarehouseResponse(**new_warehouse)
 
@@ -115,13 +121,13 @@ async def delete_warehouse_legacy(code: str):
 
     if len(warehouses) == original_count:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail=f"Warehouse with code '{code}' not found")
 
     settings["warehouses"] = warehouses
     save_settings(settings)
 
-    log_integration_action("warehouses", "delete", "success",
-                          details={"code": code})
+    log_integration_action("warehouses", "delete", "success", details={"code": code})
 
     return {"status": "ok", "deleted": code}
 

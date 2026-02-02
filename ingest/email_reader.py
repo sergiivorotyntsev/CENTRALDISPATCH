@@ -1,14 +1,16 @@
 """Email reader with IMAP and OAuth2/Graph support."""
-import imaplib
+
 import email
 import hashlib
+import imaplib
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from typing import Optional, List, Iterator, Tuple
-from datetime import datetime
+from typing import Optional
 
 from core.config import EmailConfig
 
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Attachment:
     """Email attachment data."""
+
     filename: str
     content_type: str
     content: bytes
@@ -32,22 +35,20 @@ class Attachment:
     @property
     def is_pdf(self) -> bool:
         """Check if attachment is a PDF."""
-        return (
-            self.content_type == "application/pdf"
-            or self.filename.lower().endswith(".pdf")
-        )
+        return self.content_type == "application/pdf" or self.filename.lower().endswith(".pdf")
 
 
 @dataclass
 class EmailMessage:
     """Parsed email message."""
+
     message_id: str
     subject: str
     sender: str
     date: Optional[datetime]
     body_text: str
     body_html: str
-    attachments: List[Attachment] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
 
     # Threading headers
     in_reply_to: Optional[str] = None
@@ -66,10 +67,14 @@ class EmailMessage:
                 return refs[0].strip("<>")
         if self.in_reply_to:
             return self.in_reply_to.strip("<>")
-        return self.message_id.strip("<>") if self.message_id else f"unknown-{datetime.utcnow().isoformat()}"
+        return (
+            self.message_id.strip("<>")
+            if self.message_id
+            else f"unknown-{datetime.utcnow().isoformat()}"
+        )
 
     @property
-    def pdf_attachments(self) -> List[Attachment]:
+    def pdf_attachments(self) -> list[Attachment]:
         """Get only PDF attachments (non-inline)."""
         return [a for a in self.attachments if a.is_pdf and not a.is_inline]
 
@@ -88,7 +93,7 @@ class BaseEmailReader(ABC):
         pass
 
     @abstractmethod
-    def list_unseen(self) -> List[str]:
+    def list_unseen(self) -> list[str]:
         """Get list of unseen message UIDs."""
         pass
 
@@ -103,7 +108,7 @@ class BaseEmailReader(ABC):
         pass
 
     @abstractmethod
-    def validate_connection(self) -> Tuple[bool, str]:
+    def validate_connection(self) -> tuple[bool, str]:
         """Validate that connection can be established. Returns (success, message)."""
         pass
 
@@ -137,10 +142,7 @@ class IMAPEmailReader(BaseEmailReader):
         """Connect to IMAP server."""
         logger.info(f"Connecting to IMAP server: {self.config.imap_server}:{self.config.imap_port}")
 
-        self._connection = imaplib.IMAP4_SSL(
-            self.config.imap_server,
-            self.config.imap_port
-        )
+        self._connection = imaplib.IMAP4_SSL(self.config.imap_server, self.config.imap_port)
 
         # Try OAuth2 XOAUTH2 if we have client credentials
         if self.config.client_id and self.config.client_secret:
@@ -190,7 +192,7 @@ class IMAPEmailReader(BaseEmailReader):
         """Build XOAUTH2 authentication string."""
         return f"user={user}\x01auth=Bearer {token}\x01\x01"
 
-    def list_unseen(self) -> List[str]:
+    def list_unseen(self) -> list[str]:
         """Get list of unseen message UIDs."""
         if not self._connection:
             raise ConnectionError("Not connected to IMAP server")
@@ -268,13 +270,15 @@ class IMAPEmailReader(BaseEmailReader):
                 # It's an attachment
                 payload = part.get_payload(decode=True)
                 if payload:
-                    attachments.append(Attachment(
-                        filename=self._decode_filename(filename),
-                        content_type=content_type,
-                        content=payload,
-                        size=len(payload),
-                        is_inline=is_inline,
-                    ))
+                    attachments.append(
+                        Attachment(
+                            filename=self._decode_filename(filename),
+                            content_type=content_type,
+                            content=payload,
+                            size=len(payload),
+                            is_inline=is_inline,
+                        )
+                    )
             elif content_type == "text/plain" and not is_inline:
                 payload = part.get_payload(decode=True)
                 if payload:
@@ -323,7 +327,7 @@ class IMAPEmailReader(BaseEmailReader):
             return False
         return True
 
-    def validate_connection(self) -> Tuple[bool, str]:
+    def validate_connection(self) -> tuple[bool, str]:
         """Validate IMAP connection."""
         try:
             self.connect()
@@ -372,7 +376,7 @@ class GraphEmailReader(BaseEmailReader):
             raise ConnectionError("Not connected to Graph API")
         return {"Authorization": f"Bearer {self._access_token}"}
 
-    def list_unseen(self) -> List[str]:
+    def list_unseen(self) -> list[str]:
         """Get list of unseen message IDs."""
         import requests
 
@@ -425,22 +429,29 @@ class GraphEmailReader(BaseEmailReader):
         for att in data.get("attachments", []):
             if att.get("@odata.type") == "#microsoft.graph.fileAttachment":
                 import base64
+
                 content = base64.b64decode(att.get("contentBytes", ""))
-                attachments.append(Attachment(
-                    filename=att.get("name", "unknown"),
-                    content_type=att.get("contentType", "application/octet-stream"),
-                    content=content,
-                    size=len(content),
-                    is_inline=att.get("isInline", False),
-                ))
+                attachments.append(
+                    Attachment(
+                        filename=att.get("name", "unknown"),
+                        content_type=att.get("contentType", "application/octet-stream"),
+                        content=content,
+                        size=len(content),
+                        is_inline=att.get("isInline", False),
+                    )
+                )
 
         return EmailMessage(
             message_id=data.get("internetMessageId", msg_id),
             subject=data.get("subject", ""),
             sender=data.get("from", {}).get("emailAddress", {}).get("address", ""),
             date=date,
-            body_text=data.get("body", {}).get("content", "") if data.get("body", {}).get("contentType") == "text" else "",
-            body_html=data.get("body", {}).get("content", "") if data.get("body", {}).get("contentType") == "html" else "",
+            body_text=data.get("body", {}).get("content", "")
+            if data.get("body", {}).get("contentType") == "text"
+            else "",
+            body_html=data.get("body", {}).get("content", "")
+            if data.get("body", {}).get("contentType") == "html"
+            else "",
             attachments=attachments,
             in_reply_to=data.get("inReplyTo"),
             references=None,  # Graph doesn't expose References header directly
@@ -457,7 +468,7 @@ class GraphEmailReader(BaseEmailReader):
         response = requests.patch(url, headers=self._get_headers(), json=data, timeout=30)
         return response.status_code == 200
 
-    def validate_connection(self) -> Tuple[bool, str]:
+    def validate_connection(self) -> tuple[bool, str]:
         """Validate Graph API connection."""
         try:
             self.connect()

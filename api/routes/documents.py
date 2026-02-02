@@ -4,21 +4,20 @@ Documents API Routes
 Upload and manage documents for extraction and training.
 """
 
-import os
-import json
 import hashlib
-import tempfile
-from typing import Optional, List
+import json
+import os
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from typing import Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from api.models import (
-    DocumentRepository,
     AuctionTypeRepository,
     Document,
-    DatasetSplit,
+    DocumentRepository,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -32,8 +31,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class DocumentResponse(BaseModel):
     """Response model for document."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -55,7 +56,8 @@ class DocumentResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     """Response model for document list."""
-    items: List[DocumentResponse]
+
+    items: list[DocumentResponse]
     total: int
     train_count: int = 0
     test_count: int = 0
@@ -63,6 +65,7 @@ class DocumentListResponse(BaseModel):
 
 class DocumentUploadResponse(BaseModel):
     """Response model for document upload."""
+
     document: DocumentResponse
     is_duplicate: bool = False
     raw_text_preview: Optional[str] = None
@@ -80,6 +83,7 @@ class DocumentUploadResponse(BaseModel):
 
 class DocumentStatsResponse(BaseModel):
     """Response model for document statistics."""
+
     auction_type_id: int
     auction_type_name: str
     train_count: int
@@ -91,10 +95,13 @@ class DocumentStatsResponse(BaseModel):
 # ROUTES
 # =============================================================================
 
+
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(..., description="PDF document to upload"),
-    auction_type_id: Optional[int] = Form(None, description="Auction type ID (optional, auto-detect if not provided)"),
+    auction_type_id: Optional[int] = Form(
+        None, description="Auction type ID (optional, auto-detect if not provided)"
+    ),
     dataset_split: str = Form("train", description="Dataset split: train or test"),
     uploaded_by: Optional[str] = Form(None, description="Uploader identifier"),
     auto_extract: bool = Form(True, description="Automatically run extraction after upload"),
@@ -134,7 +141,9 @@ async def upload_document(
     # Validate source
     valid_sources = ("upload", "email", "batch", "test_lab")
     if source not in valid_sources:
-        raise HTTPException(status_code=400, detail=f"source must be one of: {', '.join(valid_sources)}")
+        raise HTTPException(
+            status_code=400, detail=f"source must be one of: {', '.join(valid_sources)}"
+        )
 
     # Auto-set is_test for test_lab source
     if source == "test_lab":
@@ -157,10 +166,11 @@ async def upload_document(
         # For duplicates, get the existing auction type and run info
         existing_auction_type = AuctionTypeRepository.get_by_id(existing.auction_type_id)
         from api.database import get_connection
+
         with get_connection() as conn:
             run_row = conn.execute(
                 "SELECT id, status FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC LIMIT 1",
-                (existing.id,)
+                (existing.id,),
             ).fetchone()
 
         # If auto_extract is enabled and no successful run exists, create a new extraction run
@@ -171,6 +181,7 @@ async def upload_document(
             should_reextract = not run_row or run_row["status"] in ("failed", "manual_required")
             if should_reextract:
                 from api.models import ExtractionRunRepository
+
                 new_run_id = ExtractionRunRepository.create(
                     document_id=existing.id,
                     auction_type_id=existing.auction_type_id,
@@ -179,6 +190,7 @@ async def upload_document(
                 # Run extraction
                 try:
                     from api.routes.extractions import run_extraction
+
                     run_extraction(new_run_id, existing.id, existing.auction_type_id, "rule", None)
                     run = ExtractionRunRepository.get_by_id(new_run_id)
                     new_run_status = run.status if run else "failed"
@@ -202,17 +214,16 @@ async def upload_document(
 
     # Validate PDF structure BEFORE saving (P0 requirement)
     import io
+
     page_count = 0
     raw_text = ""
     try:
         import pdfplumber
+
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             page_count = len(pdf.pages)
             if page_count == 0:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Invalid PDF: Document has no pages"
-                )
+                raise HTTPException(status_code=422, detail="Invalid PDF: Document has no pages")
             # Extract text to validate PDF is readable
             text_parts = []
             for page in pdf.pages:
@@ -224,8 +235,7 @@ async def upload_document(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=422,
-            detail=f"Invalid PDF: {str(e)}. Please upload a valid PDF document."
+            status_code=422, detail=f"Invalid PDF: {str(e)}. Please upload a valid PDF document."
         )
 
     # Save file only after validation passed
@@ -243,6 +253,7 @@ async def upload_document(
     if auto_classify and not auction_type_id and raw_text and text_length >= 100:
         try:
             from extractors import ExtractorManager
+
             manager = ExtractorManager()
             classification = manager.classify(str(file_path))
             if classification:
@@ -253,7 +264,7 @@ async def upload_document(
                 if detected_type:
                     auction_type_id = detected_type.id
                     auction_type = detected_type
-        except Exception as e:
+        except Exception:
             # Classification failed, continue without it
             pass
 
@@ -311,6 +322,7 @@ async def upload_document(
             try:
                 if not detected_source:
                     from extractors import ExtractorManager
+
                     manager = ExtractorManager()
                     classification = manager.classify(str(file_path))
                     if classification:
@@ -319,6 +331,7 @@ async def upload_document(
 
                 # Run extraction
                 from api.routes.extractions import run_extraction
+
                 run_extraction(run_id, doc_id, auction_type_id, "rule", None)
 
                 # Get updated status
@@ -369,6 +382,7 @@ async def list_documents(
     else:
         # List all documents (need to implement in repository)
         from api.database import get_connection
+
         sql = "SELECT * FROM documents WHERE 1=1"
         params = []
 
@@ -405,10 +419,12 @@ async def list_documents(
     items = []
     for doc in docs:
         at = AuctionTypeRepository.get_by_id(doc.auction_type_id)
-        items.append(DocumentResponse(
-            **doc.__dict__,
-            auction_type_code=at.code if at else None,
-        ))
+        items.append(
+            DocumentResponse(
+                **doc.__dict__,
+                auction_type_code=at.code if at else None,
+            )
+        )
 
     return DocumentListResponse(
         items=items,
@@ -468,11 +484,11 @@ async def get_document_file(id: int):
         doc.file_path,
         media_type="application/pdf",
         filename=doc.filename,
-        headers={"Content-Disposition": f"inline; filename=\"{doc.filename}\""}
+        headers={"Content-Disposition": f'inline; filename="{doc.filename}"'},
     )
 
 
-@router.get("/stats/by-auction-type", response_model=List[DocumentStatsResponse])
+@router.get("/stats/by-auction-type", response_model=list[DocumentStatsResponse])
 async def get_document_stats():
     """Get document counts by auction type."""
     auction_types = AuctionTypeRepository.list_all()
@@ -482,13 +498,15 @@ async def get_document_stats():
         counts = DocumentRepository.count_by_auction_type(at.id)
         train_count = counts.get("train", 0)
         test_count = counts.get("test", 0)
-        stats.append(DocumentStatsResponse(
-            auction_type_id=at.id,
-            auction_type_name=at.name,
-            train_count=train_count,
-            test_count=test_count,
-            total=train_count + test_count,
-        ))
+        stats.append(
+            DocumentStatsResponse(
+                auction_type_id=at.id,
+                auction_type_name=at.name,
+                train_count=train_count,
+                test_count=test_count,
+                total=train_count + test_count,
+            )
+        )
 
     return stats
 
@@ -522,12 +540,15 @@ async def get_document_export_preview(id: int):
 
     # Get latest extraction run
     with get_connection() as conn:
-        run_row = conn.execute("""
+        run_row = conn.execute(
+            """
             SELECT * FROM extraction_runs
             WHERE document_id = ?
             ORDER BY created_at DESC
             LIMIT 1
-        """, (id,)).fetchone()
+        """,
+            (id,),
+        ).fetchone()
 
         extraction = None
         extracted_fields = {}
@@ -535,47 +556,54 @@ async def get_document_export_preview(id: int):
             extraction = dict(run_row)
 
             # Get extraction outputs from outputs_json field
-            outputs_json = extraction.get('outputs_json')
+            outputs_json = extraction.get("outputs_json")
             if outputs_json:
                 try:
-                    outputs = json.loads(outputs_json) if isinstance(outputs_json, str) else outputs_json
+                    outputs = (
+                        json.loads(outputs_json) if isinstance(outputs_json, str) else outputs_json
+                    )
                     for field_key, value in outputs.items():
                         if isinstance(value, dict):
                             extracted_fields[field_key] = value
                         else:
                             extracted_fields[field_key] = {
-                                'value': value,
-                                'confidence': 1.0,
-                                'source': 'extracted',
-                                'is_corrected': False,
+                                "value": value,
+                                "confidence": 1.0,
+                                "source": "extracted",
+                                "is_corrected": False,
                             }
                 except (json.JSONDecodeError, TypeError):
                     pass
 
             # Also check review_items for corrected values
-            review_rows = conn.execute("""
+            review_rows = conn.execute(
+                """
                 SELECT source_key, predicted_value, corrected_value, is_match_ok
                 FROM review_items
                 WHERE run_id = ?
-            """, (extraction['id'],)).fetchall()
+            """,
+                (extraction["id"],),
+            ).fetchall()
 
             for review_row in review_rows:
                 r = dict(review_row)
-                field_key = r['source_key']
+                field_key = r["source_key"]
                 # Use corrected value if available, otherwise predicted
-                value = r['corrected_value'] if r['corrected_value'] else r['predicted_value']
+                value = r["corrected_value"] if r["corrected_value"] else r["predicted_value"]
                 if value:
                     extracted_fields[field_key] = {
-                        'value': value,
-                        'confidence': 1.0 if r['is_match_ok'] else 0.5,
-                        'source': 'corrected' if r['corrected_value'] else 'extracted',
-                        'is_corrected': bool(r['corrected_value']),
+                        "value": value,
+                        "confidence": 1.0 if r["is_match_ok"] else 0.5,
+                        "source": "corrected" if r["corrected_value"] else "extracted",
+                        "is_corrected": bool(r["corrected_value"]),
                     }
 
             # Check extraction status
-            if extraction['status'] not in ['approved', 'reviewed']:
+            if extraction["status"] not in ["approved", "reviewed"]:
                 can_export = False
-                blocking_issues.append(f"Extraction status is '{extraction['status']}' - needs review")
+                blocking_issues.append(
+                    f"Extraction status is '{extraction['status']}' - needs review"
+                )
 
         else:
             can_export = False
@@ -583,54 +611,59 @@ async def get_document_export_preview(id: int):
 
         # Get field mappings for this auction type
         field_mappings = []
-        mapping_rows = conn.execute("""
+        mapping_rows = conn.execute(
+            """
             SELECT * FROM field_mappings
             WHERE auction_type_id = ?
             ORDER BY display_order, cd_key
-        """, (doc.auction_type_id,)).fetchall()
+        """,
+            (doc.auction_type_id,),
+        ).fetchall()
 
         for m_row in mapping_rows:
             m = dict(m_row)
             # Use cd_key as the field key (maps to Central Dispatch API field)
-            field_key = m.get('cd_key') or m.get('source_key') or m.get('internal_key')
+            field_key = m.get("cd_key") or m.get("source_key") or m.get("internal_key")
             if not field_key:
                 continue
 
             field_data = extracted_fields.get(field_key, {})
             # Also try to find by source_key if not found by cd_key
-            if not field_data.get('value') and m.get('source_key'):
-                field_data = extracted_fields.get(m['source_key'], {})
+            if not field_data.get("value") and m.get("source_key"):
+                field_data = extracted_fields.get(m["source_key"], {})
 
             # Check if required field is missing
-            if m.get('is_required') and not field_data.get('value') and not m.get('default_value'):
+            if m.get("is_required") and not field_data.get("value") and not m.get("default_value"):
                 can_export = False
                 blocking_issues.append(f"Required field '{field_key}' is empty")
 
-            field_mappings.append({
-                'cd_field': field_key,
-                'display_name': m.get('description') or field_key.replace('_', ' ').title(),
-                'source': 'constant' if m.get('default_value') else 'extracted',
-                'is_required': m.get('is_required', False),
-                'is_active': m.get('is_active', True),
-                'value': field_data.get('value') or m.get('default_value'),
-                'confidence': field_data.get('confidence'),
-                'default_value': m.get('default_value'),
-            })
+            field_mappings.append(
+                {
+                    "cd_field": field_key,
+                    "display_name": m.get("description") or field_key.replace("_", " ").title(),
+                    "source": "constant" if m.get("default_value") else "extracted",
+                    "is_required": m.get("is_required", False),
+                    "is_active": m.get("is_active", True),
+                    "value": field_data.get("value") or m.get("default_value"),
+                    "confidence": field_data.get("confidence"),
+                    "default_value": m.get("default_value"),
+                }
+            )
 
     return {
-        'document': {
-            'id': doc.id,
-            'filename': doc.filename,
-            'auction_type': at.code if at else None,
-            'auction_type_name': at.name if at else None,
-            'is_test': doc.is_test,
-            'created_at': doc.created_at,
+        "document": {
+            "id": doc.id,
+            "filename": doc.filename,
+            "auction_type": at.code if at else None,
+            "auction_type_name": at.name if at else None,
+            "is_test": doc.is_test,
+            "created_at": doc.created_at,
         },
-        'extraction': extraction,
-        'fields': field_mappings,
-        'can_export': can_export,
-        'blocking_issues': blocking_issues,
-        'order_id': extracted_fields.get('order_id', {}).get('value'),
+        "extraction": extraction,
+        "fields": field_mappings,
+        "can_export": can_export,
+        "blocking_issues": blocking_issues,
+        "order_id": extracted_fields.get("order_id", {}).get("value"),
     }
 
 
@@ -654,6 +687,7 @@ async def delete_document(id: int):
 
     # Delete from database with cascade
     from api.database import get_connection
+
     with get_connection() as conn:
         # First get extraction run IDs for this document
         run_ids = conn.execute(
@@ -663,7 +697,7 @@ async def delete_document(id: int):
 
         # Delete review items for these runs
         if run_ids:
-            placeholders = ','.join('?' * len(run_ids))
+            placeholders = ",".join("?" * len(run_ids))
             conn.execute(f"DELETE FROM review_items WHERE run_id IN ({placeholders})", run_ids)
 
         # Delete extraction runs
@@ -718,7 +752,7 @@ async def clear_all_test_lab_documents():
 
             # Delete review items for these runs
             if run_ids:
-                placeholders = ','.join('?' * len(run_ids))
+                placeholders = ",".join("?" * len(run_ids))
                 conn.execute(f"DELETE FROM review_items WHERE run_id IN ({placeholders})", run_ids)
 
             # Delete extraction runs
@@ -730,4 +764,8 @@ async def clear_all_test_lab_documents():
         conn.execute("DELETE FROM documents WHERE source = 'test_lab' OR is_test = 1")
         conn.commit()
 
-    return {"success": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} test documents"}
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": f"Deleted {deleted_count} test documents",
+    }

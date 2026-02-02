@@ -7,22 +7,18 @@ Endpoints for managing extraction training:
 - Manage extraction rules
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, SQLModel
-from typing import List, Optional
-from pydantic import BaseModel
+from typing import Optional
 
-from api.training_db import get_session, engine, init_training_db
-from services.training_service import TrainingService
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlmodel import Session
+
+from api.training_db import get_session, init_training_db
 from models.training import (
-    FieldCorrectionCreate,
-    TrainingSubmission,
-    ExtractionRuleResponse,
     ExtractionRule,
-    FieldCorrection,
-    TrainingExample,
-    ExtractionPattern,
+    FieldCorrectionCreate,
 )
+from services.training_service import TrainingService
 
 
 def init_training_schema():
@@ -37,6 +33,7 @@ router = APIRouter(prefix="/training", tags=["Training"])
 # REQUEST/RESPONSE MODELS
 # ============================================================================
 
+
 class CorrectionItem(BaseModel):
     field_key: str
     predicted_value: Optional[str] = None
@@ -46,7 +43,7 @@ class CorrectionItem(BaseModel):
 
 class SubmitCorrectionsRequest(BaseModel):
     extraction_run_id: int
-    corrections: List[CorrectionItem]
+    corrections: list[CorrectionItem]
     mark_as_validated: bool = True
     stay_in_training: bool = True  # Don't redirect to runs
 
@@ -67,8 +64,8 @@ class RuleResponse(BaseModel):
     id: int
     field_key: str
     rule_type: str
-    label_patterns: List[str]
-    exclude_patterns: List[str]
+    label_patterns: list[str]
+    exclude_patterns: list[str]
     confidence: float
     validation_count: int
     is_active: bool
@@ -78,11 +75,9 @@ class RuleResponse(BaseModel):
 # ENDPOINTS
 # ============================================================================
 
+
 @router.post("/submit-corrections", response_model=SubmitCorrectionsResponse)
-def submit_corrections(
-    request: SubmitCorrectionsRequest,
-    session: Session = Depends(get_session)
-):
+def submit_corrections(request: SubmitCorrectionsRequest, session: Session = Depends(get_session)):
     """
     Submit field corrections from review page.
 
@@ -131,8 +126,7 @@ def submit_corrections(
 
 @router.get("/stats", response_model=TrainingStatsResponse)
 def get_training_stats(
-    auction_type_id: Optional[int] = None,
-    session: Session = Depends(get_session)
+    auction_type_id: Optional[int] = None, session: Session = Depends(get_session)
 ):
     """
     Get training statistics for all auction types or a specific one.
@@ -142,11 +136,9 @@ def get_training_stats(
     return TrainingStatsResponse(**stats)
 
 
-@router.get("/rules/{auction_type_id}", response_model=List[RuleResponse])
+@router.get("/rules/{auction_type_id}", response_model=list[RuleResponse])
 def get_extraction_rules(
-    auction_type_id: int,
-    field_key: Optional[str] = None,
-    session: Session = Depends(get_session)
+    auction_type_id: int, field_key: Optional[str] = None, session: Session = Depends(get_session)
 ):
     """
     Get extraction rules for an auction type.
@@ -170,10 +162,7 @@ def get_extraction_rules(
 
 
 @router.get("/rules-for-extractor/{auction_type_code}")
-def get_rules_for_extractor(
-    auction_type_code: str,
-    session: Session = Depends(get_session)
-):
+def get_rules_for_extractor(auction_type_code: str, session: Session = Depends(get_session)):
     """
     Get extraction rules in format suitable for extractors.
     """
@@ -182,14 +171,10 @@ def get_rules_for_extractor(
 
 
 @router.delete("/rules/{rule_id}")
-def delete_rule(
-    rule_id: int,
-    session: Session = Depends(get_session)
-):
+def delete_rule(rule_id: int, session: Session = Depends(get_session)):
     """
     Deactivate an extraction rule.
     """
-    from models.training import ExtractionRule
 
     rule = session.get(ExtractionRule, rule_id)
     if not rule:

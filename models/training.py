@@ -6,11 +6,12 @@ field corrections, and learned patterns that improve extraction accuracy
 over time for each auction type.
 """
 
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, JSON, Text
 import json
+from datetime import datetime
+from typing import Any, Optional
+
+from sqlalchemy import Column, Text
+from sqlmodel import Field, SQLModel
 
 
 class ExtractionRule(SQLModel, table=True):
@@ -20,6 +21,7 @@ class ExtractionRule(SQLModel, table=True):
     Rules are generated from user corrections and define how to
     extract specific fields from documents.
     """
+
     __tablename__ = "extraction_rules"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -53,19 +55,19 @@ class ExtractionRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    def get_label_patterns(self) -> List[str]:
+    def get_label_patterns(self) -> list[str]:
         return json.loads(self.label_patterns) if self.label_patterns else []
 
-    def set_label_patterns(self, patterns: List[str]):
+    def set_label_patterns(self, patterns: list[str]):
         self.label_patterns = json.dumps(patterns)
 
-    def get_exclude_patterns(self) -> List[str]:
+    def get_exclude_patterns(self) -> list[str]:
         return json.loads(self.exclude_patterns) if self.exclude_patterns else []
 
-    def set_exclude_patterns(self, patterns: List[str]):
+    def set_exclude_patterns(self, patterns: list[str]):
         self.exclude_patterns = json.dumps(patterns)
 
-    def get_position_hints(self) -> List[str]:
+    def get_position_hints(self) -> list[str]:
         return json.loads(self.position_hints) if self.position_hints else []
 
 
@@ -76,6 +78,7 @@ class FieldCorrection(SQLModel, table=True):
     Each correction is a training example that helps the system learn
     what values are correct for specific fields.
     """
+
     __tablename__ = "field_corrections"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -112,6 +115,7 @@ class TrainingExample(SQLModel, table=True):
 
     These are validated examples used to train/improve extraction rules.
     """
+
     __tablename__ = "training_examples"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -136,10 +140,10 @@ class TrainingExample(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     validated_at: Optional[datetime] = Field(default=None)
 
-    def get_corrected_fields(self) -> Dict[str, Any]:
+    def get_corrected_fields(self) -> dict[str, Any]:
         return json.loads(self.corrected_fields) if self.corrected_fields else {}
 
-    def set_corrected_fields(self, fields: Dict[str, Any]):
+    def set_corrected_fields(self, fields: dict[str, Any]):
         self.corrected_fields = json.dumps(fields)
 
 
@@ -150,6 +154,7 @@ class ExtractionPattern(SQLModel, table=True):
     Patterns are regex or positional rules learned from multiple
     training examples for specific fields.
     """
+
     __tablename__ = "extraction_patterns"
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -181,8 +186,10 @@ class ExtractionPattern(SQLModel, table=True):
 
 # Pydantic models for API requests/responses
 
+
 class FieldCorrectionCreate(SQLModel):
     """Request model for submitting a field correction."""
+
     field_key: str
     predicted_value: Optional[str] = None
     corrected_value: Optional[str] = None
@@ -191,24 +198,27 @@ class FieldCorrectionCreate(SQLModel):
 
 class TrainingSubmission(SQLModel):
     """Request model for submitting training data from review."""
+
     extraction_run_id: int
-    corrections: List[FieldCorrectionCreate]
+    corrections: list[FieldCorrectionCreate]
     mark_as_validated: bool = True
 
 
 class ExtractionRuleResponse(SQLModel):
     """Response model for extraction rules."""
+
     id: int
     field_key: str
     rule_type: str
-    label_patterns: List[str]
-    exclude_patterns: List[str]
+    label_patterns: list[str]
+    exclude_patterns: list[str]
     confidence: float
     validation_count: int
 
 
 class TrainingStatsResponse(SQLModel):
     """Response model for training statistics."""
+
     auction_type_code: str
     total_examples: int
     validated_examples: int

@@ -16,27 +16,29 @@ Final Value Rule:
 - field_final = field_override if field_override else field_base
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Dict, Optional, Callable
-import hashlib
+from typing import Optional
 
 
 class ColumnClass(Enum):
     """Column ownership class."""
+
     IMMUTABLE = "immutable"  # Never change after creation
-    SYSTEM = "system"        # Updated by import/parser
-    USER = "user"            # Only human-editable
+    SYSTEM = "system"  # Updated by import/parser
+    USER = "user"  # Only human-editable
 
 
 class ColumnType(Enum):
     """Column data type."""
+
     STRING = "string"
     INTEGER = "integer"
     FLOAT = "float"
     BOOLEAN = "boolean"
-    DATE = "date"           # ISO format YYYY-MM-DD
-    DATETIME = "datetime"   # ISO format YYYY-MM-DDTHH:MM:SS
+    DATE = "date"  # ISO format YYYY-MM-DD
+    DATETIME = "datetime"  # ISO format YYYY-MM-DDTHH:MM:SS
     ENUM = "enum"
     JSON = "json"
 
@@ -44,11 +46,12 @@ class ColumnType(Enum):
 @dataclass
 class ColumnDef:
     """Column definition."""
+
     name: str
     col_type: ColumnType
     col_class: ColumnClass
     description: str = ""
-    enum_values: List[str] = field(default_factory=list)
+    enum_values: list[str] = field(default_factory=list)
     computed_from: Optional[str] = None  # For *_final columns
     default: Optional[str] = None
 
@@ -61,12 +64,12 @@ SCHEMA_VERSION = 1
 
 # Status enum values
 STATUS_VALUES = [
-    "NEW",              # Just imported, not reviewed
-    "NEEDS_REVIEW",     # Requires human attention
-    "READY_FOR_CD",     # Ready to export to Central Dispatch
-    "EXPORTED_TO_CD",   # Successfully exported
-    "FAILED",           # Export failed
-    "LOCKED",           # Locked from further imports
+    "NEW",  # Just imported, not reviewed
+    "NEEDS_REVIEW",  # Requires human attention
+    "READY_FOR_CD",  # Ready to export to Central Dispatch
+    "EXPORTED_TO_CD",  # Successfully exported
+    "FAILED",  # Export failed
+    "LOCKED",  # Locked from further imports
 ]
 
 CD_EXPORT_STATUS_VALUES = [
@@ -86,7 +89,7 @@ TRAILER_TYPE_VALUES = ["open", "enclosed", "driveaway"]
 
 
 # Column definitions organized by category
-COLUMNS: List[ColumnDef] = [
+COLUMNS: list[ColumnDef] = [
     # =========================================================================
     # 1. IDENTIFICATION & SOURCES (immutable/system)
     # =========================================================================
@@ -159,7 +162,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.IMMUTABLE,
         description="SHA256 hash of attachment.",
     ),
-
     # =========================================================================
     # 2. VEHICLE (base/override/final)
     # =========================================================================
@@ -321,7 +323,6 @@ COLUMNS: List[ColumnDef] = [
         computed_from="color",
         description="Final color.",
     ),
-
     # =========================================================================
     # 3. PICKUP LOCATION (base/override/final)
     # =========================================================================
@@ -439,7 +440,6 @@ COLUMNS: List[ColumnDef] = [
         computed_from="pickup_phone",
         description="Final pickup phone.",
     ),
-
     # =========================================================================
     # 4. DELIVERY / WAREHOUSE (base/override/final)
     # =========================================================================
@@ -504,7 +504,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Delivery phone (from warehouse).",
     ),
-
     # =========================================================================
     # 5. PRICING / TRAILER / DATES (base/override/final)
     # =========================================================================
@@ -594,7 +593,6 @@ COLUMNS: List[ColumnDef] = [
         computed_from="delivery_date",
         description="Final delivery date.",
     ),
-
     # =========================================================================
     # 6. CENTRAL DISPATCH EXPORT (system-owned)
     # =========================================================================
@@ -649,7 +647,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Version of cd_field_mapping.yaml used.",
     ),
-
     # =========================================================================
     # 7. CLICKUP EXPORT (system-owned)
     # =========================================================================
@@ -677,7 +674,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Last ClickUp error.",
     ),
-
     # =========================================================================
     # 8. QUALITY CONTROL / AUDIT
     # =========================================================================
@@ -719,7 +715,8 @@ COLUMNS: List[ColumnDef] = [
 # HELPER FUNCTIONS
 # =============================================================================
 
-def get_column_names() -> List[str]:
+
+def get_column_names() -> list[str]:
     """Get ordered list of column names."""
     return [col.name for col in COLUMNS]
 
@@ -732,27 +729,27 @@ def get_column_by_name(name: str) -> Optional[ColumnDef]:
     return None
 
 
-def get_columns_by_class(col_class: ColumnClass) -> List[ColumnDef]:
+def get_columns_by_class(col_class: ColumnClass) -> list[ColumnDef]:
     """Get all columns of a specific class."""
     return [col for col in COLUMNS if col.col_class == col_class]
 
 
-def get_immutable_columns() -> List[str]:
+def get_immutable_columns() -> list[str]:
     """Get names of immutable columns."""
     return [col.name for col in COLUMNS if col.col_class == ColumnClass.IMMUTABLE]
 
 
-def get_system_columns() -> List[str]:
+def get_system_columns() -> list[str]:
     """Get names of system-owned columns."""
     return [col.name for col in COLUMNS if col.col_class == ColumnClass.SYSTEM]
 
 
-def get_user_columns() -> List[str]:
+def get_user_columns() -> list[str]:
     """Get names of user-owned columns."""
     return [col.name for col in COLUMNS if col.col_class == ColumnClass.USER]
 
 
-def get_base_override_final_fields() -> List[str]:
+def get_base_override_final_fields() -> list[str]:
     """Get list of field names that have base/override/final triplets."""
     fields = set()
     for col in COLUMNS:
@@ -774,7 +771,7 @@ def column_index_to_letter(index: int) -> str:
     """Convert 0-based column index to Excel-style letter (A, B, ..., Z, AA, AB, ...)."""
     result = ""
     while index >= 0:
-        result = chr(index % 26 + ord('A')) + result
+        result = chr(index % 26 + ord("A")) + result
         index = index // 26 - 1
     return result
 
@@ -790,6 +787,7 @@ def get_column_letter(name: str) -> str:
 # =============================================================================
 # UPSERT RANGES - Which columns to update during upsert
 # =============================================================================
+
 
 def get_upsert_system_range() -> tuple:
     """
@@ -813,22 +811,24 @@ def get_upsert_system_range() -> tuple:
     return [column_index_to_letter(i) for i, _ in system_cols]
 
 
-def get_updatable_columns_on_ingest() -> List[str]:
+def get_updatable_columns_on_ingest() -> list[str]:
     """
     Get list of column names that can be updated during ingest.
     Excludes: immutable, user-owned, and computed columns.
     """
     return [
-        col.name for col in COLUMNS
+        col.name
+        for col in COLUMNS
         if col.col_class == ColumnClass.SYSTEM
         and not col.computed_from
-        and col.name not in ('pickup_uid', 'created_at')
+        and col.name not in ("pickup_uid", "created_at")
     ]
 
 
 # =============================================================================
 # PICKUP UID GENERATION
 # =============================================================================
+
 
 def compute_pickup_uid(
     auction: str,
@@ -874,6 +874,7 @@ def compute_pickup_uid(
 
     # Last resort: random-ish key (should not happen in practice)
     import uuid
+
     key = f"{auction_lower}|{uuid.uuid4().hex}"
     return hashlib.sha1(key.encode()).hexdigest()[:16]
 
@@ -888,12 +889,13 @@ def compute_final_value(base_value, override_value):
     return base_value
 
 
-def compute_payload_hash(final_fields: Dict) -> str:
+def compute_payload_hash(final_fields: dict) -> str:
     """
     Compute hash of final fields for change detection.
     Used to determine if a row needs re-export to CD.
     """
     import json
+
     # Sort keys for consistent hashing
     content = json.dumps(final_fields, sort_keys=True, default=str)
     return hashlib.sha256(content.encode()).hexdigest()[:16]
@@ -903,7 +905,8 @@ def compute_payload_hash(final_fields: Dict) -> str:
 # HEADER ROW
 # =============================================================================
 
-def get_header_row() -> List[str]:
+
+def get_header_row() -> list[str]:
     """Get the header row for the Pickups sheet."""
     return get_column_names()
 

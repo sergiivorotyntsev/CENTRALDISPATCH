@@ -6,48 +6,51 @@ vs OCR processing. Tracks text quality metrics and determines the
 optimal extraction approach for each document.
 """
 
-import re
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class TextMode(Enum):
     """Text extraction mode used."""
-    NATIVE = "native"      # Text layer from PDF
-    OCR = "ocr"            # OCR processed (Tesseract, etc.)
-    HYBRID = "hybrid"      # Mix of native and OCR
+
+    NATIVE = "native"  # Text layer from PDF
+    OCR = "ocr"  # OCR processed (Tesseract, etc.)
+    HYBRID = "hybrid"  # Mix of native and OCR
 
 
 class TextQuality(Enum):
     """Quality assessment of extracted text."""
+
     EXCELLENT = "excellent"  # High-quality native text
-    GOOD = "good"            # Adequate for extraction
-    POOR = "poor"            # May need OCR fallback
-    UNUSABLE = "unusable"    # Definitely needs OCR
+    GOOD = "good"  # Adequate for extraction
+    POOR = "poor"  # May need OCR fallback
+    UNUSABLE = "unusable"  # Definitely needs OCR
 
 
 @dataclass
 class TextQualityMetrics:
     """Metrics for assessing text quality."""
+
     total_chars: int = 0
     word_count: int = 0
     line_count: int = 0
     avg_word_length: float = 0.0
-    alpha_ratio: float = 0.0        # Ratio of alphabetic chars
-    digit_ratio: float = 0.0        # Ratio of digit chars
-    garbled_ratio: float = 0.0      # Ratio of likely OCR errors
-    whitespace_ratio: float = 0.0   # Ratio of whitespace
-    has_valid_vin: bool = False     # Contains valid 17-char VIN
-    has_valid_dates: bool = False   # Contains parseable dates
-    has_valid_amounts: bool = False # Contains dollar amounts
+    alpha_ratio: float = 0.0  # Ratio of alphabetic chars
+    digit_ratio: float = 0.0  # Ratio of digit chars
+    garbled_ratio: float = 0.0  # Ratio of likely OCR errors
+    whitespace_ratio: float = 0.0  # Ratio of whitespace
+    has_valid_vin: bool = False  # Contains valid 17-char VIN
+    has_valid_dates: bool = False  # Contains parseable dates
+    has_valid_amounts: bool = False  # Contains dollar amounts
     quality: TextQuality = TextQuality.POOR
     recommended_mode: TextMode = TextMode.NATIVE
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
             "total_chars": self.total_chars,
@@ -75,17 +78,17 @@ class OCRStrategy:
     """
 
     # Thresholds for quality assessment
-    MIN_CHARS_GOOD = 200        # Minimum chars for "good" quality
-    MIN_CHARS_USABLE = 50       # Minimum chars for any extraction
-    MIN_WORDS_GOOD = 30         # Minimum words for "good" quality
-    MIN_ALPHA_RATIO = 0.5       # Minimum ratio of alphabetic chars
-    MAX_GARBLED_RATIO = 0.1     # Maximum acceptable garbled char ratio
+    MIN_CHARS_GOOD = 200  # Minimum chars for "good" quality
+    MIN_CHARS_USABLE = 50  # Minimum chars for any extraction
+    MIN_WORDS_GOOD = 30  # Minimum words for "good" quality
+    MIN_ALPHA_RATIO = 0.5  # Minimum ratio of alphabetic chars
+    MAX_GARBLED_RATIO = 0.1  # Maximum acceptable garbled char ratio
 
     # Patterns for quality indicators
-    VIN_PATTERN = re.compile(r'\b[A-HJ-NPR-Z0-9]{17}\b')
-    DATE_PATTERN = re.compile(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}')
-    AMOUNT_PATTERN = re.compile(r'\$[\d,]+\.?\d*')
-    GARBLED_PATTERN = re.compile(r'[^\x00-\x7F]|[\x00-\x08\x0B\x0C\x0E-\x1F]')
+    VIN_PATTERN = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b")
+    DATE_PATTERN = re.compile(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}")
+    AMOUNT_PATTERN = re.compile(r"\$[\d,]+\.?\d*")
+    GARBLED_PATTERN = re.compile(r"[^\x00-\x7F]|[\x00-\x08\x0B\x0C\x0E-\x1F]")
 
     def analyze_text_quality(self, text: str) -> TextQualityMetrics:
         """
@@ -107,7 +110,7 @@ class OCRStrategy:
         # Basic counts
         metrics.total_chars = len(text)
         metrics.word_count = len(text.split())
-        metrics.line_count = text.count('\n') + 1
+        metrics.line_count = text.count("\n") + 1
 
         # Character analysis
         alpha_count = sum(1 for c in text if c.isalpha())
@@ -148,20 +151,23 @@ class OCRStrategy:
             return TextQuality.UNUSABLE
 
         # Poor: short text or low alpha ratio
-        if (metrics.total_chars < self.MIN_CHARS_GOOD or
-            metrics.alpha_ratio < self.MIN_ALPHA_RATIO):
+        if metrics.total_chars < self.MIN_CHARS_GOOD or metrics.alpha_ratio < self.MIN_ALPHA_RATIO:
             return TextQuality.POOR
 
         # Excellent: has key data indicators and good metrics
-        if (metrics.has_valid_vin and
-            metrics.has_valid_dates and
-            metrics.word_count >= self.MIN_WORDS_GOOD and
-            metrics.garbled_ratio < self.MAX_GARBLED_RATIO):
+        if (
+            metrics.has_valid_vin
+            and metrics.has_valid_dates
+            and metrics.word_count >= self.MIN_WORDS_GOOD
+            and metrics.garbled_ratio < self.MAX_GARBLED_RATIO
+        ):
             return TextQuality.EXCELLENT
 
         # Good: meets basic thresholds
-        if (metrics.word_count >= self.MIN_WORDS_GOOD and
-            metrics.garbled_ratio < self.MAX_GARBLED_RATIO):
+        if (
+            metrics.word_count >= self.MIN_WORDS_GOOD
+            and metrics.garbled_ratio < self.MAX_GARBLED_RATIO
+        ):
             return TextQuality.GOOD
 
         return TextQuality.POOR
@@ -179,15 +185,13 @@ class OCRStrategy:
             return TextMode.NATIVE
 
         # Poor quality - check if OCR might help
-        if (not metrics.has_valid_vin and
-            not metrics.has_valid_dates and
-            metrics.alpha_ratio < 0.3):
+        if not metrics.has_valid_vin and not metrics.has_valid_dates and metrics.alpha_ratio < 0.3:
             return TextMode.OCR
 
         # Borderline - might benefit from hybrid
         return TextMode.HYBRID
 
-    def should_use_ocr(self, text: str) -> Tuple[bool, str]:
+    def should_use_ocr(self, text: str) -> tuple[bool, str]:
         """
         Quick check if OCR should be used for this document.
 
@@ -211,7 +215,7 @@ class OCRStrategy:
         self,
         text: str,
         page_count: int = 1,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get the full extraction strategy for a document.
 
@@ -244,7 +248,7 @@ class OCRStrategy:
         return 0.20  # UNUSABLE
 
 
-def analyze_document_text(text: str, page_count: int = 1) -> Dict[str, Any]:
+def analyze_document_text(text: str, page_count: int = 1) -> dict[str, Any]:
     """
     Convenience function to analyze document text quality.
 
@@ -259,7 +263,7 @@ def analyze_document_text(text: str, page_count: int = 1) -> Dict[str, Any]:
     return strategy.get_extraction_strategy(text, page_count)
 
 
-def needs_ocr(text: str) -> Tuple[bool, str]:
+def needs_ocr(text: str) -> tuple[bool, str]:
     """
     Quick check if document needs OCR processing.
 

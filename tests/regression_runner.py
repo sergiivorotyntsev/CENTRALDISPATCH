@@ -14,15 +14,14 @@ Features:
 - Generate regression reports
 """
 
-import os
-import sys
-import json
 import argparse
+import json
 import logging
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
+import sys
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FieldResult:
     """Result for a single field comparison."""
+
     field_key: str
     expected: Any
     extracted: Any
@@ -47,13 +47,14 @@ class FieldResult:
 @dataclass
 class DocumentResult:
     """Result for a single document test."""
+
     document_path: str
     document_name: str
     auction_type: Optional[str] = None
     total_fields: int = 0
     matched_fields: int = 0
     accuracy: float = 0.0
-    field_results: List[FieldResult] = field(default_factory=list)
+    field_results: list[FieldResult] = field(default_factory=list)
     extraction_time_ms: int = 0
     error: Optional[str] = None
 
@@ -61,6 +62,7 @@ class DocumentResult:
 @dataclass
 class RegressionReport:
     """Aggregate regression test report."""
+
     run_id: str
     run_at: str
     dataset_name: str = ""
@@ -68,11 +70,11 @@ class RegressionReport:
     successful_extractions: int = 0
     failed_extractions: int = 0
     overall_accuracy: float = 0.0
-    field_accuracy: Dict[str, float] = field(default_factory=dict)
-    document_results: List[DocumentResult] = field(default_factory=list)
+    field_accuracy: dict[str, float] = field(default_factory=dict)
+    document_results: list[DocumentResult] = field(default_factory=list)
     duration_ms: int = 0
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "run_id": self.run_id,
             "run_at": self.run_at,
@@ -153,7 +155,7 @@ class RegressionRunner:
 
         # Load expected results
         try:
-            with open(expected_json_path, 'r') as f:
+            with open(expected_json_path) as f:
                 expected = json.load(f)
         except Exception as e:
             result.error = f"Failed to load expected JSON: {e}"
@@ -163,6 +165,7 @@ class RegressionRunner:
 
         # Run extraction
         import time
+
         start_time = time.time()
 
         try:
@@ -188,9 +191,7 @@ class RegressionRunner:
 
             result.total_fields += 1
 
-            is_match, match_type = self._compare_values(
-                field_key, expected_value, extracted_value
-            )
+            is_match, match_type = self._compare_values(field_key, expected_value, extracted_value)
 
             field_result = FieldResult(
                 field_key=field_key,
@@ -251,12 +252,12 @@ class RegressionRunner:
         report.total_documents = len(pdf_files)
 
         # Process each document
-        field_matches = {f: 0 for f in self.REQUIRED_FIELDS + self.OPTIONAL_FIELDS}
-        field_totals = {f: 0 for f in self.REQUIRED_FIELDS + self.OPTIONAL_FIELDS}
+        field_matches = dict.fromkeys(self.REQUIRED_FIELDS + self.OPTIONAL_FIELDS, 0)
+        field_totals = dict.fromkeys(self.REQUIRED_FIELDS + self.OPTIONAL_FIELDS, 0)
 
         for pdf_path in pdf_files:
             # Look for expected JSON
-            json_path = pdf_path.with_suffix('.json')
+            json_path = pdf_path.with_suffix(".json")
             if not json_path.exists():
                 logger.warning(f"No expected JSON for {pdf_path.name}")
                 report.failed_extractions += 1
@@ -295,14 +296,14 @@ class RegressionRunner:
 
         return report
 
-    def _run_extraction(self, pdf_path: str) -> Dict[str, Any]:
+    def _run_extraction(self, pdf_path: str) -> dict[str, Any]:
         """
         Run extraction on a PDF file.
 
         Uses the block extractor with fallback to pattern extraction.
         """
-        from extractors.spatial_parser import parse_document
         from extractors.block_extractor import BlockExtractor
+        from extractors.spatial_parser import parse_document
 
         # Parse document
         structure = parse_document(pdf_path)
@@ -324,7 +325,7 @@ class RegressionRunner:
         field_key: str,
         expected: Any,
         extracted: Any,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Compare expected and extracted values.
 
@@ -366,15 +367,15 @@ class RegressionRunner:
 
         if field_key in ("pickup_zip", "delivery_zip"):
             # ZIP: compare digits only
-            exp_digits = ''.join(c for c in expected_str if c.isdigit())
-            ext_digits = ''.join(c for c in extracted_str if c.isdigit())
+            exp_digits = "".join(c for c in expected_str if c.isdigit())
+            ext_digits = "".join(c for c in extracted_str if c.isdigit())
             return exp_digits[:5] == ext_digits[:5], "zip"
 
         if field_key in ("total_amount",):
             # Amount: compare numeric value
             try:
-                exp_num = float(expected_str.replace('$', '').replace(',', ''))
-                ext_num = float(extracted_str.replace('$', '').replace(',', ''))
+                exp_num = float(expected_str.replace("$", "").replace(",", ""))
+                ext_num = float(extracted_str.replace("$", "").replace(",", ""))
                 return abs(exp_num - ext_num) < 0.01, "amount"
             except ValueError:
                 return False, "amount_error"
@@ -396,7 +397,7 @@ class RegressionRunner:
         ext_tokens = set(extracted.lower().split())
 
         # Remove common noise
-        noise = {'the', 'a', 'an', 'of', 'in', 'at', 'to'}
+        noise = {"the", "a", "an", "of", "in", "at", "to"}
         exp_tokens -= noise
         ext_tokens -= noise
 
@@ -440,7 +441,9 @@ def print_report(report: RegressionReport, detailed: bool = False):
         print("-" * 40)
         for doc in report.document_results:
             status = "✓" if not doc.error and doc.accuracy >= 80 else "⚠" if not doc.error else "✗"
-            print(f"  {status} {doc.document_name}: {doc.accuracy:.1f}% ({doc.matched_fields}/{doc.total_fields})")
+            print(
+                f"  {status} {doc.document_name}: {doc.accuracy:.1f}% ({doc.matched_fields}/{doc.total_fields})"
+            )
             if doc.error:
                 print(f"      Error: {doc.error}")
 
@@ -480,7 +483,7 @@ def main():
         print_report(report, detailed=args.detailed)
 
         if args.output:
-            with open(args.output, 'w') as f:
+            with open(args.output, "w") as f:
                 json.dump(report.to_dict(), f, indent=2)
             print(f"\nReport saved to: {args.output}")
 

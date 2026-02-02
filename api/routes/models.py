@@ -5,17 +5,15 @@ Manage ML model versions and training jobs.
 """
 
 import time
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.models import (
+    AuctionTypeRepository,
     ModelVersionRepository,
     TrainingJobRepository,
-    TrainingExampleRepository,
-    AuctionTypeRepository,
-    ModelStatus,
-    JobStatus,
 )
 
 router = APIRouter(prefix="/api/models", tags=["Models"])
@@ -25,8 +23,10 @@ router = APIRouter(prefix="/api/models", tags=["Models"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class ModelVersionResponse(BaseModel):
     """Model version info."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -46,14 +46,18 @@ class ModelVersionResponse(BaseModel):
 
 class ModelVersionListResponse(BaseModel):
     """List of model versions."""
-    items: List[ModelVersionResponse]
+
+    items: list[ModelVersionResponse]
     total: int
 
 
 class TrainingJobRequest(BaseModel):
     """Request to start a training job."""
+
     auction_type_id: int = Field(..., description="Auction type to train for")
-    version_tag: Optional[str] = Field(None, description="Version tag (auto-generated if not provided)")
+    version_tag: Optional[str] = Field(
+        None, description="Version tag (auto-generated if not provided)"
+    )
     base_model: str = Field("microsoft/layoutlmv3-base", description="Base model to fine-tune")
     epochs: int = Field(3, ge=1, le=20, description="Training epochs")
     learning_rate: float = Field(2e-5, description="Learning rate")
@@ -62,6 +66,7 @@ class TrainingJobRequest(BaseModel):
 
 class TrainingJobResponse(BaseModel):
     """Training job info."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -82,12 +87,14 @@ class TrainingJobResponse(BaseModel):
 
 class TrainingJobListResponse(BaseModel):
     """List of training jobs."""
-    items: List[TrainingJobResponse]
+
+    items: list[TrainingJobResponse]
     total: int
 
 
 class TrainingDataStats(BaseModel):
     """Statistics about training data."""
+
     auction_type_id: int
     auction_type_code: str
     total_examples: int
@@ -102,6 +109,7 @@ class TrainingDataStats(BaseModel):
 # TRAINING LOGIC (PLACEHOLDER FOR ML)
 # =============================================================================
 
+
 def run_training_job(job_id: int, auction_type_id: int, config: dict):
     """
     Execute a training job.
@@ -113,7 +121,6 @@ def run_training_job(job_id: int, auction_type_id: int, config: dict):
     4. Evaluate and save metrics
     5. Save adapter weights
     """
-    import time
 
     # Update status to running
     TrainingJobRepository.update(job_id, status="running")
@@ -124,10 +131,11 @@ def run_training_job(job_id: int, auction_type_id: int, config: dict):
 
         # Check if we have training data
         from api.database import get_connection
+
         with get_connection() as conn:
             count = conn.execute(
                 "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchone()[0]
 
         if count < 10:
@@ -184,6 +192,7 @@ def run_training_job(job_id: int, auction_type_id: int, config: dict):
 # ROUTES - MODEL VERSIONS
 # =============================================================================
 
+
 @router.get("/versions", response_model=ModelVersionListResponse)
 async def list_model_versions(
     auction_type_id: Optional[int] = Query(None),
@@ -209,9 +218,7 @@ async def list_model_versions(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM model_versions WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM model_versions WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
@@ -220,22 +227,25 @@ async def list_model_versions(
 
         if data.get("metrics_json"):
             import json
+
             data["metrics_json"] = json.loads(data["metrics_json"])
 
-        items.append(ModelVersionResponse(
-            id=data["id"],
-            uuid=data["uuid"],
-            auction_type_id=data["auction_type_id"],
-            auction_type_code=at.code if at else None,
-            version_tag=data["version_tag"],
-            base_model=data["base_model"],
-            adapter_path=data.get("adapter_path"),
-            status=data["status"],
-            metrics_json=data.get("metrics_json"),
-            training_job_id=data.get("training_job_id"),
-            created_at=data.get("created_at"),
-            promoted_at=data.get("promoted_at"),
-        ))
+        items.append(
+            ModelVersionResponse(
+                id=data["id"],
+                uuid=data["uuid"],
+                auction_type_id=data["auction_type_id"],
+                auction_type_code=at.code if at else None,
+                version_tag=data["version_tag"],
+                base_model=data["base_model"],
+                adapter_path=data.get("adapter_path"),
+                status=data["status"],
+                metrics_json=data.get("metrics_json"),
+                training_job_id=data.get("training_job_id"),
+                created_at=data.get("created_at"),
+                promoted_at=data.get("promoted_at"),
+            )
+        )
 
     return ModelVersionListResponse(items=items, total=total)
 
@@ -277,7 +287,9 @@ async def promote_model(model_id: int):
         raise HTTPException(status_code=404, detail="Model version not found")
 
     if model.status not in ("ready", "active"):
-        raise HTTPException(status_code=400, detail=f"Cannot promote model in {model.status} status")
+        raise HTTPException(
+            status_code=400, detail=f"Cannot promote model in {model.status} status"
+        )
 
     # Promote (this deactivates other models)
     ModelVersionRepository.promote(model_id)
@@ -310,7 +322,9 @@ async def archive_model(model_id: int):
         raise HTTPException(status_code=404, detail="Model version not found")
 
     if model.status == "active":
-        raise HTTPException(status_code=400, detail="Cannot archive active model. Promote another model first.")
+        raise HTTPException(
+            status_code=400, detail="Cannot archive active model. Promote another model first."
+        )
 
     ModelVersionRepository.update(model_id, status="archived")
 
@@ -320,6 +334,7 @@ async def archive_model(model_id: int):
 # =============================================================================
 # ROUTES - TRAINING JOBS
 # =============================================================================
+
 
 @router.post("/train", status_code=501)
 async def start_training(
@@ -344,7 +359,7 @@ async def start_training(
     with get_connection() as conn:
         example_count = conn.execute(
             "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-            (data.auction_type_id,)
+            (data.auction_type_id,),
         ).fetchone()[0]
 
     raise HTTPException(
@@ -356,7 +371,7 @@ async def start_training(
             "minimum_required": 100,
             "roadmap": "PEFT/LoRA fine-tuning will be implemented when sufficient training data is collected (100+ examples per auction type)",
             "current_status": "Use the review workflow to collect and validate training examples. Rule-based extraction is active.",
-        }
+        },
     )
 
 
@@ -385,9 +400,7 @@ async def list_training_jobs(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM training_jobs WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM training_jobs WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
@@ -396,26 +409,30 @@ async def list_training_jobs(
 
         if data.get("config_json"):
             import json
+
             data["config_json"] = json.loads(data["config_json"])
         if data.get("metrics_json"):
             import json
+
             data["metrics_json"] = json.loads(data["metrics_json"])
 
-        items.append(TrainingJobResponse(
-            id=data["id"],
-            uuid=data["uuid"],
-            auction_type_id=data["auction_type_id"],
-            auction_type_code=at.code if at else None,
-            model_version_id=data.get("model_version_id"),
-            status=data["status"],
-            config_json=data.get("config_json"),
-            metrics_json=data.get("metrics_json"),
-            log_path=data.get("log_path"),
-            error_message=data.get("error_message"),
-            created_at=data.get("created_at"),
-            started_at=data.get("started_at"),
-            completed_at=data.get("completed_at"),
-        ))
+        items.append(
+            TrainingJobResponse(
+                id=data["id"],
+                uuid=data["uuid"],
+                auction_type_id=data["auction_type_id"],
+                auction_type_code=at.code if at else None,
+                model_version_id=data.get("model_version_id"),
+                status=data["status"],
+                config_json=data.get("config_json"),
+                metrics_json=data.get("metrics_json"),
+                log_path=data.get("log_path"),
+                error_message=data.get("error_message"),
+                created_at=data.get("created_at"),
+                started_at=data.get("started_at"),
+                completed_at=data.get("completed_at"),
+            )
+        )
 
     return TrainingJobListResponse(items=items, total=total)
 
@@ -465,8 +482,10 @@ async def cancel_training_job(job_id: int):
 # ROUTES - TRAINING DATA STATS
 # =============================================================================
 
+
 class TrainingStatsOverview(BaseModel):
     """Overview of training stats across all auction types."""
+
     total_examples: int
     total_validated: int
     by_auction_type: dict
@@ -475,10 +494,11 @@ class TrainingStatsOverview(BaseModel):
 @router.get("/training-stats/overview")
 async def get_training_stats_overview():
     """Get training stats overview for the Test Lab dashboard."""
+    from sqlmodel import Session, select
+
     from api.database import get_connection
     from api.training_db import engine
-    from sqlmodel import Session, select
-    from models.training import TrainingExample, FieldCorrection
+    from models.training import FieldCorrection, TrainingExample
 
     # Get auction types from main database
     with get_connection() as conn:
@@ -512,7 +532,7 @@ async def get_training_stats_overview():
                 corrections = session.exec(
                     select(FieldCorrection).where(FieldCorrection.auction_type_id == at_id)
                 ).all()
-                unique_runs = len(set(c.extraction_run_id for c in corrections))
+                unique_runs = len({c.extraction_run_id for c in corrections})
                 # Add unique correction runs to totals (deduplicated with examples)
                 if unique_runs > total:
                     total = unique_runs
@@ -535,7 +555,7 @@ async def get_training_stats_overview():
     }
 
 
-@router.get("/training-stats", response_model=List[TrainingDataStats])
+@router.get("/training-stats", response_model=list[TrainingDataStats])
 async def get_training_stats():
     """
     Get training data statistics per auction type.
@@ -543,10 +563,11 @@ async def get_training_stats():
     Shows which auction types have enough data for training.
     Reads from training.db (separate training database).
     """
+    from sqlmodel import Session, select
+
     from api.database import get_connection
     from api.training_db import engine
-    from sqlmodel import Session, select
-    from models.training import TrainingExample, FieldCorrection, ExtractionRule
+    from models.training import ExtractionRule, FieldCorrection, TrainingExample
 
     # Get auction types from main database
     with get_connection() as conn:
@@ -573,7 +594,7 @@ async def get_training_stats():
             incorrect = total - validated
 
             # Count unique documents
-            unique_doc_ids = set(ex.document_id for ex in total_examples)
+            unique_doc_ids = {ex.document_id for ex in total_examples}
             unique_docs = len(unique_doc_ids)
 
             # Count field corrections
@@ -583,14 +604,14 @@ async def get_training_stats():
             correction_count = len(corrections)
 
             # Count unique fields from corrections
-            unique_field_keys = set(c.field_key for c in corrections)
+            unique_field_keys = {c.field_key for c in corrections}
             unique_fields = len(unique_field_keys)
 
             # Count extraction rules
             rules = session.exec(
                 select(ExtractionRule)
                 .where(ExtractionRule.auction_type_id == at_id)
-                .where(ExtractionRule.is_active == True)
+                .where(ExtractionRule.is_active)
             ).all()
             rules_count = len(rules)
 
@@ -599,18 +620,22 @@ async def get_training_stats():
             if rules:
                 avg_confidence = sum(r.confidence for r in rules) / len(rules)
 
-            stats.append(TrainingDataStats(
-                auction_type_id=at_id,
-                auction_type_code=at_code,
-                total_examples=total,
-                correct_examples=validated,
-                incorrect_examples=incorrect,
-                unique_fields=unique_fields if unique_fields > 0 else correction_count,
-                unique_documents=unique_docs,
-                ready_for_training=total >= 10,
-                # Additional stats
-                rules_count=rules_count if hasattr(TrainingDataStats, 'rules_count') else None,
-                avg_confidence=avg_confidence if hasattr(TrainingDataStats, 'avg_confidence') else None,
-            ))
+            stats.append(
+                TrainingDataStats(
+                    auction_type_id=at_id,
+                    auction_type_code=at_code,
+                    total_examples=total,
+                    correct_examples=validated,
+                    incorrect_examples=incorrect,
+                    unique_fields=unique_fields if unique_fields > 0 else correction_count,
+                    unique_documents=unique_docs,
+                    ready_for_training=total >= 10,
+                    # Additional stats
+                    rules_count=rules_count if hasattr(TrainingDataStats, "rules_count") else None,
+                    avg_confidence=avg_confidence
+                    if hasattr(TrainingDataStats, "avg_confidence")
+                    else None,
+                )
+            )
 
     return stats

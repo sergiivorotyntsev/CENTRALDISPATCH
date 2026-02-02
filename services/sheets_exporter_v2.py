@@ -20,24 +20,17 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple, Set
+from typing import Any, Optional
 
 from core.config import SheetsConfig
 from schemas.sheets_schema_v2 import (
     SCHEMA_VERSION,
-    COLUMNS,
-    ColumnClass,
-    RowStatus,
-    WarehouseMode,
-    get_column_names,
+    column_index_to_letter,
+    generate_dispatch_id,
     get_column_index,
     get_column_letter,
-    column_index_to_letter,
-    get_required_columns,
+    get_column_names,
     get_protected_columns,
-    get_lock_columns,
-    generate_dispatch_id,
-    get_final_value,
     validate_row_for_ready,
 )
 
@@ -61,7 +54,7 @@ class SheetsExporterV2:
         self.sheet_name = sheet_name
         self.column_names = get_column_names()
         self._service = None
-        self._dispatch_id_cache: Dict[str, int] = {}  # dispatch_id -> row_number
+        self._dispatch_id_cache: dict[str, int] = {}  # dispatch_id -> row_number
         self._cache_valid = False
 
     # =========================================================================
@@ -105,10 +98,15 @@ class SheetsExporterV2:
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.sheet_name}!A1:{last_col}1"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         if values and values[0] == self.column_names:
@@ -125,7 +123,7 @@ class SheetsExporterV2:
         logger.info(f"Headers updated for {self.sheet_name}")
         return True
 
-    def schema_ensure(self) -> Dict[str, Any]:
+    def schema_ensure(self) -> dict[str, Any]:
         """
         Ensure schema is up to date.
         Adds missing columns if needed (migration support).
@@ -134,10 +132,15 @@ class SheetsExporterV2:
 
         # Get current headers
         range_name = f"{self.sheet_name}!1:1"
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         existing = result.get("values", [[]])[0]
         expected = self.column_names
@@ -182,10 +185,15 @@ class SheetsExporterV2:
         service = self._get_service()
 
         range_name = f"{self.sheet_name}!A:A"
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         self._dispatch_id_cache.clear()
         values = result.get("values", [])
@@ -213,17 +221,22 @@ class SheetsExporterV2:
     # Row Operations
     # =========================================================================
 
-    def _read_row(self, row_number: int) -> Dict[str, Any]:
+    def _read_row(self, row_number: int) -> dict[str, Any]:
         """Read a full row. Returns dict of column_name -> value."""
         service = self._get_service()
 
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.sheet_name}!A{row_number}:{last_col}{row_number}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [[]])[0]
 
@@ -233,7 +246,7 @@ class SheetsExporterV2:
 
         return row_dict
 
-    def _get_lock_flags(self, row: Dict[str, Any]) -> Dict[str, bool]:
+    def _get_lock_flags(self, row: dict[str, Any]) -> dict[str, bool]:
         """Get lock flag values from a row."""
         return {
             "lock_all": str(row.get("lock_all", "")).upper() == "TRUE",
@@ -241,12 +254,12 @@ class SheetsExporterV2:
             "lock_release_notes": str(row.get("lock_release_notes", "")).upper() == "TRUE",
         }
 
-    def _get_protected_with_values(self, row: Dict[str, Any]) -> Set[str]:
+    def _get_protected_with_values(self, row: dict[str, Any]) -> set[str]:
         """Get set of protected columns that have values."""
         protected = get_protected_columns()
         return {col for col in protected if row.get(col) and str(row.get(col)).strip()}
 
-    def _is_warehouse_manual(self, row: Dict[str, Any]) -> bool:
+    def _is_warehouse_manual(self, row: dict[str, Any]) -> bool:
         """Check if warehouse selection is MANUAL."""
         return str(row.get("warehouse_selected_mode", "")).upper() == "MANUAL"
 
@@ -254,7 +267,7 @@ class SheetsExporterV2:
     # Record Preparation
     # =========================================================================
 
-    def _prepare_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """
         Prepare a record for upsert.
         Generates dispatch_id if missing, sets timestamps.
@@ -294,11 +307,13 @@ class SheetsExporterV2:
                 if isinstance(val, bool):
                     prepared[bool_field] = "TRUE" if val else "FALSE"
                 elif isinstance(val, str):
-                    prepared[bool_field] = "TRUE" if val.lower() in ("true", "yes", "1") else "FALSE"
+                    prepared[bool_field] = (
+                        "TRUE" if val.lower() in ("true", "yes", "1") else "FALSE"
+                    )
 
         return prepared
 
-    def _row_to_values(self, row: Dict[str, Any]) -> List[Any]:
+    def _row_to_values(self, row: dict[str, Any]) -> list[Any]:
         """Convert row dict to list of values."""
         values = []
         for col_name in self.column_names:
@@ -321,7 +336,7 @@ class SheetsExporterV2:
     # Upsert Logic
     # =========================================================================
 
-    def upsert_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def upsert_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """
         Upsert a record by dispatch_id.
 
@@ -346,20 +361,25 @@ class SheetsExporterV2:
         else:
             return self._update_existing_row(prepared, row_number)
 
-    def _insert_new_row(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _insert_new_row(self, record: dict[str, Any]) -> dict[str, Any]:
         """Insert a new row."""
         service = self._get_service()
 
         values = self._row_to_values(record)
 
         range_name = f"{self.sheet_name}!A:A"
-        result = service.spreadsheets().values().append(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-            valueInputOption="USER_ENTERED",
-            insertDataOption="INSERT_ROWS",
-            body={"values": [values]},
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .append(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": [values]},
+            )
+            .execute()
+        )
 
         # Update cache
         self._invalidate_cache()
@@ -369,7 +389,8 @@ class SheetsExporterV2:
         row_number = None
         if updated_range:
             import re
-            match = re.search(r'!A(\d+):', updated_range)
+
+            match = re.search(r"!A(\d+):", updated_range)
             if match:
                 row_number = int(match.group(1))
 
@@ -383,7 +404,7 @@ class SheetsExporterV2:
             "message": "New row inserted",
         }
 
-    def _update_existing_row(self, record: Dict[str, Any], row_number: int) -> Dict[str, Any]:
+    def _update_existing_row(self, record: dict[str, Any], row_number: int) -> dict[str, Any]:
         """
         Update an existing row, respecting protection rules.
         """
@@ -483,10 +504,12 @@ class SheetsExporterV2:
                     new_value = round(new_value, 2)
 
                 col_letter = column_index_to_letter(col_idx)
-                updates.append({
-                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                    "values": [[new_value]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                        "values": [[new_value]],
+                    }
+                )
 
         # Execute updates
         if updates:
@@ -498,7 +521,9 @@ class SheetsExporterV2:
                 },
             ).execute()
 
-        logger.info(f"Updated row {row_number}: dispatch_id={record['dispatch_id']}, {len(updates)} fields, {len(protected_fields)} protected")
+        logger.info(
+            f"Updated row {row_number}: dispatch_id={record['dispatch_id']}, {len(updates)} fields, {len(protected_fields)} protected"
+        )
 
         return {
             "action": "update",
@@ -508,7 +533,7 @@ class SheetsExporterV2:
             "message": f"Updated {len(updates)} fields, {len(protected_fields)} protected",
         }
 
-    def _update_audit_only(self, record: Dict[str, Any], row_number: int, existing: Dict[str, Any]):
+    def _update_audit_only(self, record: dict[str, Any], row_number: int, existing: dict[str, Any]):
         """Update only audit/tracking fields."""
         service = self._get_service()
 
@@ -523,10 +548,12 @@ class SheetsExporterV2:
                     if value is None:
                         value = ""
                     col_letter = column_index_to_letter(col_idx)
-                    updates.append({
-                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                        "values": [[value]],
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                            "values": [[value]],
+                        }
+                    )
 
         if updates:
             service.spreadsheets().values().batchUpdate(
@@ -541,7 +568,7 @@ class SheetsExporterV2:
     # Batch Operations
     # =========================================================================
 
-    def upsert_batch(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def upsert_batch(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Upsert multiple records.
 
@@ -599,26 +626,32 @@ class SheetsExporterV2:
         status_idx = get_column_index("row_status")
         if status_idx >= 0:
             col_letter = column_index_to_letter(status_idx)
-            updates.append({
-                "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                "values": [[status]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                    "values": [[status]],
+                }
+            )
 
         # Update cd_last_error if provided
         if error is not None:
             error_idx = get_column_index("cd_last_error")
             if error_idx >= 0:
                 col_letter = column_index_to_letter(error_idx)
-                updates.append({
-                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                    "values": [[error[:500] if error else ""]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                        "values": [[error[:500] if error else ""]],
+                    }
+                )
 
         # Update timestamp
-        updates.append({
-            "range": f"{self.sheet_name}!{get_column_letter('updated_at')}{row_number}",
-            "values": [[datetime.now().isoformat()]],
-        })
+        updates.append(
+            {
+                "range": f"{self.sheet_name}!{get_column_letter('updated_at')}{row_number}",
+                "values": [[datetime.now().isoformat()]],
+            }
+        )
 
         if updates:
             service.spreadsheets().values().batchUpdate(
@@ -632,7 +665,7 @@ class SheetsExporterV2:
         logger.info(f"Set status {status} for {dispatch_id}")
         return True
 
-    def validate_and_set_ready(self, dispatch_id: str) -> Dict[str, Any]:
+    def validate_and_set_ready(self, dispatch_id: str) -> dict[str, Any]:
         """
         Validate a row and set status to READY if valid.
 
@@ -656,24 +689,29 @@ class SheetsExporterV2:
     # Utility Methods
     # =========================================================================
 
-    def get_row(self, dispatch_id: str) -> Optional[Dict[str, Any]]:
+    def get_row(self, dispatch_id: str) -> Optional[dict[str, Any]]:
         """Get a row by dispatch_id."""
         row_number = self.find_row_by_dispatch_id(dispatch_id)
         if row_number:
             return self._read_row(row_number)
         return None
 
-    def list_by_status(self, status: str) -> List[Dict[str, Any]]:
+    def list_by_status(self, status: str) -> list[dict[str, Any]]:
         """List all rows with a given status."""
         service = self._get_service()
 
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.sheet_name}!A:{last_col}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         if not values:
@@ -691,7 +729,7 @@ class SheetsExporterV2:
 
         return rows
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get statistics about the sheet."""
         service = self._get_service()
 
@@ -700,10 +738,15 @@ class SheetsExporterV2:
         col_letter = column_index_to_letter(status_idx)
         range_name = f"{self.sheet_name}!{col_letter}:{col_letter}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
 

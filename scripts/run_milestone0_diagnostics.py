@@ -11,10 +11,10 @@ Saves results to diagnostics/samples/ for analysis.
 import json
 import os
 import sys
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional
+from typing import Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +25,7 @@ from extractors import ExtractorManager
 @dataclass
 class DiagnosticResult:
     """Result of diagnostic analysis for a single document."""
+
     filename: str
     file_path: str
     file_size_bytes: int
@@ -41,8 +42,8 @@ class DiagnosticResult:
     classification_success: bool
     detected_source: Optional[str]
     classification_score: float
-    all_scores: List[Dict]
-    matched_patterns: List[str]
+    all_scores: list[dict]
+    matched_patterns: list[str]
 
     # Extraction
     extraction_success: bool
@@ -59,14 +60,14 @@ class DiagnosticResult:
     has_reference_id: bool
 
     # Extracted values (key fields)
-    extracted_fields: Dict
+    extracted_fields: dict
 
     # Field sources
-    field_sources: Dict
+    field_sources: dict
 
     # Issues detected
-    issues: List[str]
-    recommendations: List[str]
+    issues: list[str]
+    recommendations: list[str]
 
     # Pipeline invariants
     invariant_text_extracted: bool
@@ -80,6 +81,7 @@ class DiagnosticResult:
 def run_diagnostic(pdf_path: str) -> DiagnosticResult:
     """Run full diagnostic on a single PDF document."""
     import time
+
     import pdfplumber
 
     start_time = time.time()
@@ -157,7 +159,9 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
 
     # Check text length threshold
     if result.raw_text_length < 100:
-        result.issues.append(f"Very short text ({result.raw_text_length} chars) - likely OCR needed")
+        result.issues.append(
+            f"Very short text ({result.raw_text_length} chars) - likely OCR needed"
+        )
         result.recommendations.append("Document appears to be a scan without text layer")
 
     # Step 2: Classification
@@ -168,17 +172,21 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
         for extractor in manager.extractors:
             try:
                 score, patterns = extractor.score(raw_text)
-                result.all_scores.append({
-                    "source": extractor.source.value,
-                    "score": score,
-                    "patterns": patterns[:5] if patterns else [],
-                })
+                result.all_scores.append(
+                    {
+                        "source": extractor.source.value,
+                        "score": score,
+                        "patterns": patterns[:5] if patterns else [],
+                    }
+                )
             except Exception as e:
-                result.all_scores.append({
-                    "source": extractor.source.value,
-                    "score": 0.0,
-                    "error": str(e),
-                })
+                result.all_scores.append(
+                    {
+                        "source": extractor.source.value,
+                        "score": 0.0,
+                        "error": str(e),
+                    }
+                )
 
         # Get best match
         best_extractor = manager.get_extractor_for_text(raw_text)
@@ -207,7 +215,9 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
 
                 # Build extracted fields dict
                 fields = {
-                    "auction_source": extraction_result.source.value if extraction_result.source else None,
+                    "auction_source": extraction_result.source.value
+                    if extraction_result.source
+                    else None,
                     "reference_id": inv.reference_id,
                     "buyer_id": inv.buyer_id,
                     "buyer_name": inv.buyer_name,
@@ -218,27 +228,31 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
                 # Pickup address
                 if inv.pickup_address:
                     addr = inv.pickup_address
-                    fields.update({
-                        "pickup_name": addr.name,
-                        "pickup_address": addr.street,
-                        "pickup_city": addr.city,
-                        "pickup_state": addr.state,
-                        "pickup_zip": addr.postal_code,
-                        "pickup_phone": addr.phone,
-                    })
+                    fields.update(
+                        {
+                            "pickup_name": addr.name,
+                            "pickup_address": addr.street,
+                            "pickup_city": addr.city,
+                            "pickup_state": addr.state,
+                            "pickup_zip": addr.postal_code,
+                            "pickup_phone": addr.phone,
+                        }
+                    )
 
                 # Vehicle
                 if inv.vehicles:
                     v = inv.vehicles[0]
-                    fields.update({
-                        "vehicle_vin": v.vin,
-                        "vehicle_year": v.year,
-                        "vehicle_make": v.make,
-                        "vehicle_model": v.model,
-                        "vehicle_color": v.color,
-                        "vehicle_lot": v.lot_number,
-                        "vehicle_mileage": str(v.mileage) if v.mileage else None,
-                    })
+                    fields.update(
+                        {
+                            "vehicle_vin": v.vin,
+                            "vehicle_year": v.year,
+                            "vehicle_make": v.make,
+                            "vehicle_model": v.model,
+                            "vehicle_color": v.color,
+                            "vehicle_lot": v.lot_number,
+                            "vehicle_mileage": str(v.mileage) if v.mileage else None,
+                        }
+                    )
 
                 result.extracted_fields = fields
 
@@ -249,13 +263,17 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
 
                 # Check key fields
                 result.has_vehicle_vin = bool(fields.get("vehicle_vin"))
-                result.has_vehicle_ymm = all([
-                    fields.get("vehicle_year"),
-                    fields.get("vehicle_make"),
-                    fields.get("vehicle_model"),
-                ])
+                result.has_vehicle_ymm = all(
+                    [
+                        fields.get("vehicle_year"),
+                        fields.get("vehicle_make"),
+                        fields.get("vehicle_model"),
+                    ]
+                )
                 result.has_pickup_address = bool(fields.get("pickup_address"))
-                result.has_pickup_city_state = bool(fields.get("pickup_city")) and bool(fields.get("pickup_state"))
+                result.has_pickup_city_state = bool(fields.get("pickup_city")) and bool(
+                    fields.get("pickup_state")
+                )
                 result.has_reference_id = bool(fields.get("reference_id"))
 
                 # Track field sources
@@ -267,13 +285,15 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
                     }
 
                 # Check anchor fields invariant (at least 3 of: VIN, lot, city, state, facility name)
-                anchor_count = sum([
-                    result.has_vehicle_vin,
-                    bool(fields.get("vehicle_lot")),
-                    bool(fields.get("pickup_city")),
-                    bool(fields.get("pickup_state")),
-                    bool(fields.get("pickup_name")),
-                ])
+                anchor_count = sum(
+                    [
+                        result.has_vehicle_vin,
+                        bool(fields.get("vehicle_lot")),
+                        bool(fields.get("pickup_city")),
+                        bool(fields.get("pickup_state")),
+                        bool(fields.get("pickup_name")),
+                    ]
+                )
                 result.invariant_anchor_fields = anchor_count >= 3
 
                 # Generate issues for missing key fields
@@ -286,7 +306,9 @@ def run_diagnostic(pdf_path: str) -> DiagnosticResult:
 
                 if not result.has_pickup_address:
                     result.issues.append("Pickup address not extracted")
-                    result.recommendations.append("Check address extraction logic for this auction type")
+                    result.recommendations.append(
+                        "Check address extraction logic for this auction type"
+                    )
 
                 if not result.has_pickup_city_state:
                     result.issues.append("Pickup city/state not extracted")
@@ -319,7 +341,6 @@ def run_diagnostics_batch(sample_docs_dir: str, output_dir: str, max_per_type: i
 
     Selects up to max_per_type documents for each auction type.
     """
-    from pathlib import Path
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -375,7 +396,11 @@ def run_diagnostics_batch(sample_docs_dir: str, output_dir: str, max_per_type: i
             summary["classification_success"] += 1
         if result.extraction_success:
             summary["extraction_success"] += 1
-        if result.invariant_text_extracted and result.invariant_classified and result.invariant_anchor_fields:
+        if (
+            result.invariant_text_extracted
+            and result.invariant_classified
+            and result.invariant_anchor_fields
+        ):
             summary["invariant_pass_all"] += 1
 
         # Track by auction type
@@ -405,7 +430,10 @@ def run_diagnostics_batch(sample_docs_dir: str, output_dir: str, max_per_type: i
         print(f"  Text: {result.words_count} words")
         print(f"  Fields: {result.fields_filled}/{result.fields_total}")
         if result.issues:
-            print(f"  Issues: {result.issues[0]}" + (f" (+{len(result.issues)-1} more)" if len(result.issues) > 1 else ""))
+            print(
+                f"  Issues: {result.issues[0]}"
+                + (f" (+{len(result.issues) - 1} more)" if len(result.issues) > 1 else "")
+            )
 
         # Save individual result
         result_file = os.path.join(output_dir, f"{Path(pdf_path).stem}_diagnostic.json")
@@ -418,11 +446,9 @@ def run_diagnostics_batch(sample_docs_dir: str, output_dir: str, max_per_type: i
             data["avg_fields_filled"] = round(data["avg_fields_filled"] / data["success"], 1)
 
     # Sort common issues by frequency
-    summary["common_issues"] = dict(sorted(
-        summary["common_issues"].items(),
-        key=lambda x: x[1],
-        reverse=True
-    ))
+    summary["common_issues"] = dict(
+        sorted(summary["common_issues"].items(), key=lambda x: x[1], reverse=True)
+    )
 
     # Save summary
     summary_file = os.path.join(output_dir, "diagnostic_summary.json")
@@ -441,7 +467,9 @@ def run_diagnostics_batch(sample_docs_dir: str, output_dir: str, max_per_type: i
 
     print("\nBy Auction Type:")
     for source, data in summary["by_auction_type"].items():
-        print(f"  {source}: {data['success']}/{data['count']} success, avg {data['avg_fields_filled']} fields")
+        print(
+            f"  {source}: {data['success']}/{data['count']} success, avg {data['avg_fields_filled']} fields"
+        )
 
     print("\nTop Issues:")
     for issue, count in list(summary["common_issues"].items())[:5]:

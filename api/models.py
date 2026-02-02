@@ -14,32 +14,35 @@ Schema Version: 4
 
 import json
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
+from typing import Any, Optional
 
 from api.database import get_connection
-
 
 # =============================================================================
 # ENUMS
 # =============================================================================
 
+
 class DatasetSplit(str, Enum):
     """Dataset split types."""
+
     TRAIN = "train"
     TEST = "test"
 
 
 class ExtractorKind(str, Enum):
     """Type of extractor used."""
-    RULE = "rule"      # Rule-based pattern matching
-    ML = "ml"          # ML model inference
+
+    RULE = "rule"  # Rule-based pattern matching
+    ML = "ml"  # ML model inference
 
 
 class RunStatus(str, Enum):
     """Extraction run status."""
+
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -49,6 +52,7 @@ class RunStatus(str, Enum):
 
 class ReviewStatus(str, Enum):
     """Review item status."""
+
     PENDING = "pending"
     APPROVED = "approved"
     CORRECTED = "corrected"
@@ -57,6 +61,7 @@ class ReviewStatus(str, Enum):
 
 class ModelStatus(str, Enum):
     """Model version status."""
+
     TRAINING = "training"
     READY = "ready"
     ACTIVE = "active"
@@ -66,6 +71,7 @@ class ModelStatus(str, Enum):
 
 class JobStatus(str, Enum):
     """Training/Export job status."""
+
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -75,6 +81,7 @@ class JobStatus(str, Enum):
 
 class ExportStatus(str, Enum):
     """Export job status."""
+
     PENDING = "pending"
     SUBMITTED = "submitted"
     SUCCESS = "success"
@@ -84,23 +91,26 @@ class ExportStatus(str, Enum):
 
 class TextSourceType(str, Enum):
     """Source of text extraction."""
-    NATIVE = "native"        # Text layer from PDF
-    OCR = "ocr"              # OCR processed
-    HYBRID = "hybrid"        # Mix of native and OCR
+
+    NATIVE = "native"  # Text layer from PDF
+    OCR = "ocr"  # OCR processed
+    HYBRID = "hybrid"  # Mix of native and OCR
 
 
 class FieldValueSource(str, Enum):
     """Source of field value (precedence order high to low)."""
-    USER_OVERRIDE = "user_override"      # Manual user correction
+
+    USER_OVERRIDE = "user_override"  # Manual user correction
     WAREHOUSE_CONST = "warehouse_const"  # Warehouse-specific constant
-    AUCTION_CONST = "auction_const"      # Auction profile constant
-    EXTRACTED = "extracted"              # Extracted from document
-    DEFAULT = "default"                  # Default value from field mapping
+    AUCTION_CONST = "auction_const"  # Auction profile constant
+    EXTRACTED = "extracted"  # Extracted from document
+    DEFAULT = "default"  # Default value from field mapping
 
 
 # =============================================================================
 # SCHEMA INITIALIZATION
 # =============================================================================
+
 
 def init_extended_schema():
     """Initialize extended database schema for ML-ready MVP."""
@@ -447,6 +457,7 @@ def init_extended_schema():
 # SEED DATA
 # =============================================================================
 
+
 def seed_base_auction_types():
     """Seed the 3 base auction types + Other."""
     base_types = [
@@ -456,10 +467,12 @@ def seed_base_auction_types():
             "is_base": True,
             "is_custom": False,
             "description": "Copart vehicle auctions - Sales Receipt/Bill of Sale documents",
-            "extractor_config": json.dumps({
-                "extractor_class": "CopartExtractor",
-                "patterns": ["COPART", "SOLD THROUGH COPART", "copart.com"],
-            }),
+            "extractor_config": json.dumps(
+                {
+                    "extractor_class": "CopartExtractor",
+                    "patterns": ["COPART", "SOLD THROUGH COPART", "copart.com"],
+                }
+            ),
         },
         {
             "name": "IAA (Insurance Auto Auctions)",
@@ -467,10 +480,12 @@ def seed_base_auction_types():
             "is_base": True,
             "is_custom": False,
             "description": "IAA insurance auto auction documents",
-            "extractor_config": json.dumps({
-                "extractor_class": "IAAExtractor",
-                "patterns": ["IAA", "INSURANCE AUTO AUCTIONS"],
-            }),
+            "extractor_config": json.dumps(
+                {
+                    "extractor_class": "IAAExtractor",
+                    "patterns": ["IAA", "INSURANCE AUTO AUCTIONS"],
+                }
+            ),
         },
         {
             "name": "Manheim",
@@ -478,10 +493,12 @@ def seed_base_auction_types():
             "is_base": True,
             "is_custom": False,
             "description": "Manheim wholesale auto auction documents",
-            "extractor_config": json.dumps({
-                "extractor_class": "ManheimExtractor",
-                "patterns": ["MANHEIM", "MANHEIM AUCTIONS"],
-            }),
+            "extractor_config": json.dumps(
+                {
+                    "extractor_class": "ManheimExtractor",
+                    "patterns": ["MANHEIM", "MANHEIM AUCTIONS"],
+                }
+            ),
         },
         {
             "name": "Other",
@@ -489,10 +506,12 @@ def seed_base_auction_types():
             "is_base": True,
             "is_custom": False,
             "description": "Other/unknown auction types - base for custom subtypes",
-            "extractor_config": json.dumps({
-                "extractor_class": None,
-                "patterns": [],
-            }),
+            "extractor_config": json.dumps(
+                {
+                    "extractor_class": None,
+                    "patterns": [],
+                }
+            ),
         },
     ]
 
@@ -500,8 +519,7 @@ def seed_base_auction_types():
         for auction_type in base_types:
             # Check if already exists
             existing = conn.execute(
-                "SELECT id FROM auction_types WHERE code = ?",
-                (auction_type["code"],)
+                "SELECT id FROM auction_types WHERE code = ?", (auction_type["code"],)
             ).fetchone()
 
             if not existing:
@@ -516,7 +534,7 @@ def seed_base_auction_types():
                         auction_type["is_custom"],
                         auction_type["description"],
                         auction_type["extractor_config"],
-                    )
+                    ),
                 )
 
         conn.commit()
@@ -533,7 +551,13 @@ def seed_default_field_mappings():
         ("vehicle_model", "model", "vehicles[0].model", False, "Vehicle model"),
         ("vehicle_color", "color", "vehicles[0].color", False, "Vehicle color"),
         ("vehicle_lot", "lot_number", "vehicles[0].lotNumber", False, "Lot number"),
-        ("vehicle_is_inoperable", "is_inoperable", "vehicles[0].isInoperable", False, "Is inoperable"),
+        (
+            "vehicle_is_inoperable",
+            "is_inoperable",
+            "vehicles[0].isInoperable",
+            False,
+            "Is inoperable",
+        ),
         # Pickup fields
         ("pickup_name", "pickup_name", "stops[0].locationName", False, "Pickup location name"),
         ("pickup_address", "pickup_address", "stops[0].address", True, "Pickup address"),
@@ -559,13 +583,15 @@ def seed_default_field_mappings():
 
         for at in auction_types:
             auction_type_id = at["id"]
-            auction_code = at["code"]
+            at["code"]
 
-            for i, (source_key, internal_key, cd_key, is_required, description) in enumerate(common_fields):
+            for i, (source_key, internal_key, cd_key, is_required, description) in enumerate(
+                common_fields
+            ):
                 # Check if exists
                 existing = conn.execute(
                     "SELECT id FROM field_mappings WHERE auction_type_id = ? AND source_key = ?",
-                    (auction_type_id, source_key)
+                    (auction_type_id, source_key),
                 ).fetchone()
 
                 if not existing:
@@ -573,7 +599,15 @@ def seed_default_field_mappings():
                         """INSERT INTO field_mappings
                            (auction_type_id, source_key, internal_key, cd_key, is_required, description, display_order)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (auction_type_id, source_key, internal_key, cd_key, is_required, description, i)
+                        (
+                            auction_type_id,
+                            source_key,
+                            internal_key,
+                            cd_key,
+                            is_required,
+                            description,
+                            i,
+                        ),
                     )
 
         conn.commit()
@@ -583,9 +617,11 @@ def seed_default_field_mappings():
 # DATA CLASSES
 # =============================================================================
 
+
 @dataclass
 class AuctionType:
     """Auction type entity."""
+
     id: int
     name: str
     code: str
@@ -594,7 +630,7 @@ class AuctionType:
     is_custom: bool = False
     is_active: bool = True
     description: Optional[str] = None
-    extractor_config: Optional[Dict] = None
+    extractor_config: Optional[dict] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -602,6 +638,7 @@ class AuctionType:
 @dataclass
 class Document:
     """Uploaded document entity."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -623,6 +660,7 @@ class Document:
 @dataclass
 class ExtractionRun:
     """Extraction run entity."""
+
     id: int
     uuid: str
     document_id: int
@@ -631,10 +669,10 @@ class ExtractionRun:
     model_version_id: Optional[int] = None
     status: str = "pending"
     extraction_score: Optional[float] = None
-    outputs_json: Optional[Dict] = None
-    errors_json: Optional[List] = None
-    metrics_json: Optional[Dict] = None
-    field_sources_json: Optional[Dict] = None
+    outputs_json: Optional[dict] = None
+    errors_json: Optional[list] = None
+    metrics_json: Optional[dict] = None
+    field_sources_json: Optional[dict] = None
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -648,6 +686,7 @@ class ExtractionMetrics:
     These metrics are tracked during extraction and stored in metrics_json.
     Used for monitoring extraction quality and debugging issues.
     """
+
     # Text extraction metrics
     raw_text_length: int = 0
     words_count: int = 0
@@ -657,7 +696,7 @@ class ExtractionMetrics:
     # Classification metrics
     detected_source: Optional[str] = None
     classification_score: float = 0.0
-    classification_patterns: List[str] = field(default_factory=list)
+    classification_patterns: list[str] = field(default_factory=list)
 
     # Extraction metrics
     fields_extracted_count: int = 0
@@ -679,6 +718,7 @@ class ExtractionMetrics:
 @dataclass
 class FieldMapping:
     """Field mapping entity."""
+
     id: int
     auction_type_id: int
     source_key: str
@@ -696,6 +736,7 @@ class FieldMapping:
 @dataclass
 class ReviewItem:
     """Review item entity."""
+
     id: int
     run_id: int
     source_key: str
@@ -717,14 +758,15 @@ class ReviewItem:
 @dataclass
 class TrainingExample:
     """Training example entity."""
+
     id: int
     uuid: str
     auction_type_id: int
     document_id: Optional[int] = None
     input_text: str = ""
-    input_chunks_json: Optional[List] = None
-    labels_json: Dict = field(default_factory=dict)
-    source_review_item_ids: Optional[List[int]] = None
+    input_chunks_json: Optional[list] = None
+    labels_json: dict = field(default_factory=dict)
+    source_review_item_ids: Optional[list[int]] = None
     quality_score: Optional[float] = None
     is_validated: bool = False
     created_at: Optional[str] = None
@@ -733,6 +775,7 @@ class TrainingExample:
 @dataclass
 class ModelVersion:
     """Model version entity."""
+
     id: int
     uuid: str
     auction_type_id: int
@@ -740,8 +783,8 @@ class ModelVersion:
     base_model: str
     adapter_type: str = "lora"
     adapter_path: Optional[str] = None  # alias for adapter_uri
-    config_json: Optional[Dict] = None
-    metrics_json: Optional[Dict] = None
+    config_json: Optional[dict] = None
+    metrics_json: Optional[dict] = None
     status: str = "training"
     training_examples_count: int = 0
     training_job_id: Optional[int] = None
@@ -753,13 +796,14 @@ class ModelVersion:
 @dataclass
 class TrainingJob:
     """Training job entity."""
+
     id: int
     uuid: str
     auction_type_id: int
     model_version_id: int = 0
     status: str = "queued"
-    config_json: Optional[Dict] = None
-    metrics_json: Optional[Dict] = None
+    config_json: Optional[dict] = None
+    metrics_json: Optional[dict] = None
     log_path: Optional[str] = None  # alias for logs_uri
     error_message: Optional[str] = None
     started_at: Optional[str] = None
@@ -770,6 +814,7 @@ class TrainingJob:
 @dataclass
 class ExportJob:
     """Export job entity."""
+
     id: int
     uuid: str
     run_id: int
@@ -777,11 +822,11 @@ class ExportJob:
     dispatch_id: Optional[str] = None
     cd_listing_id: Optional[str] = None
     status: str = "pending"
-    payload_json: Optional[Dict] = None
-    response_json: Optional[Dict] = None
-    error_json: Optional[Dict] = None
+    payload_json: Optional[dict] = None
+    response_json: Optional[dict] = None
+    error_json: Optional[dict] = None
     error_message: Optional[str] = None
-    validation_errors_json: Optional[List] = None
+    validation_errors_json: Optional[list] = None
     retry_count: int = 0
     created_at: Optional[str] = None
     submitted_at: Optional[str] = None
@@ -796,6 +841,7 @@ class LayoutBlock:
     Represents a logical block/region in a document with bounding box
     coordinates and text content. Used for layout-aware extraction.
     """
+
     id: int
     document_id: int
     block_id: str
@@ -813,7 +859,7 @@ class LayoutBlock:
     created_at: Optional[str] = None
 
     @property
-    def bbox(self) -> Tuple[float, float, float, float]:
+    def bbox(self) -> tuple[float, float, float, float]:
         """Get bounding box as tuple (x0, y0, x1, y1)."""
         return (self.x0, self.y0, self.x1, self.y1)
 
@@ -842,17 +888,20 @@ class FieldEvidence:
     Links extracted field values to their source blocks in the document,
     enabling transparency and debugging of extraction logic.
     """
+
     id: int
     run_id: int
     field_key: str
     block_id: Optional[int] = None
     text_snippet: Optional[str] = None
     page_num: Optional[int] = None
-    bbox_json: Optional[Dict] = None  # {x0, y0, x1, y1}
+    bbox_json: Optional[dict] = None  # {x0, y0, x1, y1}
     rule_id: Optional[str] = None
     extraction_method: Optional[str] = None  # pattern, spatial, ml, learned_rule
     confidence: float = 1.0
-    value_source: str = "extracted"  # user_override, warehouse_const, auction_const, extracted, default
+    value_source: str = (
+        "extracted"  # user_override, warehouse_const, auction_const, extracted, default
+    )
     created_at: Optional[str] = None
 
 
@@ -860,21 +909,33 @@ class FieldEvidence:
 # REPOSITORY CLASSES
 # =============================================================================
 
+
 class AuctionTypeRepository:
     """Repository for AuctionType operations."""
 
     @staticmethod
-    def create(name: str, code: str, parent_id: int = None,
-               is_custom: bool = True, description: str = None,
-               extractor_config: Dict = None) -> int:
+    def create(
+        name: str,
+        code: str,
+        parent_id: int = None,
+        is_custom: bool = True,
+        description: str = None,
+        extractor_config: dict = None,
+    ) -> int:
         """Create a new auction type."""
         with get_connection() as conn:
             cursor = conn.execute(
                 """INSERT INTO auction_types
                    (name, code, parent_id, is_base, is_custom, description, extractor_config)
                    VALUES (?, ?, ?, FALSE, ?, ?, ?)""",
-                (name, code.upper(), parent_id, is_custom, description,
-                 json.dumps(extractor_config) if extractor_config else None)
+                (
+                    name,
+                    code.upper(),
+                    parent_id,
+                    is_custom,
+                    description,
+                    json.dumps(extractor_config) if extractor_config else None,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -883,9 +944,7 @@ class AuctionTypeRepository:
     def get_by_id(id: int) -> Optional[AuctionType]:
         """Get auction type by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM auction_types WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM auction_types WHERE id = ?", (id,)).fetchone()
             if row:
                 data = dict(row)
                 if data.get("extractor_config"):
@@ -908,7 +967,7 @@ class AuctionTypeRepository:
             return None
 
     @staticmethod
-    def list_all(include_inactive: bool = False) -> List[AuctionType]:
+    def list_all(include_inactive: bool = False) -> list[AuctionType]:
         """List all auction types."""
         sql = "SELECT * FROM auction_types"
         if not include_inactive:
@@ -949,15 +1008,13 @@ class AuctionTypeRepository:
         """Soft delete (deactivate) auction type."""
         with get_connection() as conn:
             # Check if it's a base type
-            row = conn.execute(
-                "SELECT is_base FROM auction_types WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT is_base FROM auction_types WHERE id = ?", (id,)).fetchone()
             if row and row["is_base"]:
                 return False  # Cannot delete base types
 
             conn.execute(
                 "UPDATE auction_types SET is_active = FALSE, updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), id)
+                (datetime.utcnow().isoformat(), id),
             )
             conn.commit()
             return True
@@ -967,11 +1024,19 @@ class DocumentRepository:
     """Repository for Document operations."""
 
     @staticmethod
-    def create(auction_type_id: int, dataset_split: str, filename: str,
-               file_path: str = None, file_size: int = None, sha256: str = None,
-               raw_text: str = None, uploaded_by: str = None,
-               source: str = "upload", is_test: bool = False,
-               page_count: int = None) -> int:
+    def create(
+        auction_type_id: int,
+        dataset_split: str,
+        filename: str,
+        file_path: str = None,
+        file_size: int = None,
+        sha256: str = None,
+        raw_text: str = None,
+        uploaded_by: str = None,
+        source: str = "upload",
+        is_test: bool = False,
+        page_count: int = None,
+    ) -> int:
         """Create a new document."""
         doc_uuid = str(uuid.uuid4())
 
@@ -980,8 +1045,20 @@ class DocumentRepository:
                 """INSERT INTO documents
                    (uuid, auction_type_id, dataset_split, filename, file_path, file_size, sha256, raw_text, uploaded_by, source, is_test, page_count)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (doc_uuid, auction_type_id, dataset_split, filename, file_path,
-                 file_size, sha256, raw_text, uploaded_by, source, is_test, page_count)
+                (
+                    doc_uuid,
+                    auction_type_id,
+                    dataset_split,
+                    filename,
+                    file_path,
+                    file_size,
+                    sha256,
+                    raw_text,
+                    uploaded_by,
+                    source,
+                    is_test,
+                    page_count,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -990,9 +1067,7 @@ class DocumentRepository:
     def get_by_id(id: int) -> Optional[Document]:
         """Get document by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM documents WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM documents WHERE id = ?", (id,)).fetchone()
             if row:
                 return Document(**dict(row))
             return None
@@ -1001,16 +1076,15 @@ class DocumentRepository:
     def get_by_sha256(sha256: str) -> Optional[Document]:
         """Get document by SHA256 hash (for deduplication)."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM documents WHERE sha256 = ?", (sha256,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM documents WHERE sha256 = ?", (sha256,)).fetchone()
             if row:
                 return Document(**dict(row))
             return None
 
     @staticmethod
-    def list_by_auction_type(auction_type_id: int, dataset_split: str = None,
-                              limit: int = 100, offset: int = 0) -> List[Document]:
+    def list_by_auction_type(
+        auction_type_id: int, dataset_split: str = None, limit: int = 100, offset: int = 0
+    ) -> list[Document]:
         """List documents for an auction type."""
         sql = "SELECT * FROM documents WHERE auction_type_id = ?"
         params = [auction_type_id]
@@ -1027,13 +1101,13 @@ class DocumentRepository:
             return [Document(**dict(row)) for row in rows]
 
     @staticmethod
-    def count_by_auction_type(auction_type_id: int) -> Dict[str, int]:
+    def count_by_auction_type(auction_type_id: int) -> dict[str, int]:
         """Count documents by split for an auction type."""
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT dataset_split, COUNT(*) as count
                    FROM documents WHERE auction_type_id = ? GROUP BY dataset_split""",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchall()
             return {row["dataset_split"]: row["count"] for row in rows}
 
@@ -1056,15 +1130,23 @@ class DocumentRepository:
         """Delete document and associated data."""
         with get_connection() as conn:
             # Delete related extraction runs first
-            conn.execute("DELETE FROM review_items WHERE run_id IN (SELECT id FROM extraction_runs WHERE document_id = ?)", (id,))
+            conn.execute(
+                "DELETE FROM review_items WHERE run_id IN (SELECT id FROM extraction_runs WHERE document_id = ?)",
+                (id,),
+            )
             conn.execute("DELETE FROM extraction_runs WHERE document_id = ?", (id,))
             conn.execute("DELETE FROM documents WHERE id = ?", (id,))
             conn.commit()
             return True
 
     @staticmethod
-    def list_all(auction_type_id: int = None, dataset_split: str = None,
-                 is_test: bool = None, limit: int = 100, offset: int = 0) -> List[Document]:
+    def list_all(
+        auction_type_id: int = None,
+        dataset_split: str = None,
+        is_test: bool = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Document]:
         """List all documents with optional filtering."""
         sql = "SELECT * FROM documents WHERE 1=1"
         params = []
@@ -1091,8 +1173,12 @@ class ExtractionRunRepository:
     """Repository for ExtractionRun operations."""
 
     @staticmethod
-    def create(document_id: int, auction_type_id: int,
-               extractor_kind: str = "rule", model_version_id: int = None) -> int:
+    def create(
+        document_id: int,
+        auction_type_id: int,
+        extractor_kind: str = "rule",
+        model_version_id: int = None,
+    ) -> int:
         """Create a new extraction run."""
         run_uuid = str(uuid.uuid4())
 
@@ -1101,7 +1187,7 @@ class ExtractionRunRepository:
                 """INSERT INTO extraction_runs
                    (uuid, document_id, auction_type_id, extractor_kind, model_version_id, status)
                    VALUES (?, ?, ?, ?, ?, 'pending')""",
-                (run_uuid, document_id, auction_type_id, extractor_kind, model_version_id)
+                (run_uuid, document_id, auction_type_id, extractor_kind, model_version_id),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1110,9 +1196,7 @@ class ExtractionRunRepository:
     def get_by_id(id: int) -> Optional[ExtractionRun]:
         """Get extraction run by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM extraction_runs WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM extraction_runs WHERE id = ?", (id,)).fetchone()
             if row:
                 data = dict(row)
                 if data.get("outputs_json"):
@@ -1134,9 +1218,9 @@ class ExtractionRunRepository:
 
         # Custom JSON serializer for datetime objects
         def json_serializer(obj):
-            if hasattr(obj, 'isoformat'):
+            if hasattr(obj, "isoformat"):
                 return obj.isoformat()
-            elif hasattr(obj, '__str__'):
+            elif hasattr(obj, "__str__"):
                 return str(obj)
             raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
@@ -1147,7 +1231,9 @@ class ExtractionRunRepository:
         if "metrics_json" in kwargs and isinstance(kwargs["metrics_json"], dict):
             kwargs["metrics_json"] = json.dumps(kwargs["metrics_json"], default=json_serializer)
         if "field_sources_json" in kwargs and isinstance(kwargs["field_sources_json"], dict):
-            kwargs["field_sources_json"] = json.dumps(kwargs["field_sources_json"], default=json_serializer)
+            kwargs["field_sources_json"] = json.dumps(
+                kwargs["field_sources_json"], default=json_serializer
+            )
 
         set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
         values = list(kwargs.values()) + [id]
@@ -1158,12 +1244,12 @@ class ExtractionRunRepository:
             return True
 
     @staticmethod
-    def list_by_document(document_id: int) -> List[ExtractionRun]:
+    def list_by_document(document_id: int) -> list[ExtractionRun]:
         """List extraction runs for a document."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC",
-                (document_id,)
+                (document_id,),
             ).fetchall()
             result = []
             for row in rows:
@@ -1180,14 +1266,14 @@ class ExtractionRunRepository:
             return result
 
     @staticmethod
-    def list_needs_review(limit: int = 50) -> List[ExtractionRun]:
+    def list_needs_review(limit: int = 50) -> list[ExtractionRun]:
         """List runs that need review."""
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT * FROM extraction_runs
                    WHERE status IN ('completed', 'needs_review')
                    ORDER BY created_at DESC LIMIT ?""",
-                (limit,)
+                (limit,),
             ).fetchall()
             result = []
             for row in rows:
@@ -1202,7 +1288,7 @@ class ReviewItemRepository:
     """Repository for ReviewItem operations."""
 
     @staticmethod
-    def create_batch(run_id: int, items: List[Dict]) -> List[int]:
+    def create_batch(run_id: int, items: list[dict]) -> list[int]:
         """Create multiple review items for a run."""
         ids = []
         with get_connection() as conn:
@@ -1212,22 +1298,28 @@ class ReviewItemRepository:
                        (run_id, source_key, internal_key, cd_key, predicted_value,
                         corrected_value, is_match_ok, export_field, confidence)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (run_id, item.get("source_key"), item.get("internal_key"),
-                     item.get("cd_key"), item.get("predicted_value"),
-                     item.get("corrected_value"), item.get("is_match_ok", False),
-                     item.get("export_field", True), item.get("confidence"))
+                    (
+                        run_id,
+                        item.get("source_key"),
+                        item.get("internal_key"),
+                        item.get("cd_key"),
+                        item.get("predicted_value"),
+                        item.get("corrected_value"),
+                        item.get("is_match_ok", False),
+                        item.get("export_field", True),
+                        item.get("confidence"),
+                    ),
                 )
                 ids.append(cursor.lastrowid)
             conn.commit()
         return ids
 
     @staticmethod
-    def get_by_run(run_id: int) -> List[ReviewItem]:
+    def get_by_run(run_id: int) -> list[ReviewItem]:
         """Get all review items for a run."""
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM review_items WHERE run_id = ? ORDER BY id",
-                (run_id,)
+                "SELECT * FROM review_items WHERE run_id = ? ORDER BY id", (run_id,)
             ).fetchall()
             result = []
             for row in rows:
@@ -1240,9 +1332,7 @@ class ReviewItemRepository:
     def get_by_id(id: int) -> Optional[ReviewItem]:
         """Get review item by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM review_items WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM review_items WHERE id = ?", (id,)).fetchone()
             if row:
                 data = dict(row)
                 data.setdefault("updated_at", data.get("reviewed_at"))
@@ -1266,7 +1356,7 @@ class ReviewItemRepository:
             return True
 
     @staticmethod
-    def update_batch(items: List[Dict]) -> int:
+    def update_batch(items: list[dict]) -> int:
         """Update multiple review items."""
         updated = 0
         now = datetime.utcnow().isoformat()
@@ -1286,16 +1376,23 @@ class ReviewItemRepository:
                        review_notes = ?,
                        reviewed_at = ?
                        WHERE id = ?""",
-                    (item.get("corrected_value"), item.get("is_match_ok", False),
-                     item.get("export_field", True), item.get("status", "pending"),
-                     item.get("reviewer"), item.get("review_notes"), now, item["id"])
+                    (
+                        item.get("corrected_value"),
+                        item.get("is_match_ok", False),
+                        item.get("export_field", True),
+                        item.get("status", "pending"),
+                        item.get("reviewer"),
+                        item.get("review_notes"),
+                        now,
+                        item["id"],
+                    ),
                 )
                 updated += 1
             conn.commit()
         return updated
 
     @staticmethod
-    def submit_review(run_id: int, items: List[Dict], reviewer: str = None) -> Dict:
+    def submit_review(run_id: int, items: list[dict], reviewer: str = None) -> dict:
         """Submit a complete review for a run."""
         now = datetime.utcnow().isoformat()
         updated = 0
@@ -1305,7 +1402,9 @@ class ReviewItemRepository:
         with get_connection() as conn:
             for item in items:
                 status = "approved" if item.get("is_match_ok") else "corrected"
-                if item.get("corrected_value") and item.get("corrected_value") != item.get("predicted_value"):
+                if item.get("corrected_value") and item.get("corrected_value") != item.get(
+                    "predicted_value"
+                ):
                     status = "corrected"
                     corrected += 1
                 else:
@@ -1321,8 +1420,15 @@ class ReviewItemRepository:
                            reviewer = ?,
                            reviewed_at = ?
                            WHERE id = ?""",
-                        (item.get("corrected_value"), item.get("is_match_ok", False),
-                         item.get("export_field", True), status, reviewer, now, item["id"])
+                        (
+                            item.get("corrected_value"),
+                            item.get("is_match_ok", False),
+                            item.get("export_field", True),
+                            status,
+                            reviewer,
+                            now,
+                            item["id"],
+                        ),
                     )
                 else:
                     conn.execute(
@@ -1330,10 +1436,19 @@ class ReviewItemRepository:
                            (run_id, source_key, internal_key, cd_key, predicted_value,
                             corrected_value, is_match_ok, export_field, status, reviewer, reviewed_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (run_id, item.get("source_key"), item.get("internal_key"),
-                         item.get("cd_key"), item.get("predicted_value"),
-                         item.get("corrected_value"), item.get("is_match_ok", False),
-                         item.get("export_field", True), status, reviewer, now)
+                        (
+                            run_id,
+                            item.get("source_key"),
+                            item.get("internal_key"),
+                            item.get("cd_key"),
+                            item.get("predicted_value"),
+                            item.get("corrected_value"),
+                            item.get("is_match_ok", False),
+                            item.get("export_field", True),
+                            status,
+                            reviewer,
+                            now,
+                        ),
                     )
                 updated += 1
 
@@ -1352,10 +1467,16 @@ class TrainingExampleRepository:
     """Repository for TrainingExample operations."""
 
     @staticmethod
-    def create(document_id: int, auction_type_id: int, run_id: int = None,
-               field_key: str = None, predicted_value: str = None,
-               gold_value: str = None, is_correct: bool = True,
-               source_text_snippet: str = None) -> int:
+    def create(
+        document_id: int,
+        auction_type_id: int,
+        run_id: int = None,
+        field_key: str = None,
+        predicted_value: str = None,
+        gold_value: str = None,
+        is_correct: bool = True,
+        source_text_snippet: str = None,
+    ) -> int:
         """Create a training example from review correction."""
         example_uuid = str(uuid.uuid4())
 
@@ -1368,9 +1489,15 @@ class TrainingExampleRepository:
                    (uuid, auction_type_id, document_id, input_text, labels_json,
                     source_review_item_ids, is_validated)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (example_uuid, auction_type_id, document_id,
-                 source_text_snippet or "", json.dumps(labels),
-                 json.dumps([run_id]) if run_id else None, is_correct)
+                (
+                    example_uuid,
+                    auction_type_id,
+                    document_id,
+                    source_text_snippet or "",
+                    json.dumps(labels),
+                    json.dumps([run_id]) if run_id else None,
+                    is_correct,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1385,7 +1512,7 @@ class TrainingExampleRepository:
                    FROM extraction_runs er
                    JOIN documents d ON er.document_id = d.id
                    WHERE er.id = ?""",
-                (run_id,)
+                (run_id,),
             ).fetchone()
 
             if not run:
@@ -1394,7 +1521,7 @@ class TrainingExampleRepository:
             # Get reviewed items
             items = conn.execute(
                 "SELECT * FROM review_items WHERE run_id = ? AND status IN ('approved', 'corrected')",
-                (run_id,)
+                (run_id,),
             ).fetchall()
 
             if not items:
@@ -1404,7 +1531,9 @@ class TrainingExampleRepository:
             labels = {}
             review_item_ids = []
             for item in items:
-                final_value = item["corrected_value"] if item["corrected_value"] else item["predicted_value"]
+                final_value = (
+                    item["corrected_value"] if item["corrected_value"] else item["predicted_value"]
+                )
                 if final_value:
                     labels[item["source_key"]] = final_value
                     review_item_ids.append(item["id"])
@@ -1415,15 +1544,22 @@ class TrainingExampleRepository:
                 """INSERT INTO training_examples
                    (uuid, auction_type_id, document_id, input_text, labels_json, source_review_item_ids)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (example_uuid, run["auction_type_id"], run["document_id"],
-                 run["raw_text"] or "", json.dumps(labels), json.dumps(review_item_ids))
+                (
+                    example_uuid,
+                    run["auction_type_id"],
+                    run["document_id"],
+                    run["raw_text"] or "",
+                    json.dumps(labels),
+                    json.dumps(review_item_ids),
+                ),
             )
             conn.commit()
             return cursor.lastrowid
 
     @staticmethod
-    def list_by_auction_type(auction_type_id: int, validated_only: bool = False,
-                              limit: int = 1000) -> List[TrainingExample]:
+    def list_by_auction_type(
+        auction_type_id: int, validated_only: bool = False, limit: int = 1000
+    ) -> list[TrainingExample]:
         """List training examples for an auction type."""
         sql = "SELECT * FROM training_examples WHERE auction_type_id = ?"
         params = [auction_type_id]
@@ -1449,16 +1585,16 @@ class TrainingExampleRepository:
             return result
 
     @staticmethod
-    def count_by_auction_type(auction_type_id: int) -> Dict[str, int]:
+    def count_by_auction_type(auction_type_id: int) -> dict[str, int]:
         """Count training examples by auction type."""
         with get_connection() as conn:
             total = conn.execute(
                 "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ?",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchone()[0]
             validated = conn.execute(
                 "SELECT COUNT(*) FROM training_examples WHERE auction_type_id = ? AND is_validated = TRUE",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchone()[0]
             return {"total": total, "validated": validated}
 
@@ -1467,9 +1603,14 @@ class ModelVersionRepository:
     """Repository for ModelVersion operations."""
 
     @staticmethod
-    def create(auction_type_id: int, version_tag: str, base_model: str,
-               adapter_type: str = "lora", config: Dict = None,
-               training_job_id: int = None) -> int:
+    def create(
+        auction_type_id: int,
+        version_tag: str,
+        base_model: str,
+        adapter_type: str = "lora",
+        config: dict = None,
+        training_job_id: int = None,
+    ) -> int:
         """Create a new model version."""
         model_uuid = str(uuid.uuid4())
 
@@ -1478,8 +1619,14 @@ class ModelVersionRepository:
                 """INSERT INTO model_versions
                    (uuid, auction_type_id, version_tag, base_model, adapter_type, config_json, status)
                    VALUES (?, ?, ?, ?, ?, ?, 'training')""",
-                (model_uuid, auction_type_id, version_tag, base_model, adapter_type,
-                 json.dumps(config) if config else None)
+                (
+                    model_uuid,
+                    auction_type_id,
+                    version_tag,
+                    base_model,
+                    adapter_type,
+                    json.dumps(config) if config else None,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1503,9 +1650,7 @@ class ModelVersionRepository:
     def get_by_id(id: int) -> Optional[ModelVersion]:
         """Get model version by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM model_versions WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM model_versions WHERE id = ?", (id,)).fetchone()
             if row:
                 return ModelVersionRepository._row_to_model(row)
             return None
@@ -1516,7 +1661,7 @@ class ModelVersionRepository:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM model_versions WHERE auction_type_id = ? AND status = 'active'",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchone()
             if row:
                 return ModelVersionRepository._row_to_model(row)
@@ -1540,13 +1685,13 @@ class ModelVersionRepository:
             conn.execute(
                 """UPDATE model_versions SET status = 'archived'
                    WHERE auction_type_id = ? AND status = 'active'""",
-                (model["auction_type_id"],)
+                (model["auction_type_id"],),
             )
 
             # Promote new one
             conn.execute(
                 "UPDATE model_versions SET status = 'active', promoted_at = ? WHERE id = ?",
-                (now, id)
+                (now, id),
             )
             conn.commit()
             return True
@@ -1571,23 +1716,23 @@ class ModelVersionRepository:
             return True
 
     @staticmethod
-    def update_metrics(id: int, metrics: Dict) -> bool:
+    def update_metrics(id: int, metrics: dict) -> bool:
         """Update model metrics."""
         with get_connection() as conn:
             conn.execute(
                 "UPDATE model_versions SET metrics_json = ?, status = 'ready', trained_at = ? WHERE id = ?",
-                (json.dumps(metrics), datetime.utcnow().isoformat(), id)
+                (json.dumps(metrics), datetime.utcnow().isoformat(), id),
             )
             conn.commit()
             return True
 
     @staticmethod
-    def list_by_auction_type(auction_type_id: int) -> List[ModelVersion]:
+    def list_by_auction_type(auction_type_id: int) -> list[ModelVersion]:
         """List all model versions for an auction type."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM model_versions WHERE auction_type_id = ? ORDER BY created_at DESC",
-                (auction_type_id,)
+                (auction_type_id,),
             ).fetchall()
             return [ModelVersionRepository._row_to_model(row) for row in rows]
 
@@ -1596,8 +1741,12 @@ class ExportJobRepository:
     """Repository for ExportJob operations."""
 
     @staticmethod
-    def create(run_id: int, target: str = "central_dispatch", dispatch_id: str = None,
-               payload_json: Dict = None) -> int:
+    def create(
+        run_id: int,
+        target: str = "central_dispatch",
+        dispatch_id: str = None,
+        payload_json: dict = None,
+    ) -> int:
         """Create a new export job."""
         job_uuid = str(uuid.uuid4())
 
@@ -1606,7 +1755,7 @@ class ExportJobRepository:
                 """INSERT INTO export_jobs
                    (uuid, run_id, dispatch_id, payload_json, status)
                    VALUES (?, ?, ?, ?, 'pending')""",
-                (job_uuid, run_id, dispatch_id, json.dumps(payload_json) if payload_json else None)
+                (job_uuid, run_id, dispatch_id, json.dumps(payload_json) if payload_json else None),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1629,9 +1778,7 @@ class ExportJobRepository:
     def get_by_id(id: int) -> Optional[ExportJob]:
         """Get export job by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM export_jobs WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM export_jobs WHERE id = ?", (id,)).fetchone()
             if row:
                 return ExportJobRepository._row_to_job(row)
             return None
@@ -1658,9 +1805,14 @@ class ExportJobRepository:
             return True
 
     @staticmethod
-    def update_status(id: int, status: str, cd_listing_id: str = None,
-                      response: Dict = None, error: Dict = None,
-                      validation_errors: List = None) -> bool:
+    def update_status(
+        id: int,
+        status: str,
+        cd_listing_id: str = None,
+        response: dict = None,
+        error: dict = None,
+        validation_errors: list = None,
+    ) -> bool:
         """Update export job status."""
         now = datetime.utcnow().isoformat()
 
@@ -1688,12 +1840,11 @@ class ExportJobRepository:
             return True
 
     @staticmethod
-    def list_by_run(run_id: int) -> List[ExportJob]:
+    def list_by_run(run_id: int) -> list[ExportJob]:
         """List export jobs for a run."""
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM export_jobs WHERE run_id = ? ORDER BY created_at DESC",
-                (run_id,)
+                "SELECT * FROM export_jobs WHERE run_id = ? ORDER BY created_at DESC", (run_id,)
             ).fetchall()
             result = []
             for row in rows:
@@ -1705,12 +1856,12 @@ class ExportJobRepository:
             return result
 
     @staticmethod
-    def list_pending(limit: int = 50) -> List[ExportJob]:
+    def list_pending(limit: int = 50) -> list[ExportJob]:
         """List pending export jobs."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM export_jobs WHERE status = 'pending' ORDER BY created_at LIMIT ?",
-                (limit,)
+                (limit,),
             ).fetchall()
             result = []
             for row in rows:
@@ -1725,6 +1876,7 @@ class ExportJobRepository:
 # TRAINING JOB REPOSITORY
 # =============================================================================
 
+
 class TrainingJobRepository:
     """Repository for TrainingJob operations."""
 
@@ -1738,7 +1890,7 @@ class TrainingJobRepository:
                 """INSERT INTO training_jobs
                    (uuid, auction_type_id, model_version_id, config_json, status)
                    VALUES (?, ?, 0, ?, 'pending')""",
-                (job_uuid, auction_type_id, json.dumps(config_json) if config_json else None)
+                (job_uuid, auction_type_id, json.dumps(config_json) if config_json else None),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1747,9 +1899,7 @@ class TrainingJobRepository:
     def get_by_id(id: int) -> Optional[TrainingJob]:
         """Get training job by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM training_jobs WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM training_jobs WHERE id = ?", (id,)).fetchone()
             if row:
                 data = dict(row)
                 if data.get("config_json"):
@@ -1788,15 +1938,26 @@ class TrainingJobRepository:
 # LAYOUT BLOCK REPOSITORY
 # =============================================================================
 
+
 class LayoutBlockRepository:
     """Repository for LayoutBlock operations (spatial document structure)."""
 
     @staticmethod
-    def create(document_id: int, block_id: str, page_num: int,
-               x0: float, y0: float, x1: float, y1: float,
-               text: str = None, block_type: str = "data",
-               label: str = None, text_source: str = "native",
-               confidence: float = 1.0, element_count: int = 0) -> int:
+    def create(
+        document_id: int,
+        block_id: str,
+        page_num: int,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        text: str = None,
+        block_type: str = "data",
+        label: str = None,
+        text_source: str = "native",
+        confidence: float = 1.0,
+        element_count: int = 0,
+    ) -> int:
         """Create a new layout block."""
         with get_connection() as conn:
             cursor = conn.execute(
@@ -1804,14 +1965,27 @@ class LayoutBlockRepository:
                    (document_id, block_id, page_num, x0, y0, x1, y1,
                     text, block_type, label, text_source, confidence, element_count)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (document_id, block_id, page_num, x0, y0, x1, y1,
-                 text, block_type, label, text_source, confidence, element_count)
+                (
+                    document_id,
+                    block_id,
+                    page_num,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    text,
+                    block_type,
+                    label,
+                    text_source,
+                    confidence,
+                    element_count,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
 
     @staticmethod
-    def create_batch(document_id: int, blocks: List[Dict]) -> List[int]:
+    def create_batch(document_id: int, blocks: list[dict]) -> list[int]:
         """Create multiple layout blocks for a document."""
         ids = []
         with get_connection() as conn:
@@ -1821,13 +1995,21 @@ class LayoutBlockRepository:
                        (document_id, block_id, page_num, x0, y0, x1, y1,
                         text, block_type, label, text_source, confidence, element_count)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (document_id, block.get("block_id", f"block_{len(ids)}"),
-                     block.get("page_num", 0),
-                     block.get("x0", 0), block.get("y0", 0),
-                     block.get("x1", 0), block.get("y1", 0),
-                     block.get("text"), block.get("block_type", "data"),
-                     block.get("label"), block.get("text_source", "native"),
-                     block.get("confidence", 1.0), block.get("element_count", 0))
+                    (
+                        document_id,
+                        block.get("block_id", f"block_{len(ids)}"),
+                        block.get("page_num", 0),
+                        block.get("x0", 0),
+                        block.get("y0", 0),
+                        block.get("x1", 0),
+                        block.get("y1", 0),
+                        block.get("text"),
+                        block.get("block_type", "data"),
+                        block.get("label"),
+                        block.get("text_source", "native"),
+                        block.get("confidence", 1.0),
+                        block.get("element_count", 0),
+                    ),
                 )
                 ids.append(cursor.lastrowid)
             conn.commit()
@@ -1837,42 +2019,41 @@ class LayoutBlockRepository:
     def get_by_id(id: int) -> Optional[LayoutBlock]:
         """Get layout block by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM layout_blocks WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM layout_blocks WHERE id = ?", (id,)).fetchone()
             if row:
                 return LayoutBlock(**dict(row))
             return None
 
     @staticmethod
-    def get_by_document(document_id: int) -> List[LayoutBlock]:
+    def get_by_document(document_id: int) -> list[LayoutBlock]:
         """Get all layout blocks for a document."""
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT * FROM layout_blocks
                    WHERE document_id = ?
                    ORDER BY page_num, y0, x0""",
-                (document_id,)
+                (document_id,),
             ).fetchall()
             return [LayoutBlock(**dict(row)) for row in rows]
 
     @staticmethod
-    def get_by_label(document_id: int, label_pattern: str) -> List[LayoutBlock]:
+    def get_by_label(document_id: int, label_pattern: str) -> list[LayoutBlock]:
         """Get blocks matching a label pattern."""
         import re
+
         blocks = LayoutBlockRepository.get_by_document(document_id)
         pattern = re.compile(label_pattern, re.IGNORECASE)
         return [b for b in blocks if b.label and pattern.search(b.label)]
 
     @staticmethod
-    def get_by_type(document_id: int, block_type: str) -> List[LayoutBlock]:
+    def get_by_type(document_id: int, block_type: str) -> list[LayoutBlock]:
         """Get blocks by type."""
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT * FROM layout_blocks
                    WHERE document_id = ? AND block_type = ?
                    ORDER BY page_num, y0, x0""",
-                (document_id, block_type)
+                (document_id, block_type),
             ).fetchall()
             return [LayoutBlock(**dict(row)) for row in rows]
 
@@ -1880,10 +2061,7 @@ class LayoutBlockRepository:
     def delete_by_document(document_id: int) -> int:
         """Delete all layout blocks for a document."""
         with get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM layout_blocks WHERE document_id = ?",
-                (document_id,)
-            )
+            cursor = conn.execute("DELETE FROM layout_blocks WHERE document_id = ?", (document_id,))
             conn.commit()
             return cursor.rowcount
 
@@ -1904,20 +2082,22 @@ class LayoutBlockRepository:
 
         blocks = []
         for block in structure.blocks:
-            blocks.append({
-                "block_id": block.id,
-                "page_num": block.page,
-                "x0": block.x0,
-                "y0": block.y0,
-                "x1": block.x1,
-                "y1": block.y1,
-                "text": block.text,
-                "block_type": block.block_type,
-                "label": block.label,
-                "text_source": "native",  # Default; could be enhanced
-                "confidence": 1.0,
-                "element_count": len(block.elements),
-            })
+            blocks.append(
+                {
+                    "block_id": block.id,
+                    "page_num": block.page,
+                    "x0": block.x0,
+                    "y0": block.y0,
+                    "x1": block.x1,
+                    "y1": block.y1,
+                    "text": block.text,
+                    "block_type": block.block_type,
+                    "label": block.label,
+                    "text_source": "native",  # Default; could be enhanced
+                    "confidence": 1.0,
+                    "element_count": len(block.elements),
+                }
+            )
 
         if blocks:
             LayoutBlockRepository.create_batch(document_id, blocks)
@@ -1929,15 +2109,23 @@ class LayoutBlockRepository:
 # FIELD EVIDENCE REPOSITORY
 # =============================================================================
 
+
 class FieldEvidenceRepository:
     """Repository for FieldEvidence operations (extraction provenance)."""
 
     @staticmethod
-    def create(run_id: int, field_key: str, block_id: int = None,
-               text_snippet: str = None, page_num: int = None,
-               bbox: Dict = None, rule_id: str = None,
-               extraction_method: str = None, confidence: float = 1.0,
-               value_source: str = "extracted") -> int:
+    def create(
+        run_id: int,
+        field_key: str,
+        block_id: int = None,
+        text_snippet: str = None,
+        page_num: int = None,
+        bbox: dict = None,
+        rule_id: str = None,
+        extraction_method: str = None,
+        confidence: float = 1.0,
+        value_source: str = "extracted",
+    ) -> int:
         """Create a new field evidence record."""
         with get_connection() as conn:
             cursor = conn.execute(
@@ -1945,15 +2133,24 @@ class FieldEvidenceRepository:
                    (run_id, field_key, block_id, text_snippet, page_num,
                     bbox_json, rule_id, extraction_method, confidence, value_source)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (run_id, field_key, block_id, text_snippet, page_num,
-                 json.dumps(bbox) if bbox else None, rule_id,
-                 extraction_method, confidence, value_source)
+                (
+                    run_id,
+                    field_key,
+                    block_id,
+                    text_snippet,
+                    page_num,
+                    json.dumps(bbox) if bbox else None,
+                    rule_id,
+                    extraction_method,
+                    confidence,
+                    value_source,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
 
     @staticmethod
-    def create_batch(run_id: int, evidence_items: List[Dict]) -> List[int]:
+    def create_batch(run_id: int, evidence_items: list[dict]) -> list[int]:
         """Create multiple field evidence records for an extraction run."""
         ids = []
         with get_connection() as conn:
@@ -1964,11 +2161,18 @@ class FieldEvidenceRepository:
                        (run_id, field_key, block_id, text_snippet, page_num,
                         bbox_json, rule_id, extraction_method, confidence, value_source)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (run_id, item.get("field_key"), item.get("block_id"),
-                     item.get("text_snippet"), item.get("page_num"),
-                     json.dumps(bbox) if bbox else None, item.get("rule_id"),
-                     item.get("extraction_method"), item.get("confidence", 1.0),
-                     item.get("value_source", "extracted"))
+                    (
+                        run_id,
+                        item.get("field_key"),
+                        item.get("block_id"),
+                        item.get("text_snippet"),
+                        item.get("page_num"),
+                        json.dumps(bbox) if bbox else None,
+                        item.get("rule_id"),
+                        item.get("extraction_method"),
+                        item.get("confidence", 1.0),
+                        item.get("value_source", "extracted"),
+                    ),
                 )
                 ids.append(cursor.lastrowid)
             conn.commit()
@@ -1978,9 +2182,7 @@ class FieldEvidenceRepository:
     def get_by_id(id: int) -> Optional[FieldEvidence]:
         """Get field evidence by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM field_evidence WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM field_evidence WHERE id = ?", (id,)).fetchone()
             if row:
                 data = dict(row)
                 if data.get("bbox_json"):
@@ -1989,12 +2191,11 @@ class FieldEvidenceRepository:
             return None
 
     @staticmethod
-    def get_by_run(run_id: int) -> List[FieldEvidence]:
+    def get_by_run(run_id: int) -> list[FieldEvidence]:
         """Get all field evidence for an extraction run."""
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM field_evidence WHERE run_id = ? ORDER BY field_key",
-                (run_id,)
+                "SELECT * FROM field_evidence WHERE run_id = ? ORDER BY field_key", (run_id,)
             ).fetchall()
             result = []
             for row in rows:
@@ -2005,12 +2206,12 @@ class FieldEvidenceRepository:
             return result
 
     @staticmethod
-    def get_by_field(run_id: int, field_key: str) -> List[FieldEvidence]:
+    def get_by_field(run_id: int, field_key: str) -> list[FieldEvidence]:
         """Get evidence for a specific field in a run."""
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM field_evidence WHERE run_id = ? AND field_key = ?",
-                (run_id, field_key)
+                (run_id, field_key),
             ).fetchall()
             result = []
             for row in rows:
@@ -2021,7 +2222,7 @@ class FieldEvidenceRepository:
             return result
 
     @staticmethod
-    def get_evidence_summary(run_id: int) -> Dict[str, Any]:
+    def get_evidence_summary(run_id: int) -> dict[str, Any]:
         """Get summary of field evidence for a run."""
         with get_connection() as conn:
             rows = conn.execute(
@@ -2029,7 +2230,7 @@ class FieldEvidenceRepository:
                           COUNT(*) as count, AVG(confidence) as avg_confidence
                    FROM field_evidence WHERE run_id = ?
                    GROUP BY field_key, value_source, extraction_method""",
-                (run_id,)
+                (run_id,),
             ).fetchall()
 
             summary = {}
@@ -2037,12 +2238,14 @@ class FieldEvidenceRepository:
                 field = row["field_key"]
                 if field not in summary:
                     summary[field] = []
-                summary[field].append({
-                    "value_source": row["value_source"],
-                    "extraction_method": row["extraction_method"],
-                    "count": row["count"],
-                    "avg_confidence": row["avg_confidence"],
-                })
+                summary[field].append(
+                    {
+                        "value_source": row["value_source"],
+                        "extraction_method": row["extraction_method"],
+                        "count": row["count"],
+                        "avg_confidence": row["avg_confidence"],
+                    }
+                )
 
             return summary
 
@@ -2050,10 +2253,7 @@ class FieldEvidenceRepository:
     def delete_by_run(run_id: int) -> int:
         """Delete all field evidence for a run."""
         with get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM field_evidence WHERE run_id = ?",
-                (run_id,)
-            )
+            cursor = conn.execute("DELETE FROM field_evidence WHERE run_id = ?", (run_id,))
             conn.commit()
             return cursor.rowcount
 
@@ -2061,6 +2261,7 @@ class FieldEvidenceRepository:
 # =============================================================================
 # SCHEMA INITIALIZATION ALIAS
 # =============================================================================
+
 
 def init_schema():
     """Initialize the extended database schema. Alias for init_extended_schema."""

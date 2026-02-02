@@ -1,2 +1,3 @@
 """Email ingestion module."""
-from ingest.email_reader import EmailReader, EmailMessage, Attachment, create_email_reader
+
+from ingest.email_reader import Attachment, EmailMessage, EmailReader, create_email_reader

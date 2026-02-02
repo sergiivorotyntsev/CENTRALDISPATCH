@@ -7,26 +7,66 @@ Handles various address formats commonly found in auction documents:
 - Multi-line formats with street address, city/state/zip on separate lines
 - Phone number extraction nearby
 """
+
 import re
-from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
+from typing import Optional
 
 from models.vehicle import Address
 
-
 # US State name to abbreviation mapping
 STATE_ABBREVS = {
-    'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
-    'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'florida': 'FL', 'georgia': 'GA',
-    'hawaii': 'HI', 'idaho': 'ID', 'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA',
-    'kansas': 'KS', 'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
-    'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS', 'missouri': 'MO',
-    'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
-    'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH',
-    'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
-    'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT', 'vermont': 'VT',
-    'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV', 'wisconsin': 'WI', 'wyoming': 'WY',
-    'district of columbia': 'DC',
+    "alabama": "AL",
+    "alaska": "AK",
+    "arizona": "AZ",
+    "arkansas": "AR",
+    "california": "CA",
+    "colorado": "CO",
+    "connecticut": "CT",
+    "delaware": "DE",
+    "florida": "FL",
+    "georgia": "GA",
+    "hawaii": "HI",
+    "idaho": "ID",
+    "illinois": "IL",
+    "indiana": "IN",
+    "iowa": "IA",
+    "kansas": "KS",
+    "kentucky": "KY",
+    "louisiana": "LA",
+    "maine": "ME",
+    "maryland": "MD",
+    "massachusetts": "MA",
+    "michigan": "MI",
+    "minnesota": "MN",
+    "mississippi": "MS",
+    "missouri": "MO",
+    "montana": "MT",
+    "nebraska": "NE",
+    "nevada": "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    "ohio": "OH",
+    "oklahoma": "OK",
+    "oregon": "OR",
+    "pennsylvania": "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    "tennessee": "TN",
+    "texas": "TX",
+    "utah": "UT",
+    "vermont": "VT",
+    "virginia": "VA",
+    "washington": "WA",
+    "west virginia": "WV",
+    "wisconsin": "WI",
+    "wyoming": "WY",
+    "district of columbia": "DC",
 }
 
 # Reverse mapping: abbreviation to full name
@@ -67,12 +107,12 @@ def normalize_phone(phone: str) -> str:
         return ""
 
     # Extract digits only
-    digits = re.sub(r'\D', '', phone)
+    digits = re.sub(r"\D", "", phone)
 
     # Format if we have 10 digits
     if len(digits) == 10:
         return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
-    elif len(digits) == 11 and digits[0] == '1':
+    elif len(digits) == 11 and digits[0] == "1":
         # Handle country code
         return f"({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
 
@@ -82,6 +122,7 @@ def normalize_phone(phone: str) -> str:
 @dataclass
 class ParsedAddress:
     """Parsed address components."""
+
     name: Optional[str] = None
     street: Optional[str] = None
     city: Optional[str] = None
@@ -116,9 +157,9 @@ def extract_phone_from_text(text: str) -> Optional[str]:
     Returns normalized phone format (XXX) XXX-XXXX or None.
     """
     phone_patterns = [
-        r'\((\d{3})\)\s*(\d{3})[-.\s]?(\d{4})',  # (810) 720-0981
-        r'(\d{3})[-.\s](\d{3})[-.\s](\d{4})',     # 810-720-0981
-        r'(\d{3})(\d{3})(\d{4})',                  # 8107200981
+        r"\((\d{3})\)\s*(\d{3})[-.\s]?(\d{4})",  # (810) 720-0981
+        r"(\d{3})[-.\s](\d{3})[-.\s](\d{4})",  # 810-720-0981
+        r"(\d{3})(\d{3})(\d{4})",  # 8107200981
     ]
 
     for pattern in phone_patterns:
@@ -131,7 +172,7 @@ def extract_phone_from_text(text: str) -> Optional[str]:
     return None
 
 
-def parse_city_state_zip(line: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def parse_city_state_zip(line: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Parse a line containing city, state, and ZIP code.
 
@@ -149,18 +190,12 @@ def parse_city_state_zip(line: str) -> Tuple[Optional[str], Optional[str], Optio
     line = line.strip()
 
     # Pattern 1: City, State ZIP (with comma)
-    match = re.match(
-        r'([A-Za-z][A-Za-z\s\.]*?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)',
-        line
-    )
+    match = re.match(r"([A-Za-z][A-Za-z\s\.]*?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)", line)
     if match:
         return match.group(1).strip(), match.group(2), match.group(3)
 
     # Pattern 2: City State(full name) ZIP - e.g., "Flint Michigan 48507"
-    match = re.match(
-        r'([A-Za-z][A-Za-z\s\.]*?)\s+([A-Za-z]{2,})\s+(\d{5}(?:-\d{4})?)',
-        line
-    )
+    match = re.match(r"([A-Za-z][A-Za-z\s\.]*?)\s+([A-Za-z]{2,})\s+(\d{5}(?:-\d{4})?)", line)
     if match:
         city = match.group(1).strip()
         state_candidate = match.group(2)
@@ -174,10 +209,7 @@ def parse_city_state_zip(line: str) -> Tuple[Optional[str], Optional[str], Optio
                 return city, state_abbrev, zip_code
 
     # Pattern 3: City State(abbreviation) ZIP (no comma)
-    match = re.match(
-        r'([A-Za-z][A-Za-z\s\.]*?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)',
-        line
-    )
+    match = re.match(r"([A-Za-z][A-Za-z\s\.]*?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)", line)
     if match:
         return match.group(1).strip(), match.group(2), match.group(3)
 
@@ -204,7 +236,7 @@ def extract_address_from_section(
         return result
 
     # Split into lines and filter empty
-    lines = [l.strip() for l in section_text.split('\n') if l.strip()]
+    lines = [line.strip() for line in section_text.split("\n") if line.strip()]
 
     if not lines:
         return result
@@ -227,26 +259,26 @@ def extract_address_from_section(
     if city_state_zip_idx > 0:
         potential_street = lines[city_state_zip_idx - 1]
         # Street should contain a number
-        if re.search(r'\d', potential_street):
+        if re.search(r"\d", potential_street):
             result.street = potential_street
 
     # Try to extract location name from first line (if different from street)
     if len(lines) > 0 and city_state_zip_idx > 1:
         # First line might be location name
         first_line = lines[0]
-        if first_line != result.street and not re.search(r'\d{5}', first_line):
+        if first_line != result.street and not re.search(r"\d{5}", first_line):
             result.name = first_line
     elif len(lines) > 0 and city_state_zip_idx == 1:
         # Two line format: name/city then city/state/zip, with street on first line
         # Re-check if first line looks more like a name than address
         first_line = lines[0]
-        if not re.search(r'\d', first_line):
+        if not re.search(r"\d", first_line):
             result.name = first_line
             result.street = None  # Clear street, we don't have it
 
     # Look for phone number after the address
     if city_state_zip_idx < len(lines) - 1:
-        for line in lines[city_state_zip_idx + 1:]:
+        for line in lines[city_state_zip_idx + 1 :]:
             phone = extract_phone_from_text(line)
             if phone:
                 result.phone = phone
@@ -259,7 +291,7 @@ def extract_address_from_section(
     return result
 
 
-def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6) -> List[str]:
+def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6) -> list[str]:
     """
     Extract lines that appear AFTER (below) a label in the text.
 
@@ -275,11 +307,11 @@ def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6)
     Returns:
         List of lines after the label (stripped, non-empty)
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     result = []
     found_label = False
 
-    for i, line in enumerate(lines):
+    for _i, line in enumerate(lines):
         stripped = line.strip()
 
         # Check if this line contains the label
@@ -287,7 +319,9 @@ def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6)
             found_label = True
             # Check if there's content on the same line after the label
             # (remove the label part and check for remaining content)
-            after_label = re.sub(label_pattern + r'[:\s]*', '', stripped, flags=re.IGNORECASE).strip()
+            after_label = re.sub(
+                label_pattern + r"[:\s]*", "", stripped, flags=re.IGNORECASE
+            ).strip()
             if after_label and len(after_label) > 3:
                 # Content is on the same line as label
                 result.append(after_label)
@@ -302,10 +336,14 @@ def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6)
 
             # Stop if we hit another section header
             # Must be: ALL CAPS + ending with colon (like "MEMBER:"), or specific field labels
-            if re.match(r'^[A-Z][A-Z\s]{2,}:\s*$', stripped):
+            if re.match(r"^[A-Z][A-Z\s]{2,}:\s*$", stripped):
                 # All caps followed by colon only
                 break
-            if re.match(r'^(MEMBER|LOT#?|VEHICLE|VIN|SALE\s*DATE|BUYER|SELLER|TOTAL|PAYMENT|RECEIPT|STOCK|INVOICE)[:\s]*$', stripped, re.IGNORECASE):
+            if re.match(
+                r"^(MEMBER|LOT#?|VEHICLE|VIN|SALE\s*DATE|BUYER|SELLER|TOTAL|PAYMENT|RECEIPT|STOCK|INVOICE)[:\s]*$",
+                stripped,
+                re.IGNORECASE,
+            ):
                 # Known field labels
                 break
 
@@ -319,8 +357,8 @@ def extract_lines_after_label(text: str, label_pattern: str, max_lines: int = 6)
 
 def extract_address_after_label(
     text: str,
-    label_patterns: List[str],
-    end_patterns: List[str] = None,
+    label_patterns: list[str],
+    end_patterns: list[str] = None,
     location_prefix: str = None,
 ) -> Optional[Address]:
     """
@@ -349,14 +387,14 @@ def extract_address_after_label(
 
     if end_patterns is None:
         end_patterns = [
-            r'\n\s*\n',           # Double newline
-            r'Stock',
-            r'Invoice',
-            r'Sale\s*Date',
-            r'Buyer',
-            r'Receipt',
-            r'Total',
-            r'Payment',
+            r"\n\s*\n",  # Double newline
+            r"Stock",
+            r"Invoice",
+            r"Sale\s*Date",
+            r"Buyer",
+            r"Receipt",
+            r"Total",
+            r"Payment",
         ]
 
     # First, try the new line-based extraction (label above, value below)
@@ -364,7 +402,7 @@ def extract_address_after_label(
         lines = extract_lines_after_label(text, label_pattern)
         if lines:
             # Join lines and try to parse as address section
-            section_text = '\n'.join(lines)
+            section_text = "\n".join(lines)
             parsed = extract_address_from_section(section_text)
 
             if parsed.is_valid():
@@ -377,12 +415,12 @@ def extract_address_after_label(
                 return parsed.to_address()
 
     # Build end pattern regex for fallback methods
-    end_regex = '|'.join(f'(?:{p})' for p in end_patterns)
+    end_regex = "|".join(f"(?:{p})" for p in end_patterns)
 
     # Fallback: try inline extraction (label and value on same line/section)
     for label_pattern in label_patterns:
         # Find the label and capture text after it
-        regex = rf'{label_pattern}[:\s]*(.+?)(?:{end_regex})'
+        regex = rf"{label_pattern}[:\s]*(.+?)(?:{end_regex})"
         match = re.search(regex, text, re.IGNORECASE | re.DOTALL)
 
         if match:
@@ -401,7 +439,7 @@ def extract_address_after_label(
 
     # Final fallback: try to find address pattern anywhere after any label
     for label_pattern in label_patterns:
-        match = re.search(rf'{label_pattern}[:\s]*(.{{50,500}})', text, re.IGNORECASE | re.DOTALL)
+        match = re.search(rf"{label_pattern}[:\s]*(.{{50,500}})", text, re.IGNORECASE | re.DOTALL)
         if match:
             section = match.group(1)
             parsed = extract_address_from_section(section)
@@ -437,7 +475,7 @@ def extract_inline_address(
         return Address(
             name=groups[0].strip() if groups[0] else None,
             street=groups[1].strip() if groups[1] else None,
-            city=groups[2].strip().rstrip(',') if groups[2] else None,
+            city=groups[2].strip().rstrip(",") if groups[2] else None,
             state=normalize_state(groups[3]) if groups[3] else None,
             postal_code=groups[4] if groups[4] else None,
             country="US",
@@ -448,26 +486,26 @@ def extract_inline_address(
 
 # Pre-defined label patterns for common auction documents
 PICKUP_LABELS = [
-    r'Pick[-\s]?Up\s*Location',
-    r'Pick[-\s]?Up\s*Address',
-    r'PICKUP\s*(?:LOCATION|ADDRESS)',
-    r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT',
-    r'LOT\s*(?:LOCATION|ADDRESS)',
-    r'Sold\s*At\s*Branch',
+    r"Pick[-\s]?Up\s*Location",
+    r"Pick[-\s]?Up\s*Address",
+    r"PICKUP\s*(?:LOCATION|ADDRESS)",
+    r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT",
+    r"LOT\s*(?:LOCATION|ADDRESS)",
+    r"Sold\s*At\s*Branch",
 ]
 
 DELIVERY_LABELS = [
-    r'Delivery\s*(?:Location|Address)',
-    r'Drop[-\s]?Off\s*(?:Location|Address)',
-    r'Destination',
-    r'Ship\s*To',
+    r"Delivery\s*(?:Location|Address)",
+    r"Drop[-\s]?Off\s*(?:Location|Address)",
+    r"Destination",
+    r"Ship\s*To",
 ]
 
 
 def extract_pickup_address(
     text: str,
     source: str = None,
-    custom_labels: List[str] = None,
+    custom_labels: list[str] = None,
 ) -> Optional[Address]:
     """
     Convenience function to extract pickup address from auction document.
@@ -493,7 +531,7 @@ def extract_pickup_address(
 
 def extract_delivery_address(
     text: str,
-    custom_labels: List[str] = None,
+    custom_labels: list[str] = None,
 ) -> Optional[Address]:
     """
     Convenience function to extract delivery address from document.
@@ -523,7 +561,7 @@ def extract_delivery_address(
 US_STATE_CODES = set(STATE_ABBREVS.values()) | {"DC", "PR", "VI", "GU", "AS", "MP"}
 
 
-def validate_state_for_cd(state: str) -> Tuple[bool, str]:
+def validate_state_for_cd(state: str) -> tuple[bool, str]:
     """
     Validate state code for CD API requirements.
 
@@ -550,7 +588,7 @@ def validate_state_for_cd(state: str) -> Tuple[bool, str]:
     return True, normalized.upper()
 
 
-def validate_zip_for_cd(zip_code: str) -> Tuple[bool, str]:
+def validate_zip_for_cd(zip_code: str) -> tuple[bool, str]:
     """
     Validate ZIP code for CD API requirements.
 
@@ -566,7 +604,7 @@ def validate_zip_for_cd(zip_code: str) -> Tuple[bool, str]:
         return False, "ZIP code is required"
 
     # Clean to digits only
-    digits = re.sub(r'[^0-9]', '', zip_code)
+    digits = re.sub(r"[^0-9]", "", zip_code)
 
     if len(digits) == 5:
         return True, digits
@@ -577,7 +615,7 @@ def validate_zip_for_cd(zip_code: str) -> Tuple[bool, str]:
     return False, f"Invalid ZIP code: {zip_code} (must be 5 or 9 digits)"
 
 
-def validate_address_for_cd(address: ParsedAddress) -> Tuple[bool, List[str]]:
+def validate_address_for_cd(address: ParsedAddress) -> tuple[bool, list[str]]:
     """
     Validate parsed address for Central Dispatch API requirements.
 
@@ -645,7 +683,7 @@ def calculate_address_confidence(address: ParsedAddress) -> float:
     if address.street:
         score += 0.8
         # Bonus if street has number
-        if re.search(r'\d', address.street):
+        if re.search(r"\d", address.street):
             score += 0.2
     else:
         max_score -= 0.2  # Reduce penalty if no street
@@ -668,7 +706,7 @@ def calculate_address_confidence(address: ParsedAddress) -> float:
     if address.postal_code:
         score += 0.8
         # Bonus for valid format
-        digits = re.sub(r'[^0-9]', '', address.postal_code)
+        digits = re.sub(r"[^0-9]", "", address.postal_code)
         if len(digits) in (5, 9):
             score += 0.2
 
@@ -678,7 +716,7 @@ def calculate_address_confidence(address: ParsedAddress) -> float:
 def parse_and_validate_address(
     text: str,
     source_hint: str = None,
-) -> Tuple[ParsedAddress, List[str], float]:
+) -> tuple[ParsedAddress, list[str], float]:
     """
     Parse address text and validate for CD API.
 
@@ -703,6 +741,7 @@ def parse_and_validate_address(
 
 def get_address_parser():
     """Get address parser instance (for consistency with other modules)."""
+
     # This module uses functions rather than a class, but provide
     # this for API consistency
     class AddressParserWrapper:

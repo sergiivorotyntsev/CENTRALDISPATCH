@@ -6,21 +6,22 @@ Run and manage extraction runs on documents.
 
 import time
 from datetime import datetime
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from typing import TYPE_CHECKING, Optional
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+
+if TYPE_CHECKING:
+    from extractors.spatial_parser import DocumentStructure
 from pydantic import BaseModel, Field
 
 from api.models import (
-    ExtractionRunRepository,
-    DocumentRepository,
     AuctionTypeRepository,
+    DocumentRepository,
+    ExtractionRunRepository,
+    FieldEvidenceRepository,
+    LayoutBlockRepository,
     ModelVersionRepository,
     ReviewItemRepository,
-    LayoutBlockRepository,
-    FieldEvidenceRepository,
-    ExtractionRun,
-    RunStatus,
-    LayoutBlock,
 )
 
 router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
@@ -30,27 +31,32 @@ router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
 # BLOCK EXTRACTION IMPORTS (M3.P0.1)
 # =============================================================================
 
+
 def _get_block_extractor():
     """Lazy import for block extractor."""
     from extractors.block_extractor import get_block_extractor
+
     return get_block_extractor()
 
 
 def _get_spatial_parser():
     """Lazy import for spatial parser."""
     from extractors.spatial_parser import get_spatial_parser
+
     return get_spatial_parser()
 
 
 def _get_field_resolver():
     """Lazy import for field resolver."""
     from extractors.field_resolver import get_field_resolver
+
     return get_field_resolver()
 
 
 def _get_ocr_strategy():
     """Lazy import for OCR strategy."""
     from extractors.ocr_strategy import get_ocr_strategy
+
     return get_ocr_strategy()
 
 
@@ -75,10 +81,10 @@ def _run_ocr_if_needed(
     Returns:
         Tuple of (text after OCR, was_ocr_applied)
     """
-    import os
-    import time
-    import tempfile
     import logging
+    import os
+    import tempfile
+    import time
 
     logger = logging.getLogger(__name__)
 
@@ -107,11 +113,7 @@ def _run_ocr_if_needed(
         import subprocess
 
         # Check if ocrmypdf is available
-        which_result = subprocess.run(
-            ["which", "ocrmypdf"],
-            capture_output=True,
-            text=True
-        )
+        which_result = subprocess.run(["which", "ocrmypdf"], capture_output=True, text=True)
         if which_result.returncode != 0:
             logger.warning("ocrmypdf not found, skipping OCR")
             metrics["ocr_applied"] = False
@@ -131,20 +133,16 @@ def _run_ocr_if_needed(
         ocr_cmd = [
             "ocrmypdf",
             "--skip-text",  # Don't OCR pages that already have text
-            "--deskew",     # Straighten tilted pages
-            "--clean",      # Clean up pages before OCR
-            "--quiet",      # Reduce output
-            "-l", "eng",    # English language
+            "--deskew",  # Straighten tilted pages
+            "--clean",  # Clean up pages before OCR
+            "--quiet",  # Reduce output
+            "-l",
+            "eng",  # English language
             file_path,
-            ocr_output_path
+            ocr_output_path,
         ]
 
-        result = subprocess.run(
-            ocr_cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds
-        )
+        result = subprocess.run(ocr_cmd, capture_output=True, text=True, timeout=timeout_seconds)
 
         ocr_duration_ms = int((time.time() - start_time) * 1000)
         metrics["ocr_duration_ms"] = ocr_duration_ms
@@ -198,7 +196,10 @@ def _run_ocr_if_needed(
         # Use OCR text if it's better, otherwise keep original
         if len(ocr_text) > len(raw_text) * 1.2:  # OCR text significantly longer
             return ocr_text, True
-        elif quality_after.quality.value in ("excellent", "good") and quality_before.quality.value in ("poor", "unusable"):
+        elif quality_after.quality.value in (
+            "excellent",
+            "good",
+        ) and quality_before.quality.value in ("poor", "unusable"):
             return ocr_text, True
         else:
             # Merge: use longer of the two
@@ -244,7 +245,6 @@ def _run_block_extraction(
     Returns:
         Tuple of (extracted_fields dict, evidence_list)
     """
-    import os
     import logging
 
     logger = logging.getLogger(__name__)
@@ -285,16 +285,17 @@ def _run_block_extraction(
         # 5. Update metrics
         metrics["block_extraction_used"] = True
         metrics["fields_from_blocks"] = sum(
-            1 for r in results.values()
+            1
+            for r in results.values()
             if r.success and r.evidence and r.evidence.extraction_method != "pattern"
         )
         metrics["fields_from_patterns"] = sum(
-            1 for r in results.values()
+            1
+            for r in results.values()
             if r.success and r.evidence and r.evidence.extraction_method == "pattern"
         )
         metrics["evidence_coverage"] = (
-            len(evidence_list) / len(extracted_fields) * 100
-            if extracted_fields else 0
+            len(evidence_list) / len(extracted_fields) * 100 if extracted_fields else 0
         )
 
         logger.info(
@@ -310,7 +311,7 @@ def _run_block_extraction(
     return extracted_fields, evidence_list
 
 
-def _store_layout_blocks(document_id: int, structure: 'DocumentStructure') -> int:
+def _store_layout_blocks(document_id: int, structure: "DocumentStructure") -> int:
     """
     Store layout blocks from DocumentStructure to database.
 
@@ -322,24 +323,27 @@ def _store_layout_blocks(document_id: int, structure: 'DocumentStructure') -> in
         Number of blocks stored
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     blocks_to_store = []
 
     for block in structure.blocks:
-        blocks_to_store.append({
-            "block_id": block.id,
-            "page_num": block.page,
-            "x0": block.x0,
-            "y0": block.y0,
-            "x1": block.x1,
-            "y1": block.y1,
-            "text": block.text[:1000] if block.text else None,  # Truncate for DB
-            "block_type": block.block_type,
-            "label": block.label,
-            "text_source": "native",
-            "confidence": 1.0,
-        })
+        blocks_to_store.append(
+            {
+                "block_id": block.id,
+                "page_num": block.page,
+                "x0": block.x0,
+                "y0": block.y0,
+                "x1": block.x1,
+                "y1": block.y1,
+                "text": block.text[:1000] if block.text else None,  # Truncate for DB
+                "block_type": block.block_type,
+                "label": block.label,
+                "text_source": "native",
+                "confidence": 1.0,
+            }
+        )
 
     if blocks_to_store:
         try:
@@ -369,6 +373,7 @@ def _store_field_evidence(run_id: int, evidence_list: list, document_id: int = N
         Number of evidence records stored
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     if not evidence_list:
@@ -416,29 +421,30 @@ def generate_order_id(make: str, model: str, sale_date: datetime = None) -> str:
 
     # Month + Day (as digits, e.g., February 1 = "21")
     month = str(sale_date.month)  # 1-12, no zero padding
-    day = str(sale_date.day)      # 1-31, no zero padding
+    day = str(sale_date.day)  # 1-31, no zero padding
     date_part = month + day
 
     # Make: first 3 letters, uppercase
-    make_clean = ''.join(c for c in make.upper() if c.isalpha())[:3]
-    make_part = make_clean.ljust(3, 'X')  # Pad with X if too short
+    make_clean = "".join(c for c in make.upper() if c.isalpha())[:3]
+    make_part = make_clean.ljust(3, "X")  # Pad with X if too short
 
     # Model: first letter, uppercase
-    model_clean = ''.join(c for c in model.upper() if c.isalpha())
-    model_part = model_clean[0] if model_clean else 'X'
+    model_clean = "".join(c for c in model.upper() if c.isalpha())
+    model_part = model_clean[0] if model_clean else "X"
 
     # Base ID without sequence
     base_id = f"{date_part}{make_part}{model_part}"
 
     # Find next sequence number by checking existing runs
     from api.database import get_connection
+
     with get_connection() as conn:
         # Count existing orders with same base
         result = conn.execute(
             """SELECT COUNT(*) FROM extraction_runs
                WHERE outputs_json LIKE ?
                AND date(created_at) = date(?)""",
-            (f'%"order_id": "{base_id}%', sale_date.strftime('%Y-%m-%d'))
+            (f'%"order_id": "{base_id}%', sale_date.strftime("%Y-%m-%d")),
         ).fetchone()
         seq = (result[0] if result else 0) + 1
 
@@ -449,14 +455,17 @@ def generate_order_id(make: str, model: str, sale_date: datetime = None) -> str:
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class ExtractionRunRequest(BaseModel):
     """Request model for running extraction."""
+
     document_id: int = Field(..., description="Document ID to extract from")
     force_ml: bool = Field(False, description="Force ML extraction even if no active model")
 
 
 class ExtractionRunResponse(BaseModel):
     """Response model for extraction run."""
+
     id: int
     uuid: str
     document_id: int
@@ -480,12 +489,14 @@ class ExtractionRunResponse(BaseModel):
 
 class ExtractionRunListResponse(BaseModel):
     """Response model for extraction run list."""
-    items: List[ExtractionRunResponse]
+
+    items: list[ExtractionRunResponse]
     total: int
 
 
 class ExtractionFieldOutput(BaseModel):
     """A single extracted field."""
+
     source_key: str
     internal_key: Optional[str] = None
     cd_key: Optional[str] = None
@@ -496,20 +507,22 @@ class ExtractionFieldOutput(BaseModel):
 
 class ExtractionDetailResponse(BaseModel):
     """Detailed extraction response with field-level outputs."""
+
     run: ExtractionRunResponse
-    fields: List[ExtractionFieldOutput]
+    fields: list[ExtractionFieldOutput]
     raw_text_preview: Optional[str] = None
 
 
 class ExtractionMetricsResponse(BaseModel):
     """Extraction metrics for diagnostics."""
+
     raw_text_length: int = 0
     words_count: int = 0
     text_mode: str = "native"
     pages_count: int = 0
     detected_source: Optional[str] = None
     classification_score: float = 0.0
-    classification_patterns: List[str] = []
+    classification_patterns: list[str] = []
     fields_extracted_count: int = 0
     fields_filled_count: int = 0
     required_fields_filled: int = 0
@@ -524,6 +537,7 @@ class ExtractionMetricsResponse(BaseModel):
 
 class FieldSourceInfo(BaseModel):
     """Source info for a single field."""
+
     field_key: str
     value: Optional[str] = None
     source: str  # "EXTRACTED", "USER_OVERRIDE", "WAREHOUSE_CONST", "AUCTION_CONST", "DEFAULT"
@@ -533,6 +547,7 @@ class FieldSourceInfo(BaseModel):
 
 class ExtractionDebugResponse(BaseModel):
     """Debug response for extraction diagnostics."""
+
     run_id: int
     document_id: int
     document_filename: Optional[str] = None
@@ -547,7 +562,7 @@ class ExtractionDebugResponse(BaseModel):
     metrics: Optional[ExtractionMetricsResponse] = None
 
     # Field sources - where each value came from
-    field_sources: List[FieldSourceInfo] = []
+    field_sources: list[FieldSourceInfo] = []
 
     # Errors if any
     errors: Optional[list] = None
@@ -557,18 +572,24 @@ class ExtractionDebugResponse(BaseModel):
     raw_text_length: int = 0
 
     # Classification details
-    all_scores: List[dict] = []  # Scores from all extractors for comparison
+    all_scores: list[dict] = []  # Scores from all extractors for comparison
 
     # Recommendations
-    recommendations: List[str] = []
+    recommendations: list[str] = []
 
 
 # =============================================================================
 # EXTRACTION LOGIC
 # =============================================================================
 
-def run_extraction(run_id: int, document_id: int, auction_type_id: int,
-                   extractor_kind: str = "rule", model_version_id: int = None):
+
+def run_extraction(
+    run_id: int,
+    document_id: int,
+    auction_type_id: int,
+    extractor_kind: str = "rule",
+    model_version_id: int = None,
+):
     """
     Execute extraction on a document.
 
@@ -634,6 +655,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         if not raw_text and doc.file_path:
             # Try to extract text
             import pdfplumber
+
             with pdfplumber.open(doc.file_path) as pdf:
                 pages_count = len(pdf.pages)
                 text_parts = []
@@ -656,10 +678,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         if doc.file_path:
             try:
                 raw_text, ocr_applied = _run_ocr_if_needed(
-                    doc.file_path,
-                    raw_text,
-                    metrics,
-                    timeout_seconds=120
+                    doc.file_path, raw_text, metrics, timeout_seconds=120
                 )
                 # Update metrics after OCR
                 if ocr_applied:
@@ -667,6 +686,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                     metrics["words_count"] = len(raw_text.split()) if raw_text else 0
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"OCR strategy error: {e}")
                 metrics["ocr_error"] = str(e)
 
@@ -715,6 +735,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         }
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"Block extraction error: {e}")
                 metrics["block_extraction_error"] = str(e)
 
@@ -722,6 +743,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         # PATTERN EXTRACTION (fallback/supplement)
         # =================================================================
         from extractors import ExtractorManager
+
         manager = ExtractorManager()
 
         # Classify and extract
@@ -826,7 +848,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                             "confidence": 1.0,
                             "method": "order_id_generator",
                         }
-                    except Exception as e:
+                    except Exception:
                         # Don't fail extraction if order_id generation fails
                         outputs["order_id"] = None
 
@@ -837,8 +859,12 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                 # Block extraction takes precedence for high-confidence fields
                 # =================================================================
                 block_preferred_fields = [
-                    "vehicle_vin", "vehicle_lot", "buyer_id", "total_amount",
-                    "reference_id", "sale_date"
+                    "vehicle_vin",
+                    "vehicle_lot",
+                    "buyer_id",
+                    "total_amount",
+                    "reference_id",
+                    "sale_date",
                 ]
 
                 for field_key, block_value in block_outputs.items():
@@ -879,7 +905,9 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 
         # Calculate field metrics
         metrics["fields_extracted_count"] = len(outputs)
-        metrics["fields_filled_count"] = sum(1 for v in outputs.values() if v is not None and v != "")
+        metrics["fields_filled_count"] = sum(
+            1 for v in outputs.values() if v is not None and v != ""
+        )
 
         # Count required fields filled
         required_fields = ["vehicle_vin", "pickup_address", "pickup_city", "pickup_state"]
@@ -897,26 +925,32 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         # raw_text_length > 0 OR (ocr_applied AND words_count > 0)
         if metrics["raw_text_length"] < 50:
             if not metrics.get("ocr_applied", False) or metrics["words_count"] < 10:
-                invariant_errors.append({
-                    "code": "INV_TEXT_EXTRACTION",
-                    "message": "Text extraction failed - document may need OCR",
-                    "details": f"raw_text_length={metrics['raw_text_length']}, words_count={metrics['words_count']}",
-                })
+                invariant_errors.append(
+                    {
+                        "code": "INV_TEXT_EXTRACTION",
+                        "message": "Text extraction failed - document may need OCR",
+                        "details": f"raw_text_length={metrics['raw_text_length']}, words_count={metrics['words_count']}",
+                    }
+                )
 
         # Invariant 2: Classification must succeed
         # detected_source must be set with reasonable confidence
         if not metrics.get("detected_source"):
-            invariant_errors.append({
-                "code": "INV_CLASSIFICATION",
-                "message": "Document classification failed - unknown auction type",
-                "details": f"classification_score={metrics.get('classification_score', 0)}",
-            })
+            invariant_errors.append(
+                {
+                    "code": "INV_CLASSIFICATION",
+                    "message": "Document classification failed - unknown auction type",
+                    "details": f"classification_score={metrics.get('classification_score', 0)}",
+                }
+            )
         elif metrics.get("classification_score", 0) < 0.1:
-            invariant_errors.append({
-                "code": "INV_CLASSIFICATION_LOW",
-                "message": "Document classification confidence too low",
-                "details": f"classification_score={metrics.get('classification_score', 0)}, detected={metrics.get('detected_source')}",
-            })
+            invariant_errors.append(
+                {
+                    "code": "INV_CLASSIFICATION_LOW",
+                    "message": "Document classification confidence too low",
+                    "details": f"classification_score={metrics.get('classification_score', 0)}, detected={metrics.get('detected_source')}",
+                }
+            )
 
         # Invariant 3: At least 3 anchor fields must be extracted
         # Anchor fields: VIN/lot/stock (one of), pickup city/state, facility name/address
@@ -937,11 +971,13 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         metrics["anchor_fields_count"] = anchor_count
 
         if anchor_count < 3:
-            invariant_errors.append({
-                "code": "INV_ANCHOR_FIELDS",
-                "message": f"Only {anchor_count}/3 anchor fields extracted",
-                "details": f"Need: vehicle identifier, city/state, and facility. Check debug endpoint for details.",
-            })
+            invariant_errors.append(
+                {
+                    "code": "INV_ANCHOR_FIELDS",
+                    "message": f"Only {anchor_count}/3 anchor fields extracted",
+                    "details": "Need: vehicle identifier, city/state, and facility. Check debug endpoint for details.",
+                }
+            )
 
         # Store invariant check results in metrics
         metrics["invariants_passed"] = len(invariant_errors) == 0
@@ -985,6 +1021,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                 metrics["evidence_records_stored"] = evidence_count
             except Exception as e:
                 import logging
+
                 logging.getLogger(__name__).warning(f"Failed to store evidence: {e}")
 
         # Create review items from outputs
@@ -995,6 +1032,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 
     except Exception as e:
         import traceback
+
         error_details = {
             "error": str(e),
             "traceback": traceback.format_exc(),
@@ -1032,7 +1070,7 @@ def _create_review_items_for_all_fields(run_id: int, auction_type_id: int, outpu
     with get_connection() as conn:
         mappings = conn.execute(
             "SELECT * FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE ORDER BY display_order",
-            (auction_type_id,)
+            (auction_type_id,),
         ).fetchall()
 
     # Default field set if no mappings configured
@@ -1084,44 +1122,50 @@ def _create_review_items_for_all_fields(run_id: int, auction_type_id: int, outpu
             # Get value from outputs if available
             value = outputs.get(source_key)
 
-            review_items.append({
-                "source_key": source_key,
-                "internal_key": m["internal_key"] or source_key,
-                "cd_key": m["cd_key"],
-                "predicted_value": str(value) if value is not None else None,
-                "is_match_ok": False,
-                "export_field": m["is_required"] or value is not None,
-                "confidence": 0.5 if value is not None else 0.0,
-            })
+            review_items.append(
+                {
+                    "source_key": source_key,
+                    "internal_key": m["internal_key"] or source_key,
+                    "cd_key": m["cd_key"],
+                    "predicted_value": str(value) if value is not None else None,
+                    "is_match_ok": False,
+                    "export_field": m["is_required"] or value is not None,
+                    "confidence": 0.5 if value is not None else 0.0,
+                }
+            )
     else:
         # Use default fields
         for source_key, internal_key, cd_key, is_required in DEFAULT_FIELDS:
             used_keys.add(source_key)
             value = outputs.get(source_key)
 
-            review_items.append({
-                "source_key": source_key,
-                "internal_key": internal_key,
-                "cd_key": cd_key,
-                "predicted_value": str(value) if value is not None else None,
-                "is_match_ok": False,
-                "export_field": is_required or value is not None,
-                "confidence": 0.5 if value is not None else 0.0,
-            })
+            review_items.append(
+                {
+                    "source_key": source_key,
+                    "internal_key": internal_key,
+                    "cd_key": cd_key,
+                    "predicted_value": str(value) if value is not None else None,
+                    "is_match_ok": False,
+                    "export_field": is_required or value is not None,
+                    "confidence": 0.5 if value is not None else 0.0,
+                }
+            )
 
     # Also include any extracted fields that weren't in mappings
     # (in case extraction found additional fields)
     for key, value in outputs.items():
         if key not in used_keys and value is not None:
-            review_items.append({
-                "source_key": key,
-                "internal_key": key,
-                "cd_key": None,
-                "predicted_value": str(value) if value is not None else None,
-                "is_match_ok": False,
-                "export_field": True,
-                "confidence": 0.5,
-            })
+            review_items.append(
+                {
+                    "source_key": key,
+                    "internal_key": key,
+                    "cd_key": None,
+                    "predicted_value": str(value) if value is not None else None,
+                    "is_match_ok": False,
+                    "export_field": True,
+                    "confidence": 0.5,
+                }
+            )
 
     if review_items:
         ReviewItemRepository.create_batch(run_id, review_items)
@@ -1135,6 +1179,7 @@ def _create_empty_review_items(run_id: int, auction_type_id: int):
 # =============================================================================
 # ROUTES
 # =============================================================================
+
 
 @router.post("/run", response_model=ExtractionRunResponse, status_code=201)
 async def run_extraction_endpoint(
@@ -1178,13 +1223,18 @@ async def run_extraction_endpoint(
 
     if sync:
         # Run synchronously
-        run_extraction(run_id, data.document_id, doc.auction_type_id,
-                      extractor_kind, model_version_id)
+        run_extraction(
+            run_id, data.document_id, doc.auction_type_id, extractor_kind, model_version_id
+        )
     else:
         # Run in background
         background_tasks.add_task(
-            run_extraction, run_id, data.document_id, doc.auction_type_id,
-            extractor_kind, model_version_id
+            run_extraction,
+            run_id,
+            data.document_id,
+            doc.auction_type_id,
+            extractor_kind,
+            model_version_id,
         )
 
     # Get result
@@ -1238,47 +1288,50 @@ async def list_extraction_runs(
 
     with get_connection() as conn:
         rows = conn.execute(sql, params).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE 1=1"
-        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM extraction_runs WHERE 1=1").fetchone()[0]
 
     items = []
     for row in rows:
         data = dict(row)
         if data.get("outputs_json"):
             import json
+
             data["outputs_json"] = json.loads(data["outputs_json"])
         if data.get("errors_json"):
             import json
+
             data["errors_json"] = json.loads(data["errors_json"])
 
         # Get related entities
         doc = DocumentRepository.get_by_id(data["document_id"])
         at = AuctionTypeRepository.get_by_id(data["auction_type_id"])
 
-        items.append(ExtractionRunResponse(
-            id=data["id"],
-            uuid=data["uuid"],
-            document_id=data["document_id"],
-            document_filename=doc.filename if doc else None,
-            auction_type_id=data["auction_type_id"],
-            auction_type_code=at.code if at else None,
-            extractor_kind=data["extractor_kind"],
-            model_version_id=data.get("model_version_id"),
-            status=data["status"],
-            extraction_score=data.get("extraction_score"),
-            outputs=data.get("outputs_json"),
-            errors=data.get("errors_json"),
-            processing_time_ms=data.get("processing_time_ms"),
-            created_at=data.get("created_at"),
-            completed_at=data.get("completed_at"),
-        ))
+        items.append(
+            ExtractionRunResponse(
+                id=data["id"],
+                uuid=data["uuid"],
+                document_id=data["document_id"],
+                document_filename=doc.filename if doc else None,
+                auction_type_id=data["auction_type_id"],
+                auction_type_code=at.code if at else None,
+                extractor_kind=data["extractor_kind"],
+                model_version_id=data.get("model_version_id"),
+                status=data["status"],
+                extraction_score=data.get("extraction_score"),
+                outputs=data.get("outputs_json"),
+                errors=data.get("errors_json"),
+                processing_time_ms=data.get("processing_time_ms"),
+                created_at=data.get("created_at"),
+                completed_at=data.get("completed_at"),
+            )
+        )
 
     return ExtractionRunListResponse(items=items, total=total)
 
 
 class ExtractionStatsResponse(BaseModel):
     """Response model for extraction run statistics."""
+
     total: int
     last_24h: int
     by_status: dict
@@ -1293,8 +1346,9 @@ async def get_extraction_stats():
 
     Returns aggregate counts by status and auction type.
     """
-    from api.database import get_connection
     from datetime import datetime, timedelta
+
+    from api.database import get_connection
 
     with get_connection() as conn:
         # Total count
@@ -1303,8 +1357,7 @@ async def get_extraction_stats():
         # Last 24h
         yesterday = (datetime.utcnow() - timedelta(hours=24)).isoformat()
         last_24h = conn.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE created_at >= ?",
-            (yesterday,)
+            "SELECT COUNT(*) FROM extraction_runs WHERE created_at >= ?", (yesterday,)
         ).fetchone()[0]
 
         # By status
@@ -1346,23 +1399,25 @@ async def list_runs_needing_review(
         doc = DocumentRepository.get_by_id(run.document_id)
         at = AuctionTypeRepository.get_by_id(run.auction_type_id)
 
-        items.append(ExtractionRunResponse(
-            id=run.id,
-            uuid=run.uuid,
-            document_id=run.document_id,
-            document_filename=doc.filename if doc else None,
-            auction_type_id=run.auction_type_id,
-            auction_type_code=at.code if at else None,
-            extractor_kind=run.extractor_kind,
-            model_version_id=run.model_version_id,
-            status=run.status,
-            extraction_score=run.extraction_score,
-            outputs=run.outputs_json,
-            errors=run.errors_json,
-            processing_time_ms=run.processing_time_ms,
-            created_at=run.created_at,
-            completed_at=run.completed_at,
-        ))
+        items.append(
+            ExtractionRunResponse(
+                id=run.id,
+                uuid=run.uuid,
+                document_id=run.document_id,
+                document_filename=doc.filename if doc else None,
+                auction_type_id=run.auction_type_id,
+                auction_type_code=at.code if at else None,
+                extractor_kind=run.extractor_kind,
+                model_version_id=run.model_version_id,
+                status=run.status,
+                extraction_score=run.extraction_score,
+                outputs=run.outputs_json,
+                errors=run.errors_json,
+                processing_time_ms=run.processing_time_ms,
+                created_at=run.created_at,
+                completed_at=run.completed_at,
+            )
+        )
 
     return ExtractionRunListResponse(items=items, total=len(items))
 
@@ -1417,6 +1472,7 @@ async def get_extraction_run(id: int):
 
 class ExtractionUpdateRequest(BaseModel):
     """Request model for updating extraction run."""
+
     outputs_json: Optional[dict] = Field(None, description="Updated extracted fields")
     status: Optional[str] = Field(None, description="New status")
     warehouse_id: Optional[int] = Field(None, description="Selected warehouse ID")
@@ -1436,7 +1492,7 @@ async def update_extraction_run(id: int, data: ExtractionUpdateRequest):
         raise HTTPException(status_code=404, detail="Extraction run not found")
 
     # Can't update exported runs
-    if run.status == 'exported' and data.status != 'exported':
+    if run.status == "exported" and data.status != "exported":
         raise HTTPException(status_code=400, detail="Cannot modify exported extraction")
 
     # Build updates
@@ -1453,12 +1509,12 @@ async def update_extraction_run(id: int, data: ExtractionUpdateRequest):
 
         # Add warehouse_id if provided
         if data.warehouse_id is not None:
-            merged['warehouse_id'] = data.warehouse_id
+            merged["warehouse_id"] = data.warehouse_id
 
-        updates['outputs_json'] = json.dumps(merged)
+        updates["outputs_json"] = json.dumps(merged)
 
     if data.status is not None:
-        updates['status'] = data.status
+        updates["status"] = data.status
 
     if updates:
         ExtractionRunRepository.update(id, **updates)
@@ -1545,22 +1601,26 @@ async def get_extraction_debug(id: int):
     field_sources = []
     if run.field_sources_json:
         for key, info in run.field_sources_json.items():
-            field_sources.append(FieldSourceInfo(
-                field_key=key,
-                value=str(info.get("value")) if info.get("value") is not None else None,
-                source=info.get("source", "EXTRACTED"),
-                confidence=info.get("confidence"),
-                extractor_method=info.get("method"),
-            ))
+            field_sources.append(
+                FieldSourceInfo(
+                    field_key=key,
+                    value=str(info.get("value")) if info.get("value") is not None else None,
+                    source=info.get("source", "EXTRACTED"),
+                    confidence=info.get("confidence"),
+                    extractor_method=info.get("method"),
+                )
+            )
     elif run.outputs_json:
         # Generate field sources from outputs
         for key, value in run.outputs_json.items():
-            field_sources.append(FieldSourceInfo(
-                field_key=key,
-                value=str(value) if value is not None else None,
-                source="EXTRACTED" if value is not None else "DEFAULT",
-                confidence=0.5 if value is not None else 0.0,
-            ))
+            field_sources.append(
+                FieldSourceInfo(
+                    field_key=key,
+                    value=str(value) if value is not None else None,
+                    source="EXTRACTED" if value is not None else "DEFAULT",
+                    confidence=0.5 if value is not None else 0.0,
+                )
+            )
     response.field_sources = field_sources
 
     # Get classification scores from all extractors
@@ -1568,16 +1628,19 @@ async def get_extraction_debug(id: int):
     if doc and doc.file_path and os.path.exists(doc.file_path):
         try:
             from extractors import ExtractorManager
+
             manager = ExtractorManager()
 
             for extractor in manager.extractors:
                 score, patterns = extractor.score(raw_text)
-                all_scores.append({
-                    "source": extractor.source.value,
-                    "score": score,
-                    "matched_patterns": patterns[:5] if patterns else [],
-                    "is_selected": (at and extractor.source.value == at.code),
-                })
+                all_scores.append(
+                    {
+                        "source": extractor.source.value,
+                        "score": score,
+                        "matched_patterns": patterns[:5] if patterns else [],
+                        "is_selected": (at and extractor.source.value == at.code),
+                    }
+                )
         except Exception as e:
             all_scores.append({"error": str(e)})
     response.all_scores = all_scores
@@ -1598,7 +1661,9 @@ async def get_extraction_debug(id: int):
 
     # Check extraction score
     if run.extraction_score and run.extraction_score < 0.3:
-        recommendations.append("Low extraction score. Document format may not match expected template.")
+        recommendations.append(
+            "Low extraction score. Document format may not match expected template."
+        )
 
     # Check if extractor was selected
     if not at:

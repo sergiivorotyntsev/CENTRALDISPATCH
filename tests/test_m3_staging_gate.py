@@ -7,16 +7,15 @@ Covers: Invariants, FieldResolver, CD Export, Batch Jobs, Observability.
 Exit criteria per section defined in docstrings.
 """
 
-import json
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from typing import Dict, Any, List
 import time
+from unittest.mock import Mock, patch
 
+import pytest
 
 # =============================================================================
 # 2.1 EXTRACTION PIPELINE TESTS
 # =============================================================================
+
 
 class TestExtractionInvariants:
     """
@@ -36,8 +35,9 @@ class TestExtractionInvariants:
         result = extractor.extract("")
 
         # Should have error or empty result
-        assert result.get("_error") or not result.get("vehicle_vin"), \
+        assert result.get("_error") or not result.get("vehicle_vin"), (
             "Empty text should fail extraction or return no data"
+        )
 
     def test_inv_text_extraction_valid_text_passes(self):
         """INV_TEXT_EXTRACTION: Valid text should extract fields."""
@@ -86,7 +86,13 @@ class TestExtractionInvariants:
         result = extractor.extract(complete_text)
 
         # Count anchor fields (VIN, pickup location, delivery location)
-        anchor_fields = ["vehicle_vin", "pickup_city", "pickup_state", "delivery_city", "delivery_state"]
+        anchor_fields = [
+            "vehicle_vin",
+            "pickup_city",
+            "pickup_state",
+            "delivery_city",
+            "delivery_state",
+        ]
         present_anchors = sum(1 for f in anchor_fields if result.get(f))
 
         assert present_anchors >= 3, f"Need at least 3 anchor fields, got {present_anchors}"
@@ -106,14 +112,17 @@ class TestOCRDecision:
         strategy = OCRStrategy()
 
         # Good quality text - should not need OCR
-        good_text = """
+        good_text = (
+            """
         Vehicle Transport Invoice
         VIN: 1HGBH41JXMN109186
         Year: 2020 Make: Toyota Model: Camry
         Pickup Location: 123 Main Street, Dallas, TX 75201
         Delivery Location: 456 Oak Avenue, Houston, TX 77001
         Contact: John Doe Phone: 555-123-4567
-        """ * 10  # Make it substantial
+        """
+            * 10
+        )  # Make it substantial
 
         should_ocr, reason = strategy.should_use_ocr(good_text)
         assert not should_ocr, f"Good quality text should not need OCR: {reason}"
@@ -137,11 +146,14 @@ class TestOCRDecision:
         strategy = OCRStrategy()
 
         # Borderline text - some good, some bad
-        mixed_text = """
+        mixed_text = (
+            """
         VIN: 1HGBH41JXMN109186
         Some readable text here
         @#$ garbled section %^&
-        """ * 5
+        """
+            * 5
+        )
 
         should_ocr, reason = strategy.should_use_ocr(mixed_text)
         # Either decision is acceptable for borderline
@@ -159,12 +171,9 @@ class TestBlockExtractor:
         """Extract value immediately after label on same line."""
         from extractors.spatial_parser import SpatialParser
 
-        parser = SpatialParser()
+        SpatialParser()
 
         # Simulate inline key-value
-        blocks = [
-            {"text": "VIN: 1HGBH41JXMN109186", "x0": 0, "y0": 0, "x1": 200, "y1": 20},
-        ]
 
         # Parser should extract VIN from inline format
         # This tests the key-value proximity logic
@@ -173,26 +182,17 @@ class TestBlockExtractor:
         """Extract value from block to the right of label."""
         from extractors.spatial_parser import SpatialParser
 
-        parser = SpatialParser()
+        SpatialParser()
 
         # Label on left, value on right
-        blocks = [
-            {"text": "VIN:", "x0": 0, "y0": 0, "x1": 50, "y1": 20},
-            {"text": "1HGBH41JXMN109186", "x0": 60, "y0": 0, "x1": 200, "y1": 20},
-        ]
 
     def test_multiline_value_extraction(self):
         """Extract multi-line address value."""
         from extractors.spatial_parser import SpatialParser
 
-        parser = SpatialParser()
+        SpatialParser()
 
         # Multi-line address
-        blocks = [
-            {"text": "Pickup Address:", "x0": 0, "y0": 0, "x1": 100, "y1": 20},
-            {"text": "123 Main Street", "x0": 0, "y0": 25, "x1": 100, "y1": 45},
-            {"text": "Dallas, TX 75201", "x0": 0, "y0": 50, "x1": 100, "y1": 70},
-        ]
 
 
 class TestLocationClassifier:
@@ -204,47 +204,51 @@ class TestLocationClassifier:
 
     def test_explicit_pickup_label(self):
         """Text with 'Pickup' label should classify as pickup."""
-        from extractors.location_classifier import classify_location, LocationType
+        from extractors.location_classifier import LocationType, classify_location
 
         result = classify_location(
-            address_text="123 Main St, Dallas, TX",
-            context_text="Pickup Location"
+            address_text="123 Main St, Dallas, TX", context_text="Pickup Location"
         )
 
-        assert result.location_type == LocationType.PICKUP, f"Expected pickup, got {result.location_type}"
+        assert result.location_type == LocationType.PICKUP, (
+            f"Expected pickup, got {result.location_type}"
+        )
 
     def test_explicit_delivery_label(self):
         """Text with 'Delivery' label should classify as delivery."""
-        from extractors.location_classifier import classify_location, LocationType
+        from extractors.location_classifier import LocationType, classify_location
 
         result = classify_location(
-            address_text="456 Oak Ave, Houston, TX",
-            context_text="Delivery Address"
+            address_text="456 Oak Ave, Houston, TX", context_text="Delivery Address"
         )
 
-        assert result.location_type == LocationType.DELIVERY, f"Expected delivery, got {result.location_type}"
+        assert result.location_type == LocationType.DELIVERY, (
+            f"Expected delivery, got {result.location_type}"
+        )
 
     def test_ship_to_as_delivery(self):
         """'Ship To' should classify as delivery."""
-        from extractors.location_classifier import classify_location, LocationType
+        from extractors.location_classifier import LocationType, classify_location
 
         result = classify_location(
-            address_text="ABC Motors, 789 Auto Blvd, Austin, TX",
-            context_text="Ship To"
+            address_text="ABC Motors, 789 Auto Blvd, Austin, TX", context_text="Ship To"
         )
 
-        assert result.location_type == LocationType.DELIVERY, f"Ship To should be delivery, got {result.location_type}"
+        assert result.location_type == LocationType.DELIVERY, (
+            f"Ship To should be delivery, got {result.location_type}"
+        )
 
     def test_origin_as_pickup(self):
         """'Origin' should classify as pickup."""
-        from extractors.location_classifier import classify_location, LocationType
+        from extractors.location_classifier import LocationType, classify_location
 
         result = classify_location(
-            address_text="Copart Dallas, 1234 Auction Way, Dallas, TX",
-            context_text="Origin"
+            address_text="Copart Dallas, 1234 Auction Way, Dallas, TX", context_text="Origin"
         )
 
-        assert result.location_type == LocationType.PICKUP, f"Origin should be pickup, got {result.location_type}"
+        assert result.location_type == LocationType.PICKUP, (
+            f"Origin should be pickup, got {result.location_type}"
+        )
 
 
 class TestAddressParser:
@@ -270,10 +274,7 @@ class TestAddressParser:
 
         # Complete address
         address = ParsedAddress(
-            street="123 Main St",
-            city="Dallas",
-            state="TX",
-            postal_code="75201"
+            street="123 Main St", city="Dallas", state="TX", postal_code="75201"
         )
 
         confidence = calculate_address_confidence(address)
@@ -286,24 +287,18 @@ class TestAddressParser:
 
         # Complete address
         complete = ParsedAddress(
-            street="123 Main St",
-            city="Dallas",
-            state="TX",
-            postal_code="75201"
+            street="123 Main St", city="Dallas", state="TX", postal_code="75201"
         )
 
         # Missing zip code
-        partial = ParsedAddress(
-            street="123 Main St",
-            city="Dallas",
-            state="TX"
-        )
+        partial = ParsedAddress(street="123 Main St", city="Dallas", state="TX")
 
         complete_conf = calculate_address_confidence(complete)
         partial_conf = calculate_address_confidence(partial)
 
-        assert partial_conf < complete_conf, \
+        assert partial_conf < complete_conf, (
             f"Partial ({partial_conf}) should be lower than complete ({complete_conf})"
+        )
 
     def test_state_validation_for_cd(self):
         """State validation for CD API."""
@@ -322,6 +317,7 @@ class TestAddressParser:
 # 2.2 FIELD RESOLVER / PRECEDENCE CHAIN TESTS
 # =============================================================================
 
+
 class TestFieldResolverPrecedence:
     """
     Test FieldResolver precedence chain:
@@ -332,14 +328,10 @@ class TestFieldResolverPrecedence:
 
     def test_user_override_highest_priority(self):
         """USER_OVERRIDE should override all other sources."""
-        from extractors.field_resolver import (
-            FieldResolver, ResolutionContext, FieldValueSource
-        )
+        from extractors.field_resolver import FieldResolver, FieldValueSource, ResolutionContext
 
         resolver = FieldResolver()
-        context = ResolutionContext(
-            user_overrides={"vehicle_vin": "USER_VIN"}
-        )
+        context = ResolutionContext(user_overrides={"vehicle_vin": "USER_VIN"})
 
         result = resolver.resolve_field("vehicle_vin", "EXTRACTED_VIN", context)
 
@@ -348,9 +340,7 @@ class TestFieldResolverPrecedence:
 
     def test_extracted_used_when_no_overrides(self):
         """EXTRACTED should be used when no overrides present."""
-        from extractors.field_resolver import (
-            FieldResolver, ResolutionContext, FieldValueSource
-        )
+        from extractors.field_resolver import FieldResolver, FieldValueSource, ResolutionContext
 
         resolver = FieldResolver()
         context = ResolutionContext()
@@ -362,14 +352,10 @@ class TestFieldResolverPrecedence:
 
     def test_resolve_all_tracks_sources(self):
         """resolve_all should track sources for all fields."""
-        from extractors.field_resolver import (
-            FieldResolver, ResolutionContext, FieldValueSource
-        )
+        from extractors.field_resolver import FieldResolver, FieldValueSource, ResolutionContext
 
         resolver = FieldResolver()
-        context = ResolutionContext(
-            user_overrides={"vehicle_vin": "FIXED_VIN"}
-        )
+        context = ResolutionContext(user_overrides={"vehicle_vin": "FIXED_VIN"})
 
         extracted_fields = {
             "vehicle_vin": "PDF_VIN",
@@ -400,6 +386,7 @@ class TestFieldResolverPrecedence:
 # =============================================================================
 # 2.3 CD EXPORT TESTS (Create/Update, ETag, Retries)
 # =============================================================================
+
 
 class TestCDExportCreate:
     """
@@ -455,7 +442,7 @@ class TestCDExportCreate:
 
         assert ref1 != ref2, "Different docs should have different reference IDs"
 
-    @patch('api.cd_client.requests.post')
+    @patch("api.cd_client.requests.post")
     def test_create_listing_saves_cd_id(self, mock_post):
         """Successful create should save cd_listing_id."""
         from api.cd_client import CDClient
@@ -469,13 +456,12 @@ class TestCDExportCreate:
         mock_response.headers = {"ETag": "abc123"}
         mock_post.return_value = mock_response
 
-        client = CDClient(api_key="test", base_url="https://test.centraldispatch.com")
+        CDClient(api_key="test", base_url="https://test.centraldispatch.com")
         # Test would call client.create_listing(payload)
 
-    @patch('api.cd_client.requests.get')
+    @patch("api.cd_client.requests.get")
     def test_etag_fetch_on_missing(self, mock_get):
         """If ETag not in response, should fetch via GET."""
-        from api.cd_client import CDClient
 
         mock_response = Mock()
         mock_response.status_code = 200
@@ -494,7 +480,7 @@ class TestCDExportUpdate:
     - 412 triggers ETag refresh and retry
     """
 
-    @patch('api.cd_client.requests.put')
+    @patch("api.cd_client.requests.put")
     def test_update_includes_if_match(self, mock_put):
         """Update must include If-Match header."""
         from api.cd_client import CDClient
@@ -503,17 +489,16 @@ class TestCDExportUpdate:
         mock_response.status_code = 200
         mock_put.return_value = mock_response
 
-        client = CDClient(api_key="test", base_url="https://test.centraldispatch.com")
+        CDClient(api_key="test", base_url="https://test.centraldispatch.com")
 
         # Verify If-Match in headers
         # client.update_listing(listing_id, payload, etag="current-etag")
         # assert mock_put.call_args.kwargs["headers"]["If-Match"] == "current-etag"
 
-    @patch('api.cd_client.requests.put')
-    @patch('api.cd_client.requests.get')
+    @patch("api.cd_client.requests.put")
+    @patch("api.cd_client.requests.get")
     def test_412_triggers_etag_refresh(self, mock_get, mock_put):
         """412 Precondition Failed should refresh ETag and retry."""
-        from api.cd_client import CDClient
 
         # First call returns 412
         mock_412 = Mock()
@@ -545,7 +530,7 @@ class TestCDRateLimitRetry:
     - Semaphore limits concurrency
     """
 
-    @patch('api.cd_client.requests.post')
+    @patch("api.cd_client.requests.post")
     def test_429_respects_retry_after(self, mock_post):
         """429 should wait for Retry-After duration."""
         mock_429 = Mock()
@@ -561,7 +546,7 @@ class TestCDRateLimitRetry:
         # Measure time to verify delay
         start = time.time()
         # client.create_listing(payload)  # Should wait ~2 seconds
-        elapsed = time.time() - start
+        time.time() - start
 
         # Should have waited at least 1.5 seconds (allowing some tolerance)
         # assert elapsed >= 1.5
@@ -599,7 +584,7 @@ class TestCDIdempotency:
         """Requests should include idempotency key."""
         from api.cd_client import CDClient
 
-        client = CDClient(api_key="test", base_url="https://test.centraldispatch.com")
+        CDClient(api_key="test", base_url="https://test.centraldispatch.com")
         # Verify idempotency key generation
 
 
@@ -641,6 +626,7 @@ class TestCDNegativeCases:
 # =============================================================================
 # 2.4 BATCH JOB TESTS
 # =============================================================================
+
 
 class TestBatchJobs:
     """
@@ -688,7 +674,7 @@ class TestBatchJobs:
         # Run same items twice
         run_ids = [100, 101, 102]
 
-        job1 = queue.create_job(run_ids)
+        queue.create_job(run_ids)
         # Let it complete
         # job2 = queue.create_job(run_ids)
 
@@ -698,6 +684,7 @@ class TestBatchJobs:
 # =============================================================================
 # 2.5 OBSERVABILITY TESTS
 # =============================================================================
+
 
 class TestMetricsEndpoints:
     """
@@ -758,11 +745,14 @@ class TestAuditTrail:
 # FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def client():
     """FastAPI test client."""
     from fastapi.testclient import TestClient
+
     from api.main import app
+
     return TestClient(app)
 
 

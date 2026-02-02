@@ -5,49 +5,52 @@ Provides layout-aware field extraction using spatial relationships
 between labels and values. Tracks extraction evidence for transparency.
 """
 
-import re
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Tuple, Any
 from enum import Enum
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class RelativePosition(Enum):
     """Relative position of value to label."""
-    INLINE = "inline"          # Value on same line after label
-    BELOW = "below"            # Value on line(s) below label
-    RIGHT = "right"            # Value to the right (adjacent block)
+
+    INLINE = "inline"  # Value on same line after label
+    BELOW = "below"  # Value on line(s) below label
+    RIGHT = "right"  # Value to the right (adjacent block)
     BELOW_RIGHT = "below_right"  # Value below and possibly right
 
 
 class ExtractionMethod(Enum):
     """Method used for extraction."""
-    PATTERN = "pattern"         # Regex pattern matching
-    SPATIAL = "spatial"         # Spatial/layout-based
-    KEY_VALUE = "key_value"     # Key-value proximity
+
+    PATTERN = "pattern"  # Regex pattern matching
+    SPATIAL = "spatial"  # Spatial/layout-based
+    KEY_VALUE = "key_value"  # Key-value proximity
     LEARNED_RULE = "learned_rule"  # ML or learned rule
-    DEFAULT = "default"         # Default value
+    DEFAULT = "default"  # Default value
 
 
 @dataclass
 class ExtractionEvidence:
     """Evidence of where a field value was extracted from."""
+
     field_key: str
     value: str
     block_id: Optional[str] = None
     db_block_id: Optional[int] = None  # Database ID from layout_blocks
     text_snippet: str = ""
     page_num: int = 0
-    bbox: Optional[Tuple[float, float, float, float]] = None  # x0, y0, x1, y1
+    bbox: Optional[tuple[float, float, float, float]] = None  # x0, y0, x1, y1
     rule_id: Optional[str] = None
     extraction_method: str = "pattern"
     confidence: float = 1.0
     label_matched: Optional[str] = None
     position_type: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
         return {
             "field_key": self.field_key,
@@ -55,8 +58,9 @@ class ExtractionEvidence:
             "block_id": self.db_block_id,  # Use db_block_id for storage
             "text_snippet": self.text_snippet[:200] if self.text_snippet else None,
             "page_num": self.page_num,
-            "bbox": {"x0": self.bbox[0], "y0": self.bbox[1],
-                     "x1": self.bbox[2], "y1": self.bbox[3]} if self.bbox else None,
+            "bbox": {"x0": self.bbox[0], "y0": self.bbox[1], "x1": self.bbox[2], "y1": self.bbox[3]}
+            if self.bbox
+            else None,
             "rule_id": self.rule_id,
             "extraction_method": self.extraction_method,
             "confidence": self.confidence,
@@ -67,11 +71,12 @@ class ExtractionEvidence:
 @dataclass
 class BlockExtractionResult:
     """Result of block-based extraction for a field."""
+
     field_key: str
     value: Optional[str] = None
     evidence: Optional[ExtractionEvidence] = None
     success: bool = False
-    alternatives: List[ExtractionEvidence] = field(default_factory=list)
+    alternatives: list[ExtractionEvidence] = field(default_factory=list)
 
 
 class BlockExtractor:
@@ -148,15 +153,15 @@ class BlockExtractor:
     INLINE_GAP = 10  # Gap between label and inline value
 
     def __init__(self):
-        self._custom_patterns: Dict[str, List[str]] = {}
+        self._custom_patterns: dict[str, list[str]] = {}
 
-    def add_label_patterns(self, field_key: str, patterns: List[str]) -> None:
+    def add_label_patterns(self, field_key: str, patterns: list[str]) -> None:
         """Add custom label patterns for a field."""
         if field_key not in self._custom_patterns:
             self._custom_patterns[field_key] = []
         self._custom_patterns[field_key].extend(patterns)
 
-    def get_label_patterns(self, field_key: str) -> List[str]:
+    def get_label_patterns(self, field_key: str) -> list[str]:
         """Get all label patterns for a field."""
         patterns = list(self.LABEL_PATTERNS.get(field_key, []))
         patterns.extend(self._custom_patterns.get(field_key, []))
@@ -164,9 +169,9 @@ class BlockExtractor:
 
     def extract_from_structure(
         self,
-        structure: 'DocumentStructure',
+        structure: "DocumentStructure",
         field_key: str,
-        label_patterns: List[str] = None,
+        label_patterns: list[str] = None,
         position_hint: RelativePosition = None,
         max_lines: int = 3,
     ) -> BlockExtractionResult:
@@ -231,14 +236,19 @@ class BlockExtractor:
                 candidates.append(evidence)
 
             # Try adjacent block (right or below)
-            for direction in ['right', 'below']:
+            for direction in ["right", "below"]:
                 from extractors.spatial_parser import get_spatial_parser
+
                 parser = get_spatial_parser()
                 adjacent = parser.get_adjacent_block(structure, pattern, direction)
                 if adjacent:
                     value = adjacent.text.strip()
                     if value and len(value) > 1:
-                        pos = RelativePosition.RIGHT if direction == 'right' else RelativePosition.BELOW
+                        pos = (
+                            RelativePosition.RIGHT
+                            if direction == "right"
+                            else RelativePosition.BELOW
+                        )
                         evidence = ExtractionEvidence(
                             field_key=field_key,
                             value=value,
@@ -277,10 +287,10 @@ class BlockExtractor:
 
     def extract_all_fields(
         self,
-        structure: 'DocumentStructure',
-        fields: List[str] = None,
+        structure: "DocumentStructure",
+        fields: list[str] = None,
         use_fallback: bool = True,
-    ) -> Dict[str, BlockExtractionResult]:
+    ) -> dict[str, BlockExtractionResult]:
         """
         Extract multiple fields from a document structure.
 
@@ -311,26 +321,24 @@ class BlockExtractor:
                 # Get text after the label
                 after = re.split(pattern, line, flags=re.IGNORECASE)[-1].strip()
                 # Clean up common separators
-                after = re.sub(r'^[:\s=]+', '', after).strip()
+                after = re.sub(r"^[:\s=]+", "", after).strip()
 
                 # Stop at known field markers
                 field_markers = [
-                    r'\s+(?:VIN|LOT|MEMBER|BUYER|SELLER|TOTAL|Date|Sale|Row|Item)',
-                    r'\s+(?:agrees|Document|evidences)',
-                    r'\s+_+',  # Underscores often indicate form fields
+                    r"\s+(?:VIN|LOT|MEMBER|BUYER|SELLER|TOTAL|Date|Sale|Row|Item)",
+                    r"\s+(?:agrees|Document|evidences)",
+                    r"\s+_+",  # Underscores often indicate form fields
                 ]
                 for marker in field_markers:
                     match = re.search(marker, after, re.IGNORECASE)
                     if match:
-                        after = after[:match.start()].strip()
+                        after = after[: match.start()].strip()
 
-                if after and len(after) > 1 and not after.startswith('_'):
+                if after and len(after) > 1 and not after.startswith("_"):
                     return after
         return None
 
-    def _extract_lines_below(
-        self, block, pattern: str, max_lines: int = 3
-    ) -> List[str]:
+    def _extract_lines_below(self, block, pattern: str, max_lines: int = 3) -> list[str]:
         """Extract lines appearing below the label line."""
         lines = block.lines
         result = []
@@ -356,17 +364,17 @@ class BlockExtractor:
     def _is_noise_line(self, line: str) -> bool:
         """Check if a line is likely noise/separator."""
         noise_patterns = [
-            r'^[-_=*]{3,}$',  # Separator lines
-            r'^(SELLER|BUYER|MEMBER|SOLD\s*THROUGH)',
-            r'^Page\s+\d+',
-            r'^(Total|Amount|Charges)',
+            r"^[-_=*]{3,}$",  # Separator lines
+            r"^(SELLER|BUYER|MEMBER|SOLD\s*THROUGH)",
+            r"^Page\s+\d+",
+            r"^(Total|Amount|Charges)",
         ]
         for pattern in noise_patterns:
             if re.search(pattern, line, re.IGNORECASE):
                 return True
         return False
 
-    def _join_lines(self, lines: List[str], field_key: str) -> str:
+    def _join_lines(self, lines: list[str], field_key: str) -> str:
         """Join multiple lines appropriately for the field type."""
         if not lines:
             return ""
@@ -376,8 +384,14 @@ class BlockExtractor:
             return ", ".join(lines)
 
         # For most fields, take just the first line
-        if field_key in ["vehicle_vin", "vehicle_year", "vehicle_make",
-                         "sale_date", "reference_id", "buyer_id"]:
+        if field_key in [
+            "vehicle_vin",
+            "vehicle_year",
+            "vehicle_make",
+            "sale_date",
+            "reference_id",
+            "buyer_id",
+        ]:
             return lines[0]
 
         # Default: join with space
@@ -403,7 +417,7 @@ class BlockExtractor:
             base_confidence *= 0.5
 
         # Penalize values that look like labels
-        if re.match(r'^[A-Z\s]{2,10}:?$', value):
+        if re.match(r"^[A-Z\s]{2,10}:?$", value):
             base_confidence *= 0.5
 
         return min(1.0, base_confidence)
@@ -449,7 +463,7 @@ class BlockExtractor:
                 evidence = ExtractionEvidence(
                     field_key=field_key,
                     value=value,
-                    text_snippet=text[max(0, match.start()-20):match.end()+20],
+                    text_snippet=text[max(0, match.start() - 20) : match.end() + 20],
                     page_num=page_num,
                     extraction_method=ExtractionMethod.PATTERN.value,
                     confidence=self._calculate_confidence(field_key, value),
@@ -466,22 +480,24 @@ class BlockExtractor:
             label_match = re.search(label_pattern, text, re.IGNORECASE)
             if label_match:
                 # Get text after label (up to end of line or next label)
-                after_label = text[label_match.end():]
-                line_end = after_label.find('\n')
+                after_label = text[label_match.end() :]
+                line_end = after_label.find("\n")
                 if line_end > 0:
                     line_text = after_label[:line_end].strip()
                 else:
                     line_text = after_label[:100].strip()
 
                 # Clean up value
-                value = re.sub(r'^[:\s=]+', '', line_text).strip()
+                value = re.sub(r"^[:\s=]+", "", line_text).strip()
                 if value and len(value) > 1:
                     # Validate value looks reasonable
                     if not self._looks_like_label(value):
                         evidence = ExtractionEvidence(
                             field_key=field_key,
                             value=value,
-                            text_snippet=text[max(0, label_match.start()-10):label_match.end()+60],
+                            text_snippet=text[
+                                max(0, label_match.start() - 10) : label_match.end() + 60
+                            ],
                             page_num=page_num,
                             extraction_method=ExtractionMethod.PATTERN.value,
                             label_matched=label_pattern,
@@ -498,9 +514,9 @@ class BlockExtractor:
     def _looks_like_label(self, text: str) -> bool:
         """Check if text looks like a label rather than a value."""
         label_indicators = [
-            r'^[A-Z\s]{2,15}:?$',  # ALL CAPS short text
-            r'^(?:SELLER|BUYER|MEMBER|LOT|VIN|DATE|TOTAL)',
-            r'^(?:ADDRESS|CITY|STATE|ZIP|PHONE)',
+            r"^[A-Z\s]{2,15}:?$",  # ALL CAPS short text
+            r"^(?:SELLER|BUYER|MEMBER|LOT|VIN|DATE|TOTAL)",
+            r"^(?:ADDRESS|CITY|STATE|ZIP|PHONE)",
         ]
         for pattern in label_indicators:
             if re.match(pattern, text.strip(), re.IGNORECASE):
@@ -509,9 +525,9 @@ class BlockExtractor:
 
     def extract_with_fallback(
         self,
-        structure: 'DocumentStructure',
+        structure: "DocumentStructure",
         field_key: str,
-        label_patterns: List[str] = None,
+        label_patterns: list[str] = None,
     ) -> BlockExtractionResult:
         """
         Extract field using both block-based and pattern extraction,
@@ -560,9 +576,9 @@ class BlockExtractor:
 
 def extract_with_evidence(
     pdf_path: str,
-    fields: List[str] = None,
+    fields: list[str] = None,
     document_id: int = None,
-) -> Tuple[Dict[str, Any], List[Dict]]:
+) -> tuple[dict[str, Any], list[dict]]:
     """
     High-level function to extract fields with evidence tracking.
 
@@ -600,7 +616,7 @@ def extract_with_evidence(
 
 def save_extraction_evidence(
     run_id: int,
-    evidence_list: List[Dict],
+    evidence_list: list[dict],
     document_id: int = None,
 ) -> int:
     """

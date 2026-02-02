@@ -15,20 +15,21 @@ and tracking where each value came from.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class FieldValueSource(str, Enum):
     """Source of field value (in precedence order, high to low)."""
-    USER_OVERRIDE = "user_override"      # Manual user correction
+
+    USER_OVERRIDE = "user_override"  # Manual user correction
     WAREHOUSE_CONST = "warehouse_const"  # Warehouse-specific constant
-    AUCTION_CONST = "auction_const"      # Auction profile constant
-    EXTRACTED = "extracted"              # Extracted from document
-    DEFAULT = "default"                  # Default value from mapping
-    EMPTY = "empty"                      # No value found
+    AUCTION_CONST = "auction_const"  # Auction profile constant
+    EXTRACTED = "extracted"  # Extracted from document
+    DEFAULT = "default"  # Default value from mapping
+    EMPTY = "empty"  # No value found
 
 
 # Precedence order (index 0 = highest)
@@ -44,20 +45,21 @@ PRECEDENCE_ORDER = [
 @dataclass
 class ResolvedField:
     """A resolved field value with source tracking."""
+
     field_key: str
     value: Any
     source: FieldValueSource
     confidence: float = 1.0
 
     # Alternative values from lower-priority sources
-    alternatives: Dict[str, Any] = field(default_factory=dict)
+    alternatives: dict[str, Any] = field(default_factory=dict)
 
     # Metadata
     extracted_value: Optional[Any] = None  # Original extracted value
-    rule_id: Optional[str] = None          # Rule that extracted the value
-    block_id: Optional[str] = None         # Layout block ID
+    rule_id: Optional[str] = None  # Rule that extracted the value
+    block_id: Optional[str] = None  # Layout block ID
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "field_key": self.field_key,
             "value": self.value,
@@ -71,10 +73,11 @@ class ResolvedField:
 @dataclass
 class ResolutionContext:
     """Context for field resolution."""
+
     auction_code: Optional[str] = None
     warehouse_code: Optional[str] = None
-    user_overrides: Dict[str, Any] = field(default_factory=dict)
-    default_values: Dict[str, Any] = field(default_factory=dict)
+    user_overrides: dict[str, Any] = field(default_factory=dict)
+    default_values: dict[str, Any] = field(default_factory=dict)
 
 
 class FieldResolver:
@@ -100,6 +103,7 @@ class FieldResolver:
     def auction_service(self):
         if self._auction_service is None:
             from api.auction_profiles import get_profile_service
+
             self._auction_service = get_profile_service()
         return self._auction_service
 
@@ -107,6 +111,7 @@ class FieldResolver:
     def warehouse_service(self):
         if self._warehouse_service is None:
             from api.warehouse_constants import get_constants_service
+
             self._warehouse_service = get_constants_service()
         return self._warehouse_service
 
@@ -179,7 +184,7 @@ class FieldResolver:
 
         # Build alternatives from remaining candidates
         alternatives = {}
-        for source, value, conf in candidates[1:]:
+        for source, value, _conf in candidates[1:]:
             alternatives[source.value] = value
 
         return ResolvedField(
@@ -193,10 +198,10 @@ class FieldResolver:
 
     def resolve_all(
         self,
-        extracted_fields: Dict[str, Any],
+        extracted_fields: dict[str, Any],
         context: ResolutionContext,
-        additional_fields: List[str] = None,
-    ) -> Dict[str, ResolvedField]:
+        additional_fields: list[str] = None,
+    ) -> dict[str, ResolvedField]:
         """
         Resolve all fields using multiple sources.
 
@@ -238,9 +243,9 @@ class FieldResolver:
 
     def get_final_values(
         self,
-        extracted_fields: Dict[str, Any],
+        extracted_fields: dict[str, Any],
         context: ResolutionContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get final values only (without source tracking).
 
@@ -250,9 +255,8 @@ class FieldResolver:
         return {k: v.value for k, v in resolved.items() if v.value is not None}
 
     def get_sources_summary(
-        self,
-        resolved_fields: Dict[str, ResolvedField]
-    ) -> Dict[str, Dict[str, Any]]:
+        self, resolved_fields: dict[str, ResolvedField]
+    ) -> dict[str, dict[str, Any]]:
         """
         Get a summary of field sources for diagnostics.
         """
@@ -268,12 +272,12 @@ class FieldResolver:
 
 
 def resolve_with_precedence(
-    extracted_fields: Dict[str, Any],
+    extracted_fields: dict[str, Any],
     auction_code: str = None,
     warehouse_code: str = None,
-    user_overrides: Dict[str, Any] = None,
-    default_values: Dict[str, Any] = None,
-) -> Tuple[Dict[str, Any], Dict[str, str]]:
+    user_overrides: dict[str, Any] = None,
+    default_values: dict[str, Any] = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     """
     Convenience function to resolve fields with precedence.
 

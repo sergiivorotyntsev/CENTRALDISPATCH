@@ -14,16 +14,16 @@ Usage:
 3. The system will process PDFs and create extraction runs
 """
 
-import uuid
 import base64
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Header, Request, UploadFile, File, Form
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.database import get_connection
@@ -38,8 +38,10 @@ router = APIRouter(prefix="/webhook", tags=["Webhook"])
 # MODELS
 # =============================================================================
 
+
 class EmailAttachment(BaseModel):
     """Email attachment in webhook payload."""
+
     filename: str
     content_type: str = "application/pdf"
     content_base64: str  # Base64-encoded file content
@@ -55,6 +57,7 @@ class EmailWebhookPayload(BaseModel):
     - SendGrid Inbound Parse (converted)
     - Custom email forwarding scripts
     """
+
     # Email metadata
     message_id: Optional[str] = None
     subject: Optional[str] = None
@@ -67,7 +70,7 @@ class EmailWebhookPayload(BaseModel):
     body_html: Optional[str] = None
 
     # Attachments
-    attachments: List[EmailAttachment] = []
+    attachments: list[EmailAttachment] = []
 
     # Optional: specify auction type
     auction_type_id: Optional[int] = None
@@ -79,20 +82,23 @@ class EmailWebhookPayload(BaseModel):
 
 class WebhookResponse(BaseModel):
     """Response from webhook endpoint."""
+
     status: str
     message: str
     processed: int = 0
-    documents: List[Dict[str, Any]] = []
-    errors: List[str] = []
+    documents: list[dict[str, Any]] = []
+    errors: list[str] = []
 
 
 # =============================================================================
 # WEBHOOK SECRET VALIDATION
 # =============================================================================
 
+
 def _get_webhook_secret() -> Optional[str]:
     """Get webhook secret from settings."""
     from api.routes.settings import load_settings
+
     settings = load_settings()
     return settings.get("webhook", {}).get("secret")
 
@@ -133,17 +139,31 @@ def _log_webhook_event(
                 error TEXT
             )
         """)
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO webhook_activity_log
             (id, timestamp, event_type, message_id, subject, sender, status, processed_count, error)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (entry_id, timestamp, event_type, message_id, subject, sender, status, processed_count, error))
+        """,
+            (
+                entry_id,
+                timestamp,
+                event_type,
+                message_id,
+                subject,
+                sender,
+                status,
+                processed_count,
+                error,
+            ),
+        )
         conn.commit()
 
 
 # =============================================================================
 # EMAIL WEBHOOK ENDPOINT
 # =============================================================================
+
 
 @router.post("/email", response_model=WebhookResponse)
 async def receive_email_webhook(
@@ -215,7 +235,7 @@ async def receive_email_webhook(
         with get_connection() as conn:
             at = conn.execute(
                 "SELECT id FROM auction_types WHERE code = ? AND is_active = TRUE",
-                (payload.auction_type_code.upper(),)
+                (payload.auction_type_code.upper(),),
             ).fetchone()
             if at:
                 auction_type_id = at["id"]
@@ -243,17 +263,21 @@ async def receive_email_webhook(
             # Check for duplicate
             existing = DocumentRepository.get_by_sha256(sha256)
             if existing:
-                documents.append({
-                    "document_id": existing.id,
-                    "run_id": None,
-                    "filename": attachment.filename,
-                    "status": "duplicate",
-                })
+                documents.append(
+                    {
+                        "document_id": existing.id,
+                        "run_id": None,
+                        "filename": attachment.filename,
+                        "status": "duplicate",
+                    }
+                )
                 continue
 
             # Save file
             timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            safe_filename = "".join(c if c.isalnum() or c in ".-_" else "_" for c in attachment.filename)
+            safe_filename = "".join(
+                c if c.isalnum() or c in ".-_" else "_" for c in attachment.filename
+            )
             unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{safe_filename}"
             file_path = upload_path / unique_filename
             file_path.write_bytes(file_bytes)
@@ -262,6 +286,7 @@ async def receive_email_webhook(
             raw_text = ""
             try:
                 import pdfplumber
+
                 with pdfplumber.open(file_path) as pdf:
                     for page in pdf.pages:
                         text = page.extract_text()
@@ -303,14 +328,17 @@ async def receive_email_webhook(
             else:
                 # Run extraction
                 from api.routes.extractions import run_extraction
+
                 run_extraction(run_id, doc_id, auction_type_id)
 
-            documents.append({
-                "document_id": doc_id,
-                "run_id": run_id,
-                "filename": attachment.filename,
-                "status": "processed",
-            })
+            documents.append(
+                {
+                    "document_id": doc_id,
+                    "run_id": run_id,
+                    "filename": attachment.filename,
+                    "status": "processed",
+                }
+            )
 
         except Exception as e:
             logger.error(f"Failed to process attachment {attachment.filename}: {e}")
@@ -329,7 +357,9 @@ async def receive_email_webhook(
 
     return WebhookResponse(
         status="ok" if processed > 0 else "no_pdfs",
-        message=f"Processed {processed} PDF attachment(s)" if processed else "No PDF attachments found",
+        message=f"Processed {processed} PDF attachment(s)"
+        if processed
+        else "No PDF attachments found",
         processed=processed,
         documents=documents,
         errors=errors,
@@ -363,6 +393,7 @@ def _detect_auction_type(text: str) -> Optional[int]:
 # =============================================================================
 # MULTIPART/FORM-DATA ENDPOINT (for SendGrid, Mailgun)
 # =============================================================================
+
 
 @router.post("/email/multipart", response_model=WebhookResponse)
 async def receive_email_multipart(
@@ -401,12 +432,14 @@ async def receive_email_multipart(
             if hasattr(file, "read") and hasattr(file, "filename"):
                 if file.filename and file.filename.lower().endswith(".pdf"):
                     content = await file.read()
-                    attachments.append(EmailAttachment(
-                        filename=file.filename,
-                        content_type="application/pdf",
-                        content_base64=base64.b64encode(content).decode(),
-                        size=len(content),
-                    ))
+                    attachments.append(
+                        EmailAttachment(
+                            filename=file.filename,
+                            content_type="application/pdf",
+                            content_base64=base64.b64encode(content).decode(),
+                            size=len(content),
+                        )
+                    )
 
     # Process using the main webhook handler
     payload = EmailWebhookPayload(
@@ -423,10 +456,12 @@ async def receive_email_multipart(
 # WEBHOOK CONFIGURATION & TESTING
 # =============================================================================
 
+
 @router.get("/config")
 async def get_webhook_config():
     """Get webhook configuration (without revealing the secret)."""
     from api.routes.settings import load_settings
+
     settings = load_settings()
     webhook_config = settings.get("webhook", {})
 
@@ -458,7 +493,9 @@ async def test_webhook_endpoint(
 
     return {
         "status": "ok" if auth_valid else "auth_required",
-        "message": "Webhook endpoint is ready" if auth_valid else "Invalid or missing X-Webhook-Secret",
+        "message": "Webhook endpoint is ready"
+        if auth_valid
+        else "Invalid or missing X-Webhook-Secret",
         "authentication": "valid" if auth_valid else "invalid",
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
@@ -478,11 +515,14 @@ async def get_webhook_activity(limit: int = 50):
             if not table_check:
                 return {"items": [], "total": 0}
 
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT * FROM webhook_activity_log
                 ORDER BY timestamp DESC
                 LIMIT ?
-            """, (limit,)).fetchall()
+            """,
+                (limit,),
+            ).fetchall()
 
             return {
                 "items": [dict(row) for row in rows],

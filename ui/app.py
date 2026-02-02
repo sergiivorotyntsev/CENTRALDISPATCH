@@ -8,10 +8,11 @@ Pages:
 3. Batch - Process multiple PDFs from a folder
 4. Runs/Logs - View recent runs and errors
 """
+
+import hashlib
+import json
 import os
 import sys
-import json
-import hashlib
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -195,15 +196,15 @@ def page_settings():
         )
 
         if email_provider == "imap":
-            email_server = st.text_input(
+            st.text_input(
                 "IMAP Server",
                 value=env_config.get("EMAIL_IMAP_SERVER", "outlook.office365.com"),
             )
-            email_address = st.text_input(
+            st.text_input(
                 "Email Address",
                 value=env_config.get("EMAIL_ADDRESS", ""),
             )
-            email_password = st.text_input(
+            st.text_input(
                 "Password / App Password",
                 value=env_config.get("EMAIL_PASSWORD", ""),
                 type="password",
@@ -261,13 +262,13 @@ def page_upload():
     # Auction override
     col1, col2 = st.columns([2, 1])
     with col1:
-        auction_override = st.selectbox(
+        st.selectbox(
             "Auction Source",
             options=["Auto-detect", "Copart", "IAA", "Manheim"],
             help="Override automatic auction detection",
         )
     with col2:
-        auto_export = st.checkbox(
+        st.checkbox(
             "Auto-export to Sheets",
             value=False,
             help="Automatically export successful extractions",
@@ -305,7 +306,9 @@ def page_upload():
                     )
 
                     score = result.score * 100
-                    status_val = "OK" if score >= 60 else ("NEEDS_REVIEW" if score >= 30 else "FAIL")
+                    status_val = (
+                        "OK" if score >= 60 else ("NEEDS_REVIEW" if score >= 30 else "FAIL")
+                    )
 
                     record = {
                         "file": uploaded_file.name,
@@ -318,12 +321,14 @@ def page_upload():
 
                     if result.invoice:
                         inv = result.invoice
-                        record.update({
-                            "buyer_id": inv.buyer_id,
-                            "buyer_name": inv.buyer_name,
-                            "reference_id": inv.reference_id,
-                            "total_amount": inv.total_amount,
-                        })
+                        record.update(
+                            {
+                                "buyer_id": inv.buyer_id,
+                                "buyer_name": inv.buyer_name,
+                                "reference_id": inv.reference_id,
+                                "total_amount": inv.total_amount,
+                            }
+                        )
 
                         if inv.vehicles:
                             v = inv.vehicles[0]
@@ -341,21 +346,25 @@ def page_upload():
 
                     results.append(record)
                 else:
-                    results.append({
-                        "file": uploaded_file.name,
-                        "file_hash": file_hash,
-                        "auction": "UNKNOWN",
-                        "score": 0,
-                        "status": "FAIL",
-                        "error": "No extractor matched",
-                    })
+                    results.append(
+                        {
+                            "file": uploaded_file.name,
+                            "file_hash": file_hash,
+                            "auction": "UNKNOWN",
+                            "score": 0,
+                            "status": "FAIL",
+                            "error": "No extractor matched",
+                        }
+                    )
 
             except Exception as e:
-                results.append({
-                    "file": uploaded_file.name,
-                    "status": "ERROR",
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "file": uploaded_file.name,
+                        "status": "ERROR",
+                        "error": str(e),
+                    }
+                )
 
             finally:
                 os.unlink(tmp_path)
@@ -388,15 +397,21 @@ def page_upload():
             status = r.get("status", "UNKNOWN")
             icon = "✅" if status == "OK" else ("⚠️" if status == "NEEDS_REVIEW" else "❌")
 
-            with st.expander(f"{icon} {r.get('file', 'Unknown')} - {r.get('auction', 'UNKNOWN')} ({r.get('score', 0):.0f}%)"):
+            with st.expander(
+                f"{icon} {r.get('file', 'Unknown')} - {r.get('auction', 'UNKNOWN')} ({r.get('score', 0):.0f}%)"
+            ):
                 if r.get("vin"):
                     st.write(f"**VIN:** {r['vin']}")
                 if r.get("vehicle_year"):
-                    st.write(f"**Vehicle:** {r.get('vehicle_year')} {r.get('vehicle_make', '')} {r.get('vehicle_model', '')}")
+                    st.write(
+                        f"**Vehicle:** {r.get('vehicle_year')} {r.get('vehicle_make', '')} {r.get('vehicle_model', '')}"
+                    )
                 if r.get("lot_number"):
                     st.write(f"**Lot #:** {r['lot_number']}")
                 if r.get("pickup_city"):
-                    st.write(f"**Pickup:** {r['pickup_city']}, {r.get('pickup_state', '')} {r.get('pickup_zip', '')}")
+                    st.write(
+                        f"**Pickup:** {r['pickup_city']}, {r.get('pickup_state', '')} {r.get('pickup_zip', '')}"
+                    )
                 if r.get("matched_patterns"):
                     st.write(f"**Matched:** {r['matched_patterns']}")
                 if r.get("error"):
@@ -472,7 +487,7 @@ def page_batch():
         status = st.empty()
 
         for i, pdf_path in enumerate(pdf_files):
-            status.text(f"[{i+1}/{len(pdf_files)}] {pdf_path.name}")
+            status.text(f"[{i + 1}/{len(pdf_files)}] {pdf_path.name}")
             progress.progress((i + 1) / len(pdf_files))
 
             try:
@@ -487,7 +502,9 @@ def page_batch():
                     )
 
                     score = result.score * 100
-                    status_val = "OK" if score >= 60 else ("NEEDS_REVIEW" if score >= 30 else "FAIL")
+                    status_val = (
+                        "OK" if score >= 60 else ("NEEDS_REVIEW" if score >= 30 else "FAIL")
+                    )
 
                     record = {
                         "file": str(pdf_path),
@@ -505,12 +522,14 @@ def page_batch():
 
                     if result.invoice:
                         inv = result.invoice
-                        record.update({
-                            "buyer_id": inv.buyer_id or "",
-                            "buyer_name": inv.buyer_name or "",
-                            "reference_id": inv.reference_id or "",
-                            "total_amount": inv.total_amount or 0,
-                        })
+                        record.update(
+                            {
+                                "buyer_id": inv.buyer_id or "",
+                                "buyer_name": inv.buyer_name or "",
+                                "reference_id": inv.reference_id or "",
+                                "total_amount": inv.total_amount or 0,
+                            }
+                        )
 
                         if inv.vehicles:
                             v = inv.vehicles[0]
@@ -528,27 +547,31 @@ def page_batch():
 
                     results.append(record)
                 else:
-                    results.append({
-                        "file": str(pdf_path),
-                        "attachment_name": pdf_path.name,
-                        "file_hash": file_hash,
-                        "auction": "UNKNOWN",
-                        "score": 0,
-                        "status": "FAIL",
-                        "error": "No extractor matched",
-                        "source_type": "batch",
-                        "run_id": run_id,
-                    })
+                    results.append(
+                        {
+                            "file": str(pdf_path),
+                            "attachment_name": pdf_path.name,
+                            "file_hash": file_hash,
+                            "auction": "UNKNOWN",
+                            "score": 0,
+                            "status": "FAIL",
+                            "error": "No extractor matched",
+                            "source_type": "batch",
+                            "run_id": run_id,
+                        }
+                    )
 
             except Exception as e:
-                results.append({
-                    "file": str(pdf_path),
-                    "attachment_name": pdf_path.name,
-                    "status": "ERROR",
-                    "error": str(e),
-                    "source_type": "batch",
-                    "run_id": run_id,
-                })
+                results.append(
+                    {
+                        "file": str(pdf_path),
+                        "attachment_name": pdf_path.name,
+                        "status": "ERROR",
+                        "error": str(e),
+                        "source_type": "batch",
+                        "run_id": run_id,
+                    }
+                )
 
         progress.empty()
         status.empty()
@@ -639,12 +662,16 @@ def page_runs():
                 if errors:
                     st.error(f"**{len(errors)} Errors:**")
                     for err in errors[:5]:
-                        st.write(f"- {err.get('file', 'Unknown')}: {err.get('error', 'Unknown error')}")
+                        st.write(
+                            f"- {err.get('file', 'Unknown')}: {err.get('error', 'Unknown error')}"
+                        )
 
             # Show sample results
             st.write("**Sample Results:**")
             for r in results[:5]:
-                st.write(f"- {r.get('attachment_name', r.get('file', 'Unknown'))}: {r.get('status', 'UNKNOWN')} ({r.get('score', 0):.0f}%)")
+                st.write(
+                    f"- {r.get('attachment_name', r.get('file', 'Unknown'))}: {r.get('status', 'UNKNOWN')} ({r.get('score', 0):.0f}%)"
+                )
 
 
 # ============================================================================

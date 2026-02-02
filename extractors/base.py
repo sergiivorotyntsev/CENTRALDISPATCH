@@ -1,12 +1,19 @@
 """Base extractor class for auction invoices."""
-import re
+
 import logging
+import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Dict, Any
+from dataclasses import dataclass
+from typing import Optional
+
 import pdfplumber
 
-from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
+from models.vehicle import (
+    Address,
+    AuctionInvoice,
+    AuctionSource,
+    VehicleType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +21,14 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExtractionResult:
     """Result of PDF extraction with metadata."""
+
     invoice: Optional[AuctionInvoice]
     source: AuctionSource
     score: float  # 0.0 to 1.0 confidence
     text_length: int
     needs_ocr: bool = False
-    matched_patterns: List[str] = None
-    learned_rules_applied: List[str] = None  # Track which learned rules were used
+    matched_patterns: list[str] = None
+    learned_rules_applied: list[str] = None  # Track which learned rules were used
 
     def __post_init__(self):
         if self.matched_patterns is None:
@@ -32,10 +40,11 @@ class ExtractionResult:
 @dataclass
 class LearnedRule:
     """A learned extraction rule for a specific field."""
+
     field_key: str
     rule_type: str  # 'label_below', 'label_inline', 'regex', 'position'
-    label_patterns: List[str]
-    exclude_patterns: List[str]
+    label_patterns: list[str]
+    exclude_patterns: list[str]
     confidence: float
 
     def matches_label(self, text: str) -> bool:
@@ -63,7 +72,7 @@ class BaseExtractor(ABC):
     SCORE_THRESHOLD = 0.6
 
     # Learned rules cache
-    _learned_rules: Dict[str, LearnedRule] = None
+    _learned_rules: dict[str, LearnedRule] = None
     _rules_loaded: bool = False
 
     @property
@@ -78,7 +87,7 @@ class BaseExtractor(ABC):
 
     @property
     @abstractmethod
-    def indicators(self) -> List[str]:
+    def indicators(self) -> list[str]:
         """List of text patterns that indicate this document type."""
         pass
 
@@ -87,7 +96,7 @@ class BaseExtractor(ABC):
         """Optional weights for indicators (default: equal weight)."""
         return {}
 
-    def load_learned_rules(self) -> Dict[str, LearnedRule]:
+    def load_learned_rules(self) -> dict[str, LearnedRule]:
         """
         Load learned extraction rules from the training database.
 
@@ -110,13 +119,15 @@ class BaseExtractor(ABC):
                 for field_key, rule_info in rules_data.items():
                     self._learned_rules[field_key] = LearnedRule(
                         field_key=field_key,
-                        rule_type=rule_info.get('rule_type', 'label_below'),
-                        label_patterns=rule_info.get('label_patterns', []),
-                        exclude_patterns=rule_info.get('exclude_patterns', []),
-                        confidence=rule_info.get('confidence', 0.5),
+                        rule_type=rule_info.get("rule_type", "label_below"),
+                        label_patterns=rule_info.get("label_patterns", []),
+                        exclude_patterns=rule_info.get("exclude_patterns", []),
+                        confidence=rule_info.get("confidence", 0.5),
                     )
 
-                logger.info(f"Loaded {len(self._learned_rules)} learned rules for {self.auction_type_code}")
+                logger.info(
+                    f"Loaded {len(self._learned_rules)} learned rules for {self.auction_type_code}"
+                )
         except Exception as e:
             logger.warning(f"Could not load learned rules: {e}")
             self._learned_rules = {}
@@ -130,12 +141,8 @@ class BaseExtractor(ABC):
         return rules.get(field_key)
 
     def extract_with_learned_rules(
-        self,
-        text: str,
-        field_key: str,
-        default_labels: List[str] = None,
-        default_extract_func = None
-    ) -> Tuple[Optional[str], bool]:
+        self, text: str, field_key: str, default_labels: list[str] = None, default_extract_func=None
+    ) -> tuple[Optional[str], bool]:
         """
         Extract a field value using learned rules with fallback to defaults.
 
@@ -165,10 +172,11 @@ class BaseExtractor(ABC):
         if default_labels:
             # Try default labels
             from extractors.address_parser import extract_lines_after_label
+
             for label in default_labels:
                 lines = extract_lines_after_label(text, label)
                 if lines:
-                    return '\n'.join(lines[:3]), False
+                    return "\n".join(lines[:3]), False
 
         return None, False
 
@@ -187,14 +195,14 @@ class BaseExtractor(ABC):
                             filtered_lines.append(line)
 
                     if filtered_lines:
-                        return '\n'.join(filtered_lines[:3])
+                        return "\n".join(filtered_lines[:3])
             except Exception as e:
                 logger.warning(f"Error applying rule for {rule.field_key}: {e}")
                 continue
 
         return None
 
-    def score(self, text: str) -> Tuple[float, List[str]]:
+    def score(self, text: str) -> tuple[float, list[str]]:
         """
         Calculate confidence score for this extractor.
         Returns (score, matched_patterns) where score is 0.0 to 1.0.
@@ -277,7 +285,7 @@ class BaseExtractor(ABC):
                     text += page_text + "\n"
         return text
 
-    def extract_pages_text(self, pdf_path: str) -> List[str]:
+    def extract_pages_text(self, pdf_path: str) -> list[str]:
         pages = []
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
@@ -287,21 +295,18 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def clean_text(text: str) -> str:
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r"\s+", " ", text)
         return text.strip()
 
     @staticmethod
     def extract_vin(text: str) -> Optional[str]:
-        pattern = r'\b[A-HJ-NPR-Z0-9]{17}\b'
+        pattern = r"\b[A-HJ-NPR-Z0-9]{17}\b"
         match = re.search(pattern, text)
         return match.group(0) if match else None
 
     @staticmethod
     def extract_phone(text: str) -> Optional[str]:
-        patterns = [
-            r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-            r'\d{3}[-.\s]\d{3}[-.\s]\d{4}'
-        ]
+        patterns = [r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", r"\d{3}[-.\s]\d{3}[-.\s]\d{4}"]
         for pattern in patterns:
             match = re.search(pattern, text)
             if match:
@@ -310,12 +315,12 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def extract_zip(text: str) -> Optional[str]:
-        pattern = r'\b\d{5}(?:-\d{4})?\b'
+        pattern = r"\b\d{5}(?:-\d{4})?\b"
         match = re.search(pattern, text)
         return match.group(0) if match else None
 
     @staticmethod
-    def parse_address(text: str) -> Tuple[str, str, str]:
+    def parse_address(text: str) -> tuple[str, str, str]:
         """
         Parse city, state, zip from a text line.
 
@@ -326,12 +331,13 @@ class BaseExtractor(ABC):
         """
         # Import and use the shared parser for better handling of various formats
         from extractors.address_parser import parse_city_state_zip
+
         city, state, zip_code = parse_city_state_zip(text)
         if city and state:
             return city, state, zip_code or ""
 
         # Fallback to basic pattern
-        pattern = r'([A-Za-z\s]+)[,\s]+([A-Z]{2})[\s.,]+(\d{5}(?:-\d{4})?)'
+        pattern = r"([A-Za-z\s]+)[,\s]+([A-Z]{2})[\s.,]+(\d{5}(?:-\d{4})?)"
         match = re.search(pattern, text)
         if match:
             return match.group(1).strip(), match.group(2), match.group(3)
@@ -341,11 +347,22 @@ class BaseExtractor(ABC):
     def detect_vehicle_type(make: str, model: str) -> VehicleType:
         combined = f"{make} {model}".upper()
 
-        suv_keywords = ['SUV', 'XC90', 'XC60', 'XC40', 'DURANGO', 'CHEROKEE',
-                       'TUCSON', 'KONA', 'EXPLORER', 'TAHOE', 'SUBURBAN']
-        car_keywords = ['SEDAN', 'COUPE', 'HARDTOP', 'GIULIA', 'E 300', 'CAMRY', 'ACCORD']
-        truck_keywords = ['TRUCK', 'F-150', 'SILVERADO', 'RAM', 'TUNDRA']
-        van_keywords = ['VAN', 'CARAVAN', 'ODYSSEY', 'SIENNA']
+        suv_keywords = [
+            "SUV",
+            "XC90",
+            "XC60",
+            "XC40",
+            "DURANGO",
+            "CHEROKEE",
+            "TUCSON",
+            "KONA",
+            "EXPLORER",
+            "TAHOE",
+            "SUBURBAN",
+        ]
+        car_keywords = ["SEDAN", "COUPE", "HARDTOP", "GIULIA", "E 300", "CAMRY", "ACCORD"]
+        truck_keywords = ["TRUCK", "F-150", "SILVERADO", "RAM", "TUNDRA"]
+        van_keywords = ["VAN", "CARAVAN", "ODYSSEY", "SIENNA"]
 
         for keyword in suv_keywords:
             if keyword in combined:
@@ -364,7 +381,7 @@ class BaseExtractor(ABC):
 
     @staticmethod
     def extract_year(text: str) -> Optional[int]:
-        pattern = r'\b(19|20)\d{2}\b'
+        pattern = r"\b(19|20)\d{2}\b"
         match = re.search(pattern, text)
         if match:
             return int(match.group(0))
@@ -374,25 +391,25 @@ class BaseExtractor(ABC):
     def extract_mileage(text: str) -> Optional[int]:
         patterns = [
             # Match "Mileage: 123456" or "Mileage: 123,456" - \d+ first for non-comma numbers
-            r'Mileage[:\s]+(\d+(?:,\d{3})*|\d+)',
-            r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:Miles|Mi\.?)'
+            r"Mileage[:\s]+(\d+(?:,\d{3})*|\d+)",
+            r"(\d{1,3}(?:,\d{3})+|\d+)\s*(?:Miles|Mi\.?)",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                mileage = match.group(1).replace(',', '')
+                mileage = match.group(1).replace(",", "")
                 return int(mileage)
         return None
 
     @staticmethod
     def extract_amount(text: str, keyword: str = None) -> Optional[float]:
         if keyword:
-            pattern = rf'{keyword}[:\s]*\$?\s*([\d,]+(?:\.\d{2})?)'
+            pattern = rf"{keyword}[:\s]*\$?\s*([\d,]+(?:\.\d{2})?)"
         else:
-            pattern = r'\$\s*([\d,]+(?:\.\d{2})?)'
+            pattern = r"\$\s*([\d,]+(?:\.\d{2})?)"
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            amount = match.group(1).replace(',', '')
+            amount = match.group(1).replace(",", "")
             return float(amount)
         return None
 
@@ -404,8 +421,8 @@ class BaseExtractor(ABC):
         self,
         text: str,
         pdf_path: str = None,
-        label_patterns: List[str] = None,
-        source_name: str = None
+        label_patterns: list[str] = None,
+        source_name: str = None,
     ) -> Optional[Address]:
         """
         Universal pickup address extraction using multiple strategies.
@@ -427,22 +444,22 @@ class BaseExtractor(ABC):
         Returns:
             Address object or None
         """
-        from extractors.address_parser import extract_pickup_address, extract_lines_after_label
+        from extractors.address_parser import extract_lines_after_label, extract_pickup_address
 
         # Default label patterns that work for most auction documents
         default_patterns = [
-            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*',
-            r'LOT\s*(?:LOCATION|ADDRESS)[:\s]*',
-            r'PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*',
-            r'BRANCH[:\s]*',
-            r'YARD\s*(?:LOCATION|ADDRESS)[:\s]*',
+            r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*",
+            r"LOT\s*(?:LOCATION|ADDRESS)[:\s]*",
+            r"PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*",
+            r"BRANCH[:\s]*",
+            r"YARD\s*(?:LOCATION|ADDRESS)[:\s]*",
         ]
 
         patterns = label_patterns or default_patterns
         source = source_name or self.auction_type_code
 
         # Strategy 1: Check for learned rules first
-        rule = self.get_learned_rule('pickup_address')
+        rule = self.get_learned_rule("pickup_address")
         if rule and rule.label_patterns:
             logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
             for label_pattern in rule.label_patterns:
@@ -456,10 +473,13 @@ class BaseExtractor(ABC):
         if pdf_path:
             try:
                 from extractors.spatial_parser import parse_document
+
                 structure = parse_document(pdf_path)
                 addr = self._extract_address_spatial(structure, patterns, source)
                 if addr and (addr.street or addr.city):
-                    logger.debug(f"Extracted address using spatial parsing: {addr.city}, {addr.state}")
+                    logger.debug(
+                        f"Extracted address using spatial parsing: {addr.city}, {addr.state}"
+                    )
                     return addr
             except Exception as e:
                 logger.warning(f"Spatial parsing failed: {e}")
@@ -476,10 +496,7 @@ class BaseExtractor(ABC):
         return extract_pickup_address(text, source=source, custom_labels=patterns)
 
     def _extract_address_spatial(
-        self,
-        structure: 'DocumentStructure',
-        label_patterns: List[str],
-        source_name: str = None
+        self, structure: "DocumentStructure", label_patterns: list[str], source_name: str = None
     ) -> Optional[Address]:
         """Extract address using spatial document structure."""
         for pattern in label_patterns:
@@ -495,14 +512,16 @@ class BaseExtractor(ABC):
                         found_label = True
                         # Check for inline value
                         after = re.split(pattern, line, flags=re.IGNORECASE)[-1].strip()
-                        after = re.sub(r'^[:\s]+', '', after)
+                        after = re.sub(r"^[:\s]+", "", after)
                         if after and len(after) > 3:
                             address_lines.append(after)
                         continue
 
                     if found_label and line.strip():
                         # Skip common noise patterns
-                        if re.search(r'SELLER|SOLD\s*THROUGH|INSURANCE|MEMBER|BUYER', line, re.IGNORECASE):
+                        if re.search(
+                            r"SELLER|SOLD\s*THROUGH|INSURANCE|MEMBER|BUYER", line, re.IGNORECASE
+                        ):
                             break
                         address_lines.append(line.strip())
                         if len(address_lines) >= 3:
@@ -514,10 +533,7 @@ class BaseExtractor(ABC):
         return None
 
     def _parse_address_from_lines(
-        self,
-        lines: List[str],
-        exclude_patterns: List[str] = None,
-        source_name: str = None
+        self, lines: list[str], exclude_patterns: list[str] = None, source_name: str = None
     ) -> Optional[Address]:
         """
         Parse an Address object from extracted text lines.
@@ -563,7 +579,7 @@ class BaseExtractor(ABC):
         # If no city/state found in subsequent lines, try parsing the first line
         if not city and not state and len(lines) == 1:
             # Single line address like "123 Main St, Dallas TX 75001"
-            parts = lines[0].split(',')
+            parts = lines[0].split(",")
             if len(parts) >= 2:
                 street = parts[0].strip()
                 parsed_city, parsed_state, parsed_zip = self.parse_address(parts[-1])

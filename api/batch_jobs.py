@@ -14,23 +14,23 @@ Features:
 - Detailed results per run
 """
 
-import json
-import time
 import asyncio
+import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
 from enum import Enum
+from typing import Any, Optional
 
 from api.database import get_connection
-from api.models import ExtractionRunRepository, DocumentRepository
+from api.models import DocumentRepository, ExtractionRunRepository
 
 logger = logging.getLogger(__name__)
 
 
 class BatchJobStatus(str, Enum):
     """Status of a batch job."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -40,6 +40,7 @@ class BatchJobStatus(str, Enum):
 
 class BatchItemStatus(str, Enum):
     """Status of an item within a batch job."""
+
     PENDING = "pending"
     PROCESSING = "processing"
     SUCCESS = "success"
@@ -51,6 +52,7 @@ class BatchItemStatus(str, Enum):
 @dataclass
 class BatchJobProgress:
     """Progress tracking for a batch job."""
+
     total: int = 0
     processed: int = 0
     success: int = 0
@@ -71,19 +73,20 @@ class BatchJobProgress:
 @dataclass
 class BatchItemResult:
     """Result for a single item in a batch job."""
+
     run_id: int
     document_filename: Optional[str] = None
     status: BatchItemStatus = BatchItemStatus.PENDING
     cd_listing_id: Optional[str] = None
     error_message: Optional[str] = None
-    blocking_issues: List[str] = None
+    blocking_issues: list[str] = None
     processed_at: Optional[str] = None
 
     def __post_init__(self):
         if self.blocking_issues is None:
             self.blocking_issues = []
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "document_filename": self.document_filename,
@@ -126,9 +129,9 @@ class BatchJobRepository:
 
     @staticmethod
     def create(
-        run_ids: List[int],
+        run_ids: list[int],
         job_type: str = "cd_export",
-        options: Dict = None,
+        options: dict = None,
         created_by: str = None,
     ) -> int:
         """Create a new batch job."""
@@ -144,21 +147,18 @@ class BatchJobRepository:
                     json.dumps(run_ids),
                     json.dumps(options) if options else None,
                     created_by,
-                )
+                ),
             )
             conn.commit()
             return cursor.lastrowid
 
     @staticmethod
-    def get_by_id(job_id: int) -> Optional[Dict]:
+    def get_by_id(job_id: int) -> Optional[dict]:
         """Get batch job by ID."""
         _init_batch_jobs_table()
 
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM batch_jobs WHERE id = ?",
-                (job_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM batch_jobs WHERE id = ?", (job_id,)).fetchone()
 
             if row:
                 data = dict(row)
@@ -179,8 +179,8 @@ class BatchJobRepository:
     def update(
         job_id: int,
         status: str = None,
-        progress: Dict = None,
-        results: List[Dict] = None,
+        progress: dict = None,
+        results: list[dict] = None,
         error_message: str = None,
         started_at: str = None,
         completed_at: str = None,
@@ -224,7 +224,7 @@ class BatchJobRepository:
             conn.commit()
 
     @staticmethod
-    def list_recent(limit: int = 20, status: str = None) -> List[Dict]:
+    def list_recent(limit: int = 20, status: str = None) -> list[dict]:
         """List recent batch jobs."""
         _init_batch_jobs_table()
 
@@ -286,7 +286,7 @@ class BatchJobProcessor:
         job_id: int,
         sandbox: bool = True,
         post_only_ready: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         Process a batch job.
 
@@ -306,7 +306,7 @@ class BatchJobProcessor:
             raise ValueError(f"Job {job_id} is not pending (status: {job['status']})")
 
         run_ids = job.get("run_ids", [])
-        options = job.get("options", {}) or {}
+        job.get("options", {}) or {}
 
         # Initialize progress
         progress = BatchJobProgress(
@@ -329,7 +329,7 @@ class BatchJobProcessor:
             },
         )
 
-        results: List[BatchItemResult] = []
+        results: list[BatchItemResult] = []
 
         try:
             # Process each run
@@ -423,13 +423,13 @@ class BatchJobProcessor:
         post_only_ready: bool,
     ) -> BatchItemResult:
         """Process a single extraction run."""
+        from api.listing_fields import get_registry
+        from api.models import ExportJobRepository
         from api.routes.exports import (
             build_cd_payload,
-            send_to_cd_with_retry,
             get_cd_listing_info,
+            send_to_cd_with_retry,
         )
-        from api.models import ExportJobRepository
-        from api.listing_fields import get_registry
 
         result = BatchItemResult(run_id=run_id)
 
@@ -447,8 +447,7 @@ class BatchJobProcessor:
         if doc:
             with get_connection() as conn:
                 is_test = conn.execute(
-                    "SELECT is_test FROM documents WHERE id = ?",
-                    (doc.id,)
+                    "SELECT is_test FROM documents WHERE id = ?", (doc.id,)
                 ).fetchone()
                 if is_test and is_test[0]:
                     result.status = BatchItemStatus.SKIPPED
@@ -456,8 +455,7 @@ class BatchJobProcessor:
                     return result
 
         # Check if already exported (allow update)
-        existing_listing = get_cd_listing_info(run_id)
-        is_update = existing_listing is not None
+        get_cd_listing_info(run_id)
 
         # Check blocking issues
         registry = get_registry()
@@ -525,7 +523,7 @@ class BatchJobProcessor:
         return result
 
 
-async def run_batch_job(job_id: int, sandbox: bool = True) -> Dict:
+async def run_batch_job(job_id: int, sandbox: bool = True) -> dict:
     """
     Run a batch job asynchronously.
 
@@ -544,8 +542,8 @@ async def run_batch_job(job_id: int, sandbox: bool = True) -> Dict:
 
 
 def create_batch_job(
-    run_ids: List[int],
-    options: Dict = None,
+    run_ids: list[int],
+    options: dict = None,
     created_by: str = None,
 ) -> int:
     """
@@ -567,7 +565,7 @@ def create_batch_job(
     )
 
 
-def get_batch_job_status(job_id: int) -> Optional[Dict]:
+def get_batch_job_status(job_id: int) -> Optional[dict]:
     """
     Get batch job status and progress.
 

@@ -5,16 +5,13 @@ Endpoints for testing and managing Google Sheets connection.
 """
 
 import time
-from typing import Optional, Dict, Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from api.routes.integrations.utils import (
-    log_integration_action,
     TestConnectionResponse,
+    log_integration_action,
 )
-
 
 router = APIRouter(prefix="/sheets", tags=["Google Sheets"])
 
@@ -38,16 +35,16 @@ async def test_sheets_connection():
     sheet_name = sheets.get("sheet_name", "Sheet1")
 
     if not spreadsheet_id:
-        log_integration_action("sheets", "test", "failed",
-                              error="Spreadsheet ID not configured")
+        log_integration_action("sheets", "test", "failed", error="Spreadsheet ID not configured")
         return TestConnectionResponse(
             status="error",
             message="Google Sheets not configured. Set spreadsheet ID in settings.",
         )
 
     if not credentials_json:
-        log_integration_action("sheets", "test", "failed",
-                              error="Service account credentials not configured")
+        log_integration_action(
+            "sheets", "test", "failed", error="Service account credentials not configured"
+        )
         return TestConnectionResponse(
             status="error",
             message="Service account credentials not configured.",
@@ -55,13 +52,15 @@ async def test_sheets_connection():
 
     try:
         import json
+
         from google.oauth2.service_account import Credentials
         from googleapiclient.discovery import build
 
-        creds_dict = json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
+        creds_dict = (
+            json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
+        )
         creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+            creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
         service = build("sheets", "v4", credentials=creds)
 
@@ -69,8 +68,7 @@ async def test_sheets_connection():
         title = result.get("properties", {}).get("title", "Unknown")
 
         sheet_exists = any(
-            s.get("properties", {}).get("title") == sheet_name
-            for s in result.get("sheets", [])
+            s.get("properties", {}).get("title") == sheet_name for s in result.get("sheets", [])
         )
 
         write_ok = False
@@ -80,7 +78,7 @@ async def test_sheets_connection():
                 spreadsheetId=spreadsheet_id,
                 range=test_range,
                 valueInputOption="RAW",
-                body={"values": [["test"]]}
+                body={"values": [["test"]]},
             ).execute()
 
             service.spreadsheets().values().clear(
@@ -93,9 +91,13 @@ async def test_sheets_connection():
 
         duration_ms = int((time.time() - start_time) * 1000)
 
-        log_integration_action("sheets", "test", "success",
-                              details={"title": title, "write_ok": write_ok},
-                              duration_ms=duration_ms)
+        log_integration_action(
+            "sheets",
+            "test",
+            "success",
+            details={"title": title, "write_ok": write_ok},
+            duration_ms=duration_ms,
+        )
 
         return TestConnectionResponse(
             status="ok",
@@ -121,9 +123,9 @@ async def test_sheets_connection():
         else:
             message = f"Connection failed: {error_str}"
 
-        log_integration_action("sheets", "test", "failed",
-                              error=error_str[:200],
-                              duration_ms=duration_ms)
+        log_integration_action(
+            "sheets", "test", "failed", error=error_str[:200], duration_ms=duration_ms
+        )
 
         return TestConnectionResponse(
             status="error",

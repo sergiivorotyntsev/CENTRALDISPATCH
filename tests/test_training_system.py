@@ -1,13 +1,14 @@
 """Tests for the training and learning system."""
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime
 
-from extractors.base import BaseExtractor, LearnedRule
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from extractors.address_parser import extract_lines_after_label
+from extractors.base import LearnedRule
 from extractors.copart import CopartExtractor
 from extractors.iaa import IAAExtractor
 from extractors.manheim import ManheimExtractor
-from extractors.address_parser import extract_lines_after_label
 
 
 class TestExtractLinesAfterLabel:
@@ -21,7 +22,7 @@ PHYSICAL ADDRESS OF LOT:
 CENTRAL SQUARE, NY 13036
 Phone: 555-1234
 """
-        lines = extract_lines_after_label(text, r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT')
+        lines = extract_lines_after_label(text, r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT")
         assert lines is not None
         assert len(lines) >= 2
         assert "46 ZUK-PIERCE RD" in lines[0]
@@ -29,7 +30,7 @@ Phone: 555-1234
     def test_with_colon_in_label(self):
         """Test label with colon."""
         text = "SELLER:\nFARMERS INS HOME OFFICE\nSome other text"
-        lines = extract_lines_after_label(text, r'SELLER')
+        lines = extract_lines_after_label(text, r"SELLER")
         assert lines is not None
         assert len(lines) > 0, f"Expected lines, got: {lines}"
         assert "FARMERS INS HOME OFFICE" in lines[0]
@@ -37,7 +38,7 @@ Phone: 555-1234
     def test_case_insensitive(self):
         """Test case insensitive matching."""
         text = "Seller:\nACME INSURANCE CO\nMore text"
-        lines = extract_lines_after_label(text, r'seller', max_lines=2)
+        lines = extract_lines_after_label(text, r"seller", max_lines=2)
         assert lines is not None
         assert len(lines) > 0, f"Expected lines, got: {lines}"
         assert "ACME INSURANCE CO" in lines[0]
@@ -45,7 +46,7 @@ Phone: 555-1234
     def test_no_match(self):
         """Test when label is not found."""
         text = "Some text without the label we're looking for"
-        lines = extract_lines_after_label(text, r'NONEXISTENT\s*LABEL')
+        lines = extract_lines_after_label(text, r"NONEXISTENT\s*LABEL")
         assert lines is None or len(lines) == 0
 
     def test_max_lines_limit(self):
@@ -58,7 +59,7 @@ Line 3
 Line 4
 Line 5
 """
-        lines = extract_lines_after_label(text, r'LABEL', max_lines=3)
+        lines = extract_lines_after_label(text, r"LABEL", max_lines=3)
         assert lines is not None
         assert len(lines) <= 3
 
@@ -69,11 +70,11 @@ class TestLearnedRule:
     def test_matches_label(self):
         """Test label pattern matching."""
         rule = LearnedRule(
-            field_key='pickup_address',
-            rule_type='label_below',
-            label_patterns=[r'PHYSICAL\s*ADDRESS', r'LOT\s*LOCATION'],
-            exclude_patterns=['MEMBER', 'BUYER'],
-            confidence=0.8
+            field_key="pickup_address",
+            rule_type="label_below",
+            label_patterns=[r"PHYSICAL\s*ADDRESS", r"LOT\s*LOCATION"],
+            exclude_patterns=["MEMBER", "BUYER"],
+            confidence=0.8,
         )
 
         assert rule.matches_label("PHYSICAL ADDRESS OF LOT")
@@ -83,11 +84,11 @@ class TestLearnedRule:
     def test_should_exclude(self):
         """Test exclusion pattern matching."""
         rule = LearnedRule(
-            field_key='pickup_address',
-            rule_type='label_below',
-            label_patterns=[r'ADDRESS'],
-            exclude_patterns=['MEMBER', 'BUYER', 'BILLING'],
-            confidence=0.8
+            field_key="pickup_address",
+            rule_type="label_below",
+            label_patterns=[r"ADDRESS"],
+            exclude_patterns=["MEMBER", "BUYER", "BILLING"],
+            confidence=0.8,
         )
 
         assert rule.should_exclude("MEMBER: 12345")
@@ -146,12 +147,12 @@ Sale Date: 01/15/2024
         extractor = CopartExtractor()
         extractor._rules_loaded = True
         extractor._learned_rules = {
-            'seller_name': LearnedRule(
-                field_key='seller_name',
-                rule_type='label_below',
-                label_patterns=[r'SELLER'],
-                exclude_patterns=['SOLD', 'THROUGH'],
-                confidence=0.9
+            "seller_name": LearnedRule(
+                field_key="seller_name",
+                rule_type="label_below",
+                label_patterns=[r"SELLER"],
+                exclude_patterns=["SOLD", "THROUGH"],
+                confidence=0.9,
             )
         }
 
@@ -285,17 +286,17 @@ class TestTrainingModels:
 
         rule = ExtractionRule(
             auction_type_id=1,
-            field_key='pickup_address',
-            rule_type='label_below',
+            field_key="pickup_address",
+            rule_type="label_below",
         )
 
         # Test setting patterns
-        patterns = [r'PHYSICAL\s*ADDRESS', r'LOT\s*LOCATION']
+        patterns = [r"PHYSICAL\s*ADDRESS", r"LOT\s*LOCATION"]
         rule.set_label_patterns(patterns)
         assert rule.get_label_patterns() == patterns
 
         # Test exclude patterns
-        excludes = ['MEMBER', 'BUYER']
+        excludes = ["MEMBER", "BUYER"]
         rule.set_exclude_patterns(excludes)
         assert rule.get_exclude_patterns() == excludes
 
@@ -305,13 +306,13 @@ class TestTrainingModels:
         from models.training import FieldCorrectionCreate
 
         correction = FieldCorrectionCreate(
-            field_key='pickup_address',
-            predicted_value='Wrong address',
-            corrected_value='Correct address',
-            was_correct=False
+            field_key="pickup_address",
+            predicted_value="Wrong address",
+            corrected_value="Correct address",
+            was_correct=False,
         )
 
-        assert correction.field_key == 'pickup_address'
+        assert correction.field_key == "pickup_address"
         assert correction.was_correct is False
 
 
@@ -322,8 +323,8 @@ class TestTrainingServiceMocked:
     def test_save_corrections(self):
         """Test saving corrections creates training records."""
         pytest.importorskip("sqlmodel")
-        from services.training_service import TrainingService
         from models.training import FieldCorrectionCreate
+        from services.training_service import TrainingService
 
         mock_session = MagicMock()
 
@@ -338,15 +339,15 @@ class TestTrainingServiceMocked:
 
         corrections = [
             FieldCorrectionCreate(
-                field_key='pickup_address',
-                predicted_value='Wrong',
-                corrected_value='Correct',
-                was_correct=False
+                field_key="pickup_address",
+                predicted_value="Wrong",
+                corrected_value="Correct",
+                was_correct=False,
             )
         ]
 
         # Call save_corrections
-        with patch.object(service, '_learn_from_corrections'):
+        with patch.object(service, "_learn_from_corrections"):
             saved, errors = service.save_corrections(1, corrections)
 
         # Verify session was used
@@ -369,16 +370,16 @@ class TestAddressParsingEdgeCases:
         lines = [
             "MEMBER: 12345",  # Should be excluded
             "46 ZUK-PIERCE RD",
-            "CENTRAL SQUARE, NY 13036"
+            "CENTRAL SQUARE, NY 13036",
         ]
-        result = extractor._parse_address_from_lines(lines, ['MEMBER'])
+        result = extractor._parse_address_from_lines(lines, ["MEMBER"])
         assert result is not None
         assert "MEMBER" not in result.street
 
     def test_multiline_address_extraction(self):
         """Test extraction of multi-line addresses."""
         text = "PHYSICAL ADDRESS OF LOT:\n46 ZUK-PIERCE RD\nCENTRAL SQUARE, NY 13036"
-        lines = extract_lines_after_label(text, r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT')
+        lines = extract_lines_after_label(text, r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT")
         assert len(lines) >= 2, f"Expected at least 2 lines, got: {lines}"
 
         extractor = CopartExtractor()
@@ -393,23 +394,23 @@ class TestDefaultLabelsConfig:
     def test_copart_default_labels(self):
         """Test Copart has required default labels."""
         extractor = CopartExtractor()
-        assert 'pickup_address' in extractor.DEFAULT_LABELS
-        assert 'buyer_name' in extractor.DEFAULT_LABELS
-        assert 'seller_name' in extractor.DEFAULT_LABELS
+        assert "pickup_address" in extractor.DEFAULT_LABELS
+        assert "buyer_name" in extractor.DEFAULT_LABELS
+        assert "seller_name" in extractor.DEFAULT_LABELS
 
     def test_iaa_default_labels(self):
         """Test IAA has required default labels."""
         extractor = IAAExtractor()
-        assert 'pickup_address' in extractor.DEFAULT_LABELS
-        assert 'buyer_name' in extractor.DEFAULT_LABELS
-        assert 'seller_name' in extractor.DEFAULT_LABELS
+        assert "pickup_address" in extractor.DEFAULT_LABELS
+        assert "buyer_name" in extractor.DEFAULT_LABELS
+        assert "seller_name" in extractor.DEFAULT_LABELS
 
     def test_manheim_default_labels(self):
         """Test Manheim has required default labels."""
         extractor = ManheimExtractor()
-        assert 'pickup_address' in extractor.DEFAULT_LABELS
-        assert 'buyer_name' in extractor.DEFAULT_LABELS
-        assert 'seller_name' in extractor.DEFAULT_LABELS
+        assert "pickup_address" in extractor.DEFAULT_LABELS
+        assert "buyer_name" in extractor.DEFAULT_LABELS
+        assert "seller_name" in extractor.DEFAULT_LABELS
 
 
 class TestLearnedRulesLoading:
@@ -421,19 +422,21 @@ class TestLearnedRulesLoading:
 
         # Simulate loaded rules
         extractor._rules_loaded = True
-        extractor._learned_rules = {'test': LearnedRule(
-            field_key='test',
-            rule_type='label_below',
-            label_patterns=[],
-            exclude_patterns=[],
-            confidence=0.5
-        )}
+        extractor._learned_rules = {
+            "test": LearnedRule(
+                field_key="test",
+                rule_type="label_below",
+                label_patterns=[],
+                exclude_patterns=[],
+                confidence=0.5,
+            )
+        }
 
         # Call load again
         rules = extractor.load_learned_rules()
 
         # Should return cached rules
-        assert 'test' in rules
+        assert "test" in rules
 
     def test_get_learned_rule_missing(self):
         """Test getting a non-existent rule."""
@@ -441,7 +444,7 @@ class TestLearnedRulesLoading:
         extractor._rules_loaded = True
         extractor._learned_rules = {}
 
-        rule = extractor.get_learned_rule('nonexistent_field')
+        rule = extractor.get_learned_rule("nonexistent_field")
         assert rule is None
 
     def test_get_learned_rule_exists(self):
@@ -449,15 +452,15 @@ class TestLearnedRulesLoading:
         extractor = CopartExtractor()
         extractor._rules_loaded = True
         test_rule = LearnedRule(
-            field_key='pickup_address',
-            rule_type='label_below',
-            label_patterns=[r'PHYSICAL\s*ADDRESS'],
+            field_key="pickup_address",
+            rule_type="label_below",
+            label_patterns=[r"PHYSICAL\s*ADDRESS"],
             exclude_patterns=[],
-            confidence=0.8
+            confidence=0.8,
         )
-        extractor._learned_rules = {'pickup_address': test_rule}
+        extractor._learned_rules = {"pickup_address": test_rule}
 
-        rule = extractor.get_learned_rule('pickup_address')
+        rule = extractor.get_learned_rule("pickup_address")
         assert rule is not None
-        assert rule.field_key == 'pickup_address'
+        assert rule.field_key == "pickup_address"
         assert rule.confidence == 0.8

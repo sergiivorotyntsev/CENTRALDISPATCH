@@ -1,11 +1,12 @@
 """Idempotency storage for email deduplication."""
-import sqlite3
+
 import hashlib
 import logging
-from pathlib import Path
-from typing import Optional, Tuple
-from datetime import datetime
+import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,22 +48,21 @@ class IdempotencyStore:
         return hashlib.sha256(content).hexdigest()
 
     @staticmethod
-    def extract_thread_root_id(message_id: Optional[str], in_reply_to: Optional[str], references: Optional[str]) -> str:
+    def extract_thread_root_id(
+        message_id: Optional[str], in_reply_to: Optional[str], references: Optional[str]
+    ) -> str:
         if references:
             refs = references.strip().split()
             if refs:
-                return refs[0].strip('<>')
+                return refs[0].strip("<>")
         if in_reply_to:
-            return in_reply_to.strip('<>')
+            return in_reply_to.strip("<>")
         if message_id:
-            return message_id.strip('<>')
+            return message_id.strip("<>")
         return f"unknown-{datetime.utcnow().isoformat()}"
 
     def generate_idempotency_key(
-        self,
-        thread_root_id: str,
-        attachment_hash: str,
-        namespace: str = "email"
+        self, thread_root_id: str, attachment_hash: str, namespace: str = "email"
     ) -> str:
         """Generate idempotency key with optional namespace.
 
@@ -76,7 +76,9 @@ class IdempotencyStore:
 
     def is_processed(self, idempotency_key: str) -> bool:
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT 1 FROM processed_items WHERE idempotency_key = ?", (idempotency_key,))
+            cursor = conn.execute(
+                "SELECT 1 FROM processed_items WHERE idempotency_key = ?", (idempotency_key,)
+            )
             return cursor.fetchone() is not None
 
     def is_processed_in_namespace(
@@ -85,7 +87,7 @@ class IdempotencyStore:
         namespace: str,
         auction: str = None,
         gate_pass: str = None,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, Optional[str]]:
         """Check if an attachment has been processed in a specific namespace.
 
         For sheets namespace, key = namespace:hash:auction[:gate_pass]
@@ -102,11 +104,11 @@ class IdempotencyStore:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 "SELECT result_id FROM processed_items WHERE idempotency_key LIKE ?",
-                (f"{key_prefix}%",)
+                (f"{key_prefix}%",),
             )
             row = cursor.fetchone()
             if row:
-                return True, row['result_id']
+                return True, row["result_id"]
             return False, None
 
     def mark_processed_in_namespace(
@@ -133,7 +135,7 @@ class IdempotencyStore:
                     """INSERT INTO processed_items
                        (idempotency_key, attachment_hash, source_type, result_type, result_id, metadata)
                        VALUES (?, ?, ?, ?, ?, ?)""",
-                    (key, attachment_hash, namespace, namespace, result_id, metadata)
+                    (key, attachment_hash, namespace, namespace, result_id, metadata),
                 )
                 conn.commit()
                 logger.debug(f"Marked as processed: {key} -> {result_id}")
@@ -142,23 +144,45 @@ class IdempotencyStore:
             logger.debug(f"Already processed: {key}")
             return False
 
-    def is_attachment_processed_in_thread(self, thread_root_id: str, attachment_hash: str) -> Tuple[bool, Optional[str]]:
+    def is_attachment_processed_in_thread(
+        self, thread_root_id: str, attachment_hash: str
+    ) -> tuple[bool, Optional[str]]:
         key = self.generate_idempotency_key(thread_root_id, attachment_hash)
         with self._get_connection() as conn:
-            cursor = conn.execute("SELECT result_id FROM processed_items WHERE idempotency_key = ?", (key,))
+            cursor = conn.execute(
+                "SELECT result_id FROM processed_items WHERE idempotency_key = ?", (key,)
+            )
             row = cursor.fetchone()
             if row:
-                return True, row['result_id']
+                return True, row["result_id"]
             return False, None
 
-    def mark_processed(self, thread_root_id: str, message_id: str, attachment_hash: str, source_type: str, result_type: str, result_id: str, metadata: Optional[str] = None) -> bool:
+    def mark_processed(
+        self,
+        thread_root_id: str,
+        message_id: str,
+        attachment_hash: str,
+        source_type: str,
+        result_type: str,
+        result_id: str,
+        metadata: Optional[str] = None,
+    ) -> bool:
         key = self.generate_idempotency_key(thread_root_id, attachment_hash)
         try:
             with self._get_connection() as conn:
                 conn.execute(
                     """INSERT INTO processed_items (idempotency_key, thread_root_id, message_id, attachment_hash, source_type, result_type, result_id, metadata)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (key, thread_root_id, message_id, attachment_hash, source_type, result_type, result_id, metadata)
+                    (
+                        key,
+                        thread_root_id,
+                        message_id,
+                        attachment_hash,
+                        source_type,
+                        result_type,
+                        result_id,
+                        metadata,
+                    ),
                 )
                 conn.commit()
                 return True

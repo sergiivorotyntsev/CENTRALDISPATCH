@@ -4,7 +4,7 @@ OpenAPI Contract Tests for Vehicle Transport Automation API.
 These tests verify that the API endpoints conform to their documented contracts,
 including request/response schemas, status codes, and error handling.
 """
-import pytest
+
 from io import BytesIO
 
 
@@ -53,23 +53,31 @@ class TestAuctionTypesEndpoint:
     def test_create_auction_type_returns_201(self, client):
         """Create auction type should return 201."""
         import uuid
+
         code = f"TEST_{uuid.uuid4().hex[:8].upper()}"
-        response = client.post("/api/auction-types/", json={
-            "name": f"Test Auction Type {code}",
-            "code": code,
-            "description": "Test auction type for contract tests",
-        })
+        response = client.post(
+            "/api/auction-types/",
+            json={
+                "name": f"Test Auction Type {code}",
+                "code": code,
+                "description": "Test auction type for contract tests",
+            },
+        )
         assert response.status_code == 201
 
     def test_create_auction_type_response_schema(self, client):
         """Created auction type should have required fields."""
         import uuid
+
         code = f"TEST_{uuid.uuid4().hex[:8].upper()}"
-        response = client.post("/api/auction-types/", json={
-            "name": f"Test Auction Type {code}",
-            "code": code,
-            "description": "Test auction type for contract tests",
-        })
+        response = client.post(
+            "/api/auction-types/",
+            json={
+                "name": f"Test Auction Type {code}",
+                "code": code,
+                "description": "Test auction type for contract tests",
+            },
+        )
         data = response.json()
         assert "id" in data
         assert data["name"] == f"Test Auction Type {code}"
@@ -77,10 +85,13 @@ class TestAuctionTypesEndpoint:
 
     def test_create_auction_type_validation_error(self, client):
         """Create auction type with invalid data should return 422."""
-        response = client.post("/api/auction-types/", json={
-            # Missing required 'name' field
-            "code": "INVALID",
-        })
+        response = client.post(
+            "/api/auction-types/",
+            json={
+                # Missing required 'name' field
+                "code": "INVALID",
+            },
+        )
         assert response.status_code == 422
 
     def test_get_auction_type_not_found(self, client):
@@ -115,18 +126,24 @@ class TestDocumentsEndpoint:
 
     def test_upload_document_without_file_returns_422(self, client):
         """Upload without file should return 422."""
-        response = client.post("/api/documents/upload", data={
-            "auction_type_id": 1,
-        })
+        response = client.post(
+            "/api/documents/upload",
+            data={
+                "auction_type_id": 1,
+            },
+        )
         assert response.status_code == 422
 
     def test_upload_document_returns_201(self, client, sample_pdf_bytes):
         """Upload document should return 201."""
         # First ensure we have an auction type
-        at_resp = client.post("/api/auction-types/", json={
-            "name": "Upload Test",
-            "code": "UPLOAD_TEST",
-        })
+        at_resp = client.post(
+            "/api/auction-types/",
+            json={
+                "name": "Upload Test",
+                "code": "UPLOAD_TEST",
+            },
+        )
         if at_resp.status_code == 201:
             auction_type_id = at_resp.json()["id"]
         else:
@@ -190,9 +207,12 @@ class TestExtractionsEndpoint:
 
     def test_run_extraction_invalid_document(self, client):
         """Run extraction with invalid document should return 404."""
-        response = client.post("/api/extractions/run", json={
-            "document_id": 99999,
-        })
+        response = client.post(
+            "/api/extractions/run",
+            json={
+                "document_id": 99999,
+            },
+        )
         assert response.status_code == 404
 
 
@@ -206,10 +226,13 @@ class TestReviewEndpoint:
 
     def test_submit_review_invalid_run(self, client):
         """Submit review for non-existent run should return 404."""
-        response = client.post("/api/review/submit", json={
-            "run_id": 99999,
-            "items": [],  # API expects "items" not "corrections"
-        })
+        response = client.post(
+            "/api/review/submit",
+            json={
+                "run_id": 99999,
+                "items": [],  # API expects "items" not "corrections"
+            },
+        )
         assert response.status_code == 404
 
     def test_training_examples_returns_200(self, client):
@@ -258,23 +281,31 @@ class TestWarehousesEndpoint:
     def test_create_warehouse_returns_201(self, client):
         """Create warehouse should return 201."""
         import uuid
+
         code = f"WH{uuid.uuid4().hex[:6].upper()}"
-        response = client.post("/api/warehouses/", json={
-            "code": code,
-            "name": f"Test Warehouse {code}",
-            "timezone": "America/New_York",
-        })
+        response = client.post(
+            "/api/warehouses/",
+            json={
+                "code": code,
+                "name": f"Test Warehouse {code}",
+                "timezone": "America/New_York",
+            },
+        )
         assert response.status_code == 201
 
     def test_create_warehouse_response_schema(self, client):
         """Created warehouse should have required fields."""
         import uuid
+
         code = f"WH{uuid.uuid4().hex[:6].upper()}"
-        response = client.post("/api/warehouses/", json={
-            "code": code,
-            "name": f"Test Warehouse {code}",
-            "timezone": "America/Los_Angeles",
-        })
+        response = client.post(
+            "/api/warehouses/",
+            json={
+                "code": code,
+                "name": f"Test Warehouse {code}",
+                "timezone": "America/Los_Angeles",
+            },
+        )
         data = response.json()
         assert "id" in data
         assert data["code"] == code
@@ -283,17 +314,23 @@ class TestWarehousesEndpoint:
     def test_create_warehouse_duplicate_code(self, client):
         """Create warehouse with duplicate code should fail."""
         # First create
-        client.post("/api/warehouses/", json={
-            "code": "DUP01",
-            "name": "Duplicate Test",
-            "timezone": "America/New_York",
-        })
+        client.post(
+            "/api/warehouses/",
+            json={
+                "code": "DUP01",
+                "name": "Duplicate Test",
+                "timezone": "America/New_York",
+            },
+        )
         # Second create with same code
-        response = client.post("/api/warehouses/", json={
-            "code": "DUP01",
-            "name": "Duplicate Test 2",
-            "timezone": "America/New_York",
-        })
+        response = client.post(
+            "/api/warehouses/",
+            json={
+                "code": "DUP01",
+                "name": "Duplicate Test 2",
+                "timezone": "America/New_York",
+            },
+        )
         assert response.status_code in [400, 409, 422]
 
     def test_get_warehouse_not_found(self, client):
@@ -412,10 +449,13 @@ class TestRequestValidation:
 
     def test_invalid_field_types_rejected(self, client):
         """Invalid field types should return 422."""
-        response = client.post("/api/auction-types/", json={
-            "name": 123,  # Should be string
-            "code": ["not", "a", "string"],
-        })
+        response = client.post(
+            "/api/auction-types/",
+            json={
+                "name": 123,  # Should be string
+                "code": ["not", "a", "string"],
+            },
+        )
         assert response.status_code == 422
 
 

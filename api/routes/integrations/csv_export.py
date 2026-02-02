@@ -4,17 +4,16 @@ CSV Export Integration
 Endpoints for exporting data as CSV.
 """
 
-import io
 import csv
+import io
 from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
-from api.routes.integrations.utils import log_integration_action
 from api.database import get_connection
-
+from api.routes.integrations.utils import log_integration_action
 
 router = APIRouter(prefix="/extractions", tags=["Export"])
 
@@ -103,29 +102,46 @@ async def export_extractions_csv(
     writer = csv.writer(output)
 
     header = [
-        "run_id", "uuid", "document_id", "document_filename", "document_source",
-        "auction_type_code", "auction_type_name", "status",
-        "extraction_score", "extractor_kind", "created_at", "completed_at"
+        "run_id",
+        "uuid",
+        "document_id",
+        "document_filename",
+        "document_source",
+        "auction_type_code",
+        "auction_type_name",
+        "status",
+        "extraction_score",
+        "extractor_kind",
+        "created_at",
+        "completed_at",
     ] + all_keys
     writer.writerow(header)
 
     for row in rows:
         row_data = [
-            row["run_id"], row["uuid"], row["document_id"], row["document_filename"],
-            row["document_source"], row["auction_type_code"], row["auction_type_name"], row["status"],
-            row["extraction_score"], row["extractor_kind"], row["created_at"], row["completed_at"]
+            row["run_id"],
+            row["uuid"],
+            row["document_id"],
+            row["document_filename"],
+            row["document_source"],
+            row["auction_type_code"],
+            row["auction_type_name"],
+            row["status"],
+            row["extraction_score"],
+            row["extractor_kind"],
+            row["created_at"],
+            row["completed_at"],
         ]
         for key in all_keys:
             row_data.append(review_items.get((row["run_id"], key), ""))
         writer.writerow(row_data)
 
-    log_integration_action("csv_export", "extractions", "success",
-                          details={"rows": len(rows)})
+    log_integration_action("csv_export", "extractions", "success", details={"rows": len(rows)})
 
     filename = f"extractions_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

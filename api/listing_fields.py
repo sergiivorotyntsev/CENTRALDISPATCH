@@ -11,18 +11,19 @@ Schema Reference: Central Dispatch Listings API V2
 Content-Type: application/vnd.coxauto.v2+json
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any, Tuple
-from enum import Enum
-from datetime import datetime, timedelta
-import re
 import logging
+import re
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class FieldSection(str, Enum):
     """Logical sections for grouping fields in UI."""
+
     VEHICLE = "vehicle"
     PICKUP = "pickup"
     DELIVERY = "delivery"
@@ -33,6 +34,7 @@ class FieldSection(str, Enum):
 
 class FieldType(str, Enum):
     """Field input types."""
+
     TEXT = "text"
     NUMBER = "number"
     DATE = "date"
@@ -43,31 +45,33 @@ class FieldType(str, Enum):
 
 class ValueSource(str, Enum):
     """Source of field value (for priority resolution)."""
-    USER_OVERRIDE = "user_override"      # Manual edit in production
-    WAREHOUSE_CONSTANT = "warehouse"     # From warehouse settings
-    AUCTION_TYPE_CONSTANT = "auction"    # From auction type defaults
-    EXTRACTED = "extracted"              # From ML/rule extraction
-    DEFAULT = "default"                  # Field default value
-    EMPTY = "empty"                      # No value
+
+    USER_OVERRIDE = "user_override"  # Manual edit in production
+    WAREHOUSE_CONSTANT = "warehouse"  # From warehouse settings
+    AUCTION_TYPE_CONSTANT = "auction"  # From auction type defaults
+    EXTRACTED = "extracted"  # From ML/rule extraction
+    DEFAULT = "default"  # Field default value
+    EMPTY = "empty"  # No value
 
 
 @dataclass
 class ListingField:
     """Definition of a single listing field."""
-    key: str                              # Internal field key (e.g., "vehicle_vin")
-    label: str                            # Display label
-    section: FieldSection                 # UI section
-    cd_api_key: str                       # CD API path (e.g., "vehicles[0].vin")
+
+    key: str  # Internal field key (e.g., "vehicle_vin")
+    label: str  # Display label
+    section: FieldSection  # UI section
+    cd_api_key: str  # CD API path (e.g., "vehicles[0].vin")
     field_type: FieldType = FieldType.TEXT
-    required: bool = False                # Required for CD submission
-    display_order: int = 0                # Order within section
+    required: bool = False  # Required for CD submission
+    display_order: int = 0  # Order within section
     validation_regex: Optional[str] = None
     validation_message: Optional[str] = None
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     min_length: Optional[int] = None
     max_length: Optional[int] = None
-    options: List[str] = field(default_factory=list)  # For SELECT type
+    options: list[str] = field(default_factory=list)  # For SELECT type
     default_value: Optional[str] = None
     help_text: Optional[str] = None
     extraction_hint: Optional[str] = None  # Hint for extractors
@@ -77,7 +81,7 @@ class ListingField:
 # FIELD DEFINITIONS - Central Dispatch Listings API V2
 # =============================================================================
 
-LISTING_FIELDS: List[ListingField] = [
+LISTING_FIELDS: list[ListingField] = [
     # -------------------------------------------------------------------------
     # VEHICLE INFORMATION
     # -------------------------------------------------------------------------
@@ -152,7 +156,17 @@ LISTING_FIELDS: List[ListingField] = [
         field_type=FieldType.SELECT,
         required=True,
         display_order=6,
-        options=["SEDAN", "SUV", "TRUCK", "VAN", "MOTORCYCLE", "COUPE", "CONVERTIBLE", "WAGON", "OTHER"],
+        options=[
+            "SEDAN",
+            "SUV",
+            "TRUCK",
+            "VAN",
+            "MOTORCYCLE",
+            "COUPE",
+            "CONVERTIBLE",
+            "WAGON",
+            "OTHER",
+        ],
         default_value="SEDAN",
         help_text="Vehicle body type",
     ),
@@ -180,7 +194,6 @@ LISTING_FIELDS: List[ListingField] = [
         help_text="Auction lot number",
         extraction_hint="Look for LOT, LOT #, LOT NUMBER",
     ),
-
     # -------------------------------------------------------------------------
     # PICKUP LOCATION (Stop 1)
     # -------------------------------------------------------------------------
@@ -289,7 +302,6 @@ LISTING_FIELDS: List[ListingField] = [
         max_length=1000,
         help_text="Special instructions for pickup",
     ),
-
     # -------------------------------------------------------------------------
     # DELIVERY LOCATION (Stop 2)
     # -------------------------------------------------------------------------
@@ -390,7 +402,6 @@ LISTING_FIELDS: List[ListingField] = [
         max_length=1000,
         help_text="Special instructions for delivery",
     ),
-
     # -------------------------------------------------------------------------
     # PRICING
     # -------------------------------------------------------------------------
@@ -427,7 +438,6 @@ LISTING_FIELDS: List[ListingField] = [
         options=["CASH", "CHECK", "CERTIFIED_CHECK", "MONEY_ORDER", "COMCHECK", "ACH"],
         default_value="CASH",
     ),
-
     # -------------------------------------------------------------------------
     # ADDITIONAL INFORMATION
     # -------------------------------------------------------------------------
@@ -538,7 +548,6 @@ LISTING_FIELDS: List[ListingField] = [
         help_text="Gate pass or release code",
         extraction_hint="GATE PASS, RELEASE, CLAIM NUMBER",
     ),
-
     # -------------------------------------------------------------------------
     # NOTES
     # -------------------------------------------------------------------------
@@ -570,13 +579,14 @@ LISTING_FIELDS: List[ListingField] = [
 # REGISTRY CLASS
 # =============================================================================
 
+
 class ListingFieldRegistry:
     """Central registry for all listing fields."""
 
     def __init__(self):
         self._fields = {f.key: f for f in LISTING_FIELDS}
-        self._by_section: Dict[FieldSection, List[ListingField]] = {}
-        self._required_fields: List[str] = []
+        self._by_section: dict[FieldSection, list[ListingField]] = {}
+        self._required_fields: list[str] = []
 
         # Build indexes
         for f in LISTING_FIELDS:
@@ -594,19 +604,19 @@ class ListingFieldRegistry:
         """Get field definition by key."""
         return self._fields.get(key)
 
-    def get_all_fields(self) -> List[ListingField]:
+    def get_all_fields(self) -> list[ListingField]:
         """Get all field definitions."""
         return LISTING_FIELDS
 
-    def get_fields_by_section(self, section: FieldSection) -> List[ListingField]:
+    def get_fields_by_section(self, section: FieldSection) -> list[ListingField]:
         """Get fields for a specific section."""
         return self._by_section.get(section, [])
 
-    def get_required_fields(self) -> List[str]:
+    def get_required_fields(self) -> list[str]:
         """Get list of required field keys."""
         return self._required_fields.copy()
 
-    def get_sections(self) -> List[FieldSection]:
+    def get_sections(self) -> list[FieldSection]:
         """Get all sections in order."""
         return [
             FieldSection.VEHICLE,
@@ -660,7 +670,7 @@ class ListingFieldRegistry:
 
         return None
 
-    def validate_all(self, data: Dict[str, Any]) -> List[Dict[str, str]]:
+    def validate_all(self, data: dict[str, Any]) -> list[dict[str, str]]:
         """
         Validate all fields in data dict.
         Returns list of {field: key, error: message} for invalid fields.
@@ -673,7 +683,9 @@ class ListingFieldRegistry:
                 errors.append({"field": field_def.key, "error": error})
         return errors
 
-    def get_blocking_issues(self, data: Dict[str, Any], warehouse_selected: bool = False) -> List[Dict[str, str]]:
+    def get_blocking_issues(
+        self, data: dict[str, Any], warehouse_selected: bool = False
+    ) -> list[dict[str, str]]:
         """
         Get issues that block posting.
         Returns list of {field: key, issue: message}.
@@ -692,20 +704,29 @@ class ListingFieldRegistry:
             field_def = self._fields[field_key]
             value = data.get(field_key)
             if value is None or value == "":
-                issues.append({
-                    "field": field_key,
-                    "issue": f"Missing required field: {field_def.label}",
-                })
+                issues.append(
+                    {
+                        "field": field_key,
+                        "issue": f"Missing required field: {field_def.label}",
+                    }
+                )
 
         # Check warehouse (delivery fields)
         if not warehouse_selected:
-            delivery_fields = ["delivery_address", "delivery_city", "delivery_state", "delivery_zip"]
+            delivery_fields = [
+                "delivery_address",
+                "delivery_city",
+                "delivery_state",
+                "delivery_zip",
+            ]
             delivery_filled = all(data.get(f) for f in delivery_fields)
             if not delivery_filled:
-                issues.append({
-                    "field": "warehouse",
-                    "issue": "Warehouse not selected (delivery address incomplete)",
-                })
+                issues.append(
+                    {
+                        "field": "warehouse",
+                        "issue": "Warehouse not selected (delivery address incomplete)",
+                    }
+                )
 
         # CD API Rule: exactly 2 stops required
         # Note: CD docs require 2 stops but do NOT require different addresses.
@@ -722,10 +743,12 @@ class ListingFieldRegistry:
         # CD API Rule: externalId max 50 characters
         external_id = data.get("external_id", "")
         if external_id and len(external_id) > 50:
-            issues.append({
-                "field": "external_id",
-                "issue": f"External ID must be 50 characters or less (currently {len(external_id)})",
-            })
+            issues.append(
+                {
+                    "field": "external_id",
+                    "issue": f"External ID must be 50 characters or less (currently {len(external_id)})",
+                }
+            )
 
         # Check available_date rules (CD API requirement)
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -744,22 +767,30 @@ class ListingFieldRegistry:
                 else:
                     av_date = available_date
 
-                av_date_naive = av_date.replace(tzinfo=None) if hasattr(av_date, 'tzinfo') else av_date
+                av_date_naive = (
+                    av_date.replace(tzinfo=None) if hasattr(av_date, "tzinfo") else av_date
+                )
                 if av_date_naive < today:
-                    issues.append({
-                        "field": "available_date",
-                        "issue": "Available date cannot be in the past (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "available_date",
+                            "issue": "Available date cannot be in the past (CD API requirement)",
+                        }
+                    )
                 if av_date_naive > max_date:
-                    issues.append({
-                        "field": "available_date",
-                        "issue": "Available date cannot be more than 30 days in the future (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "available_date",
+                            "issue": "Available date cannot be more than 30 days in the future (CD API requirement)",
+                        }
+                    )
             except Exception:
-                issues.append({
-                    "field": "available_date",
-                    "issue": "Invalid date format",
-                })
+                issues.append(
+                    {
+                        "field": "available_date",
+                        "issue": "Invalid date format",
+                    }
+                )
 
         # Check expiration_date rules (CD API requirement)
         expiration_date = data.get("expiration_date")
@@ -774,17 +805,23 @@ class ListingFieldRegistry:
                 else:
                     exp_date = expiration_date
 
-                exp_date_naive = exp_date.replace(tzinfo=None) if hasattr(exp_date, 'tzinfo') else exp_date
+                exp_date_naive = (
+                    exp_date.replace(tzinfo=None) if hasattr(exp_date, "tzinfo") else exp_date
+                )
                 if exp_date_naive < today:
-                    issues.append({
-                        "field": "expiration_date",
-                        "issue": "Expiration date cannot be in the past (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "expiration_date",
+                            "issue": "Expiration date cannot be in the past (CD API requirement)",
+                        }
+                    )
                 if exp_date_naive > max_date:
-                    issues.append({
-                        "field": "expiration_date",
-                        "issue": "Expiration date cannot be more than 30 days in the future (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "expiration_date",
+                            "issue": "Expiration date cannot be more than 30 days in the future (CD API requirement)",
+                        }
+                    )
             except Exception:
                 pass  # Expiration date is optional
 
@@ -802,26 +839,34 @@ class ListingFieldRegistry:
                 else:
                     dd_date = desired_delivery_date
 
-                dd_date_naive = dd_date.replace(tzinfo=None) if hasattr(dd_date, 'tzinfo') else dd_date
+                dd_date_naive = (
+                    dd_date.replace(tzinfo=None) if hasattr(dd_date, "tzinfo") else dd_date
+                )
 
                 if dd_date_naive < today:
-                    issues.append({
-                        "field": "desired_delivery_date",
-                        "issue": "Desired delivery date cannot be in the past (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "desired_delivery_date",
+                            "issue": "Desired delivery date cannot be in the past (CD API requirement)",
+                        }
+                    )
                 if dd_date_naive > max_date:
-                    issues.append({
-                        "field": "desired_delivery_date",
-                        "issue": "Desired delivery date cannot be more than 30 days in the future (CD API requirement)",
-                    })
+                    issues.append(
+                        {
+                            "field": "desired_delivery_date",
+                            "issue": "Desired delivery date cannot be more than 30 days in the future (CD API requirement)",
+                        }
+                    )
 
                 # desiredDeliveryDate must be >= availableDate
-                if available_date and 'av_date_naive' in dir():
+                if available_date and "av_date_naive" in dir():
                     if dd_date_naive < av_date_naive:
-                        issues.append({
-                            "field": "desired_delivery_date",
-                            "issue": "Desired delivery date must be on or after available date (CD API requirement)",
-                        })
+                        issues.append(
+                            {
+                                "field": "desired_delivery_date",
+                                "issue": "Desired delivery date must be on or after available date (CD API requirement)",
+                            }
+                        )
             except Exception:
                 pass  # Desired delivery date is optional
 
@@ -835,13 +880,13 @@ class ListingFieldRegistry:
 
         return issues
 
-    def to_json_schema(self) -> Dict:
+    def to_json_schema(self) -> dict:
         """Export registry as JSON schema for frontend."""
         sections = {}
         for section in self.get_sections():
             sections[section.value] = {
                 "label": section.value.replace("_", " ").title(),
-                "fields": [asdict(f) for f in self.get_fields_by_section(section)]
+                "fields": [asdict(f) for f in self.get_fields_by_section(section)],
             }
         return {
             "version": "1.0",
@@ -866,7 +911,8 @@ def get_registry() -> ListingFieldRegistry:
 # CD API PAYLOAD BUILDER
 # =============================================================================
 
-def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Tuple[Dict[str, Any], List[str]]:
+
+def build_cd_payload(data: dict[str, Any], run_id: int = None) -> tuple[dict[str, Any], list[str]]:
     """
     Build Central Dispatch Listings API V2 payload from extracted data.
 
@@ -880,7 +926,7 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Tuple[Dict[str
     Warnings are returned for:
     - Field truncation (externalId, partnerReferenceId, shipperOrderId > 50 chars)
     """
-    registry = get_registry()
+    get_registry()
     warnings = []
 
     # Generate external ID (CD API limit: 50 characters max)
@@ -932,7 +978,12 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Tuple[Dict[str
 
     # Vehicle type mapping
     vtype = data.get("vehicle_type", "SEDAN").upper()
-    vehicle["vehicleType"] = vtype if vtype in ["SEDAN", "SUV", "TRUCK", "VAN", "MOTORCYCLE", "COUPE", "CONVERTIBLE", "WAGON", "OTHER"] else "SEDAN"
+    vehicle["vehicleType"] = (
+        vtype
+        if vtype
+        in ["SEDAN", "SUV", "TRUCK", "VAN", "MOTORCYCLE", "COUPE", "CONVERTIBLE", "WAGON", "OTHER"]
+        else "SEDAN"
+    )
 
     # Operability
     condition = data.get("vehicle_condition", "OPERABLE").upper()

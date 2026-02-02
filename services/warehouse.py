@@ -6,15 +6,16 @@ Features:
 3. Calculate driving distance (Distance Matrix API or Haversine fallback)
 4. Cache geocoding results in SQLite
 """
+
+import hashlib
 import json
+import logging
 import math
 import sqlite3
-import hashlib
-import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Dict, Tuple
-from contextlib import contextmanager
+from typing import Optional
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Warehouse:
     """Warehouse data."""
+
     id: str
     name: str
     state: str
@@ -47,6 +49,7 @@ class Warehouse:
 @dataclass
 class RoutingResult:
     """Result of warehouse routing."""
+
     warehouse: Warehouse
     distance_miles: float
     distance_mode: str  # "driving" or "haversine"
@@ -99,13 +102,12 @@ class GeocodeCache:
         normalized = address.lower().strip()
         return hashlib.md5(normalized.encode()).hexdigest()
 
-    def get_geocode(self, address: str) -> Optional[Tuple[float, float]]:
+    def get_geocode(self, address: str) -> Optional[tuple[float, float]]:
         """Get cached geocode result."""
         addr_hash = self._hash_address(address)
         with self._get_connection() as conn:
             cursor = conn.execute(
-                "SELECT latitude, longitude FROM geocode_cache WHERE address_hash = ?",
-                (addr_hash,)
+                "SELECT latitude, longitude FROM geocode_cache WHERE address_hash = ?", (addr_hash,)
             )
             row = cursor.fetchone()
             if row:
@@ -120,11 +122,11 @@ class GeocodeCache:
                 """INSERT OR REPLACE INTO geocode_cache
                    (address_hash, address, latitude, longitude, provider)
                    VALUES (?, ?, ?, ?, ?)""",
-                (addr_hash, address, lat, lng, provider)
+                (addr_hash, address, lat, lng, provider),
             )
             conn.commit()
 
-    def get_distance(self, origin: str, dest: str) -> Optional[Tuple[float, float, str]]:
+    def get_distance(self, origin: str, dest: str) -> Optional[tuple[float, float, str]]:
         """Get cached distance result. Returns (distance_meters, duration_seconds, mode)."""
         origin_hash = self._hash_address(origin)
         dest_hash = self._hash_address(dest)
@@ -133,7 +135,7 @@ class GeocodeCache:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 "SELECT distance_meters, duration_seconds, mode FROM distance_cache WHERE route_hash = ?",
-                (route_hash,)
+                (route_hash,),
             )
             row = cursor.fetchone()
             if row:
@@ -153,7 +155,7 @@ class GeocodeCache:
                 """INSERT OR REPLACE INTO distance_cache
                    (route_hash, origin_hash, dest_hash, distance_meters, duration_seconds, mode)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (route_hash, origin_hash, dest_hash, distance_meters, duration_seconds, mode)
+                (route_hash, origin_hash, dest_hash, distance_meters, duration_seconds, mode),
             )
             conn.commit()
 
@@ -211,7 +213,7 @@ class WarehouseRouter:
         self.cache = GeocodeCache(cache_db_path)
         self.warehouses = self._load_warehouses(data_file)
 
-    def _load_warehouses(self, data_file: Optional[str]) -> List[Warehouse]:
+    def _load_warehouses(self, data_file: Optional[str]) -> list[Warehouse]:
         """Load warehouses from file or use defaults."""
         warehouses = []
 
@@ -220,6 +222,7 @@ class WarehouseRouter:
             try:
                 if path.suffix == ".yaml" or path.suffix == ".yml":
                     import yaml
+
                     with open(path) as f:
                         data = yaml.safe_load(f)
                 else:
@@ -241,7 +244,7 @@ class WarehouseRouter:
         return warehouses
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def geocode(self, address: str) -> Optional[Tuple[float, float]]:
+    def geocode(self, address: str) -> Optional[tuple[float, float]]:
         """Geocode an address to lat/lng coordinates."""
         # Check cache
         cached = self.cache.get_geocode(address)
@@ -262,7 +265,7 @@ class WarehouseRouter:
 
         return coords
 
-    def _geocode_google(self, address: str) -> Optional[Tuple[float, float]]:
+    def _geocode_google(self, address: str) -> Optional[tuple[float, float]]:
         """Geocode using Google Maps API."""
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {"address": address, "key": self.geocode_api_key}
@@ -278,7 +281,7 @@ class WarehouseRouter:
         logger.warning(f"Google geocode failed for {address}: {data.get('status')}")
         return None
 
-    def _geocode_nominatim(self, address: str) -> Optional[Tuple[float, float]]:
+    def _geocode_nominatim(self, address: str) -> Optional[tuple[float, float]]:
         """Geocode using OpenStreetMap Nominatim (free, rate-limited)."""
         url = "https://nominatim.openstreetmap.org/search"
         params = {"q": address, "format": "json", "limit": 1}
@@ -295,8 +298,12 @@ class WarehouseRouter:
         return None
 
     def get_distance(
-        self, origin: Tuple[float, float], dest: Tuple[float, float], origin_addr: str, dest_addr: str
-    ) -> Tuple[float, float, str]:
+        self,
+        origin: tuple[float, float],
+        dest: tuple[float, float],
+        origin_addr: str,
+        dest_addr: str,
+    ) -> tuple[float, float, str]:
         """
         Get distance between two points.
         Returns (distance_miles, duration_minutes, mode).
@@ -328,8 +335,8 @@ class WarehouseRouter:
 
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
     def _get_driving_distance(
-        self, origin: Tuple[float, float], dest: Tuple[float, float]
-    ) -> Optional[Tuple[float, float]]:
+        self, origin: tuple[float, float], dest: tuple[float, float]
+    ) -> Optional[tuple[float, float]]:
         """Get driving distance using Google Distance Matrix API."""
         url = "https://maps.googleapis.com/maps/api/distancematrix/json"
         params = {
@@ -353,7 +360,7 @@ class WarehouseRouter:
         return None
 
     @staticmethod
-    def _haversine_distance(origin: Tuple[float, float], dest: Tuple[float, float]) -> float:
+    def _haversine_distance(origin: tuple[float, float], dest: tuple[float, float]) -> float:
         """Calculate distance in miles using Haversine formula."""
         lat1, lon1 = math.radians(origin[0]), math.radians(origin[1])
         lat2, lon2 = math.radians(dest[0]), math.radians(dest[1])
@@ -414,7 +421,7 @@ class WarehouseRouter:
 
         return best_result
 
-    def get_all_distances(self, pickup_address: str) -> List[RoutingResult]:
+    def get_all_distances(self, pickup_address: str) -> list[RoutingResult]:
         """Get distances to all warehouses, sorted by distance."""
         pickup_coords = self.geocode(pickup_address)
         if not pickup_coords:
@@ -437,12 +444,14 @@ class WarehouseRouter:
                 pickup_coords, wh_coords, pickup_address, warehouse.full_address
             )
 
-            results.append(RoutingResult(
-                warehouse=warehouse,
-                distance_miles=round(distance, 1),
-                distance_mode=mode,
-                duration_minutes=round(duration, 0) if duration else None,
-            ))
+            results.append(
+                RoutingResult(
+                    warehouse=warehouse,
+                    distance_miles=round(distance, 1),
+                    distance_mode=mode,
+                    duration_minutes=round(duration, 0) if duration else None,
+                )
+            )
 
         return sorted(results, key=lambda r: r.distance_miles)
 

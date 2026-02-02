@@ -10,22 +10,22 @@ Usage:
 If no document_id provided, analyzes the last 5 uploaded documents.
 """
 
-import sys
-import os
 import json
+import os
+import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.database import get_connection
-from api.models import DocumentRepository, ExtractionRunRepository, ReviewItemRepository
+from api.models import DocumentRepository, ReviewItemRepository
 
 
 def diagnose_document(doc_id: int):
     """Diagnose extraction pipeline for a specific document."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"DIAGNOSING DOCUMENT ID: {doc_id}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Get document
     doc = DocumentRepository.get_by_id(doc_id)
@@ -33,7 +33,7 @@ def diagnose_document(doc_id: int):
         print(f"ERROR: Document {doc_id} not found!")
         return
 
-    print(f"\n1. DOCUMENT INFO")
+    print("\n1. DOCUMENT INFO")
     print(f"   Filename: {doc.filename}")
     print(f"   File path: {doc.file_path}")
     print(f"   Auction type ID: {doc.auction_type_id}")
@@ -41,27 +41,27 @@ def diagnose_document(doc_id: int):
 
     # Check raw text
     raw_text = doc.raw_text or ""
-    print(f"\n2. TEXT EXTRACTION")
+    print("\n2. TEXT EXTRACTION")
     print(f"   Raw text length: {len(raw_text)} characters")
 
     if len(raw_text) < 100:
-        print(f"   ⚠️  WARNING: Very short text! Likely needs OCR.")
+        print("   ⚠️  WARNING: Very short text! Likely needs OCR.")
         print(f"   First 200 chars: {raw_text[:200]}")
     else:
-        print(f"   ✓ Text extraction OK")
+        print("   ✓ Text extraction OK")
         print(f"   First 300 chars:\n   {raw_text[:300].replace(chr(10), chr(10) + '   ')}")
 
     # Get extraction runs
     with get_connection() as conn:
         runs = conn.execute(
             "SELECT * FROM extraction_runs WHERE document_id = ? ORDER BY created_at DESC",
-            (doc_id,)
+            (doc_id,),
         ).fetchall()
 
     if not runs:
-        print(f"\n3. EXTRACTION RUNS")
-        print(f"   ⚠️  NO EXTRACTION RUNS FOUND!")
-        print(f"   The document was uploaded but extraction never ran.")
+        print("\n3. EXTRACTION RUNS")
+        print("   ⚠️  NO EXTRACTION RUNS FOUND!")
+        print("   The document was uploaded but extraction never ran.")
         return
 
     for run in runs:
@@ -74,43 +74,47 @@ def diagnose_document(doc_id: int):
         print(f"   Created: {run['created_at']}")
 
         # Check errors
-        if run['errors_json']:
-            errors = json.loads(run['errors_json']) if isinstance(run['errors_json'], str) else run['errors_json']
-            print(f"\n   ⚠️  ERRORS:")
+        if run["errors_json"]:
+            errors = (
+                json.loads(run["errors_json"])
+                if isinstance(run["errors_json"], str)
+                else run["errors_json"]
+            )
+            print("\n   ⚠️  ERRORS:")
             for err in errors:
                 print(f"      - {err}")
 
         # Check outputs
-        outputs_json = run['outputs_json']
+        outputs_json = run["outputs_json"]
         if outputs_json:
             outputs = json.loads(outputs_json) if isinstance(outputs_json, str) else outputs_json
-            print(f"\n4. EXTRACTED OUTPUTS")
+            print("\n4. EXTRACTED OUTPUTS")
             print(f"   Total fields: {len(outputs)}")
 
             filled = {k: v for k, v in outputs.items() if v is not None and v != ""}
             print(f"   Filled fields: {len(filled)}")
 
             if filled:
-                print(f"\n   Extracted values:")
+                print("\n   Extracted values:")
                 for key, value in filled.items():
                     val_str = str(value)[:50] + "..." if len(str(value)) > 50 else str(value)
                     print(f"      {key}: {val_str}")
             else:
-                print(f"   ⚠️  ALL FIELDS ARE EMPTY!")
+                print("   ⚠️  ALL FIELDS ARE EMPTY!")
         else:
-            print(f"\n4. EXTRACTED OUTPUTS")
-            print(f"   ⚠️  outputs_json is NULL/empty!")
+            print("\n4. EXTRACTED OUTPUTS")
+            print("   ⚠️  outputs_json is NULL/empty!")
 
         # Check review items
-        items = ReviewItemRepository.get_by_run(run['id'])
-        print(f"\n5. REVIEW ITEMS")
+        items = ReviewItemRepository.get_by_run(run["id"])
+        print("\n5. REVIEW ITEMS")
         print(f"   Total items: {len(items)}")
 
         filled_items = [i for i in items if i.predicted_value or i.corrected_value]
         print(f"   Items with values: {len(filled_items)}")
 
         if filled_items:
-            print(f"\n   Sample filled items:")
+            print("\n   Sample filled items:")
             for item in filled_items[:5]:
                 value = item.corrected_value or item.predicted_value
                 val_str = str(value)[:40] + "..." if len(str(value)) > 40 else str(value)
@@ -124,7 +128,7 @@ def diagnose_last_documents(count: int = 5):
     with get_connection() as conn:
         docs = conn.execute(
             "SELECT id, filename, created_at FROM documents ORDER BY created_at DESC LIMIT ?",
-            (count,)
+            (count,),
         ).fetchall()
 
     if not docs:
@@ -136,14 +140,14 @@ def diagnose_last_documents(count: int = 5):
         print(f"  [{doc['id']}] {doc['filename']} ({doc['created_at']})")
 
     for doc in docs:
-        diagnose_document(doc['id'])
+        diagnose_document(doc["id"])
 
 
 def test_extraction_on_document(doc_id: int):
     """Test extraction manually on a document."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"TESTING EXTRACTION ON DOCUMENT {doc_id}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     doc = DocumentRepository.get_by_id(doc_id)
     if not doc:
@@ -158,6 +162,7 @@ def test_extraction_on_document(doc_id: int):
 
         if doc.file_path and os.path.exists(doc.file_path):
             import pdfplumber
+
             with pdfplumber.open(doc.file_path) as pdf:
                 pages_text = []
                 for page in pdf.pages:
@@ -172,9 +177,10 @@ def test_extraction_on_document(doc_id: int):
 
     # Test classification
     from extractors import ExtractorManager
+
     manager = ExtractorManager()
 
-    print(f"\nClassification scores:")
+    print("\nClassification scores:")
     scores = manager.get_all_scores(doc.file_path) if doc.file_path else []
 
     if not scores:
@@ -192,12 +198,12 @@ def test_extraction_on_document(doc_id: int):
         print(f"  {status} {source.value}: score={score:.2f}, patterns={patterns}")
 
     # Test extraction
-    print(f"\nAttempting extraction...")
+    print("\nAttempting extraction...")
 
     if doc.file_path and os.path.exists(doc.file_path):
         result = manager.extract_with_result(doc.file_path)
 
-        print(f"\nExtraction result:")
+        print("\nExtraction result:")
         print(f"  Source: {result.source}")
         print(f"  Score: {result.score}")
         print(f"  Text length: {result.text_length}")
@@ -206,7 +212,7 @@ def test_extraction_on_document(doc_id: int):
 
         if result.invoice:
             inv = result.invoice
-            print(f"\nExtracted invoice data:")
+            print("\nExtracted invoice data:")
             print(f"  Reference ID: {inv.reference_id}")
             print(f"  Buyer ID: {inv.buyer_id}")
             print(f"  Buyer Name: {inv.buyer_name}")
@@ -214,7 +220,7 @@ def test_extraction_on_document(doc_id: int):
 
             if inv.pickup_address:
                 addr = inv.pickup_address
-                print(f"\n  Pickup Address:")
+                print("\n  Pickup Address:")
                 print(f"    Name: {addr.name}")
                 print(f"    Street: {addr.street}")
                 print(f"    City: {addr.city}")
@@ -223,7 +229,7 @@ def test_extraction_on_document(doc_id: int):
 
             if inv.vehicles:
                 for i, v in enumerate(inv.vehicles):
-                    print(f"\n  Vehicle {i+1}:")
+                    print(f"\n  Vehicle {i + 1}:")
                     print(f"    VIN: {v.vin}")
                     print(f"    Year: {v.year}")
                     print(f"    Make: {v.make}")
@@ -231,7 +237,7 @@ def test_extraction_on_document(doc_id: int):
                     print(f"    Color: {v.color}")
                     print(f"    Lot: {v.lot_number}")
         else:
-            print(f"\n⚠️  No invoice extracted!")
+            print("\n⚠️  No invoice extracted!")
             print("The extractor could not parse the document structure.")
     else:
         print(f"PDF file not found at: {doc.file_path}")

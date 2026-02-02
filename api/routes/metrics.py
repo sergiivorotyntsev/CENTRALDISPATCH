@@ -13,7 +13,8 @@ Endpoints:
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
@@ -28,8 +29,10 @@ router = APIRouter(prefix="/api/metrics", tags=["Metrics"])
 # MODELS
 # =============================================================================
 
+
 class ExtractionMetric(BaseModel):
     """Extraction metric data point."""
+
     group_key: str
     count: int
     avg_raw_text_length: float = 0
@@ -43,6 +46,7 @@ class ExtractionMetric(BaseModel):
 
 class QualityMetric(BaseModel):
     """Quality metric data point."""
+
     group_key: str
     total_runs: int
     ready_count: int = 0
@@ -58,6 +62,7 @@ class QualityMetric(BaseModel):
 
 class DriftAlert(BaseModel):
     """Drift detection alert."""
+
     alert_type: str
     severity: str  # warning, critical
     auction_code: Optional[str]
@@ -71,6 +76,7 @@ class DriftAlert(BaseModel):
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
 
 def _get_date_range(days: int = 7) -> tuple[str, str]:
     """Get date range for queries."""
@@ -95,6 +101,7 @@ def _parse_metrics_json(metrics_json) -> dict:
 # EXTRACTION METRICS ENDPOINT
 # =============================================================================
 
+
 @router.get("/extractions")
 async def get_extraction_metrics(
     group_by: str = Query("day", enum=["auction", "warehouse", "day", "source"]),
@@ -117,16 +124,12 @@ async def get_extraction_metrics(
         # Build base query
         if group_by == "day":
             group_expr = "DATE(r.created_at)"
-            group_col = "day"
         elif group_by == "auction":
             group_expr = "COALESCE(at.code, 'UNKNOWN')"
-            group_col = "auction"
         elif group_by == "source":
             group_expr = "COALESCE(json_extract(r.metrics_json, '$.detected_source'), 'UNKNOWN')"
-            group_col = "source"
         else:  # warehouse
             group_expr = "COALESCE(json_extract(r.outputs_json, '$.warehouse_id'), 'NONE')"
-            group_col = "warehouse"
 
         sql = f"""
             SELECT
@@ -155,17 +158,19 @@ async def get_extraction_metrics(
     metrics = []
     for row in rows:
         count = row["count"] or 0
-        metrics.append(ExtractionMetric(
-            group_key=str(row["group_key"]),
-            count=count,
-            avg_raw_text_length=row["avg_raw_text_length"] or 0,
-            avg_words_count=row["avg_words_count"] or 0,
-            ocr_applied_count=row["ocr_applied_count"] or 0,
-            ocr_applied_rate=(row["ocr_applied_count"] or 0) / count * 100 if count > 0 else 0,
-            avg_layout_blocks=row["avg_layout_blocks"] or 0,
-            avg_evidence_coverage=row["avg_evidence_coverage"] or 0,
-            avg_extraction_score=row["avg_extraction_score"] or 0,
-        ))
+        metrics.append(
+            ExtractionMetric(
+                group_key=str(row["group_key"]),
+                count=count,
+                avg_raw_text_length=row["avg_raw_text_length"] or 0,
+                avg_words_count=row["avg_words_count"] or 0,
+                ocr_applied_count=row["ocr_applied_count"] or 0,
+                ocr_applied_rate=(row["ocr_applied_count"] or 0) / count * 100 if count > 0 else 0,
+                avg_layout_blocks=row["avg_layout_blocks"] or 0,
+                avg_evidence_coverage=row["avg_evidence_coverage"] or 0,
+                avg_extraction_score=row["avg_extraction_score"] or 0,
+            )
+        )
 
     return {
         "group_by": group_by,
@@ -179,6 +184,7 @@ async def get_extraction_metrics(
 # =============================================================================
 # QUALITY METRICS ENDPOINT
 # =============================================================================
+
 
 @router.get("/quality")
 async def get_quality_metrics(
@@ -230,18 +236,22 @@ async def get_quality_metrics(
     metrics = []
     for row in rows:
         total = row["total_runs"] or 0
-        metrics.append(QualityMetric(
-            group_key=str(row["group_key"]),
-            total_runs=total,
-            ready_count=row["ready_count"] or 0,
-            needs_review_count=row["needs_review_count"] or 0,
-            failed_count=row["failed_count"] or 0,
-            exported_count=row["exported_count"] or 0,
-            fill_rate=row["fill_rate"] or 0,
-            required_fill_rate=row["required_fill_rate"] or 0,
-            pickup_parse_success_rate=(row["pickup_success"] or 0) / total * 100 if total > 0 else 0,
-            classification_confidence_avg=row["classification_confidence_avg"] or 0,
-        ))
+        metrics.append(
+            QualityMetric(
+                group_key=str(row["group_key"]),
+                total_runs=total,
+                ready_count=row["ready_count"] or 0,
+                needs_review_count=row["needs_review_count"] or 0,
+                failed_count=row["failed_count"] or 0,
+                exported_count=row["exported_count"] or 0,
+                fill_rate=row["fill_rate"] or 0,
+                required_fill_rate=row["required_fill_rate"] or 0,
+                pickup_parse_success_rate=(row["pickup_success"] or 0) / total * 100
+                if total > 0
+                else 0,
+                classification_confidence_avg=row["classification_confidence_avg"] or 0,
+            )
+        )
 
     return {
         "group_by": group_by,
@@ -283,7 +293,8 @@ async def get_drift_alerts(
         for check_days in range(1, days_threshold + 1):
             date = (datetime.utcnow() - timedelta(days=check_days)).strftime("%Y-%m-%d")
 
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT
                     COALESCE(at.code, 'UNKNOWN') as auction_code,
                     COUNT(*) as total,
@@ -296,7 +307,9 @@ async def get_drift_alerts(
                 LEFT JOIN auction_types at ON r.auction_type_id = at.id
                 WHERE DATE(r.created_at) = ?
                 GROUP BY at.code
-            """, [date]).fetchall()
+            """,
+                [date],
+            ).fetchall()
 
             for row in rows:
                 auction = row["auction_code"]
@@ -308,55 +321,66 @@ async def get_drift_alerts(
                 # Check fill rate
                 fill_rate = row["fill_rate"] or 0
                 if fill_rate < DRIFT_THRESHOLDS["required_fill_rate"]["critical"]:
-                    alerts.append(DriftAlert(
-                        alert_type="fill_rate_critical",
-                        severity="critical",
-                        auction_code=auction,
-                        message=f"Required fill rate critically low for {auction}",
-                        current_value=fill_rate,
-                        threshold=DRIFT_THRESHOLDS["required_fill_rate"]["critical"],
-                        days_below=check_days,
-                        created_at=datetime.utcnow().isoformat(),
-                    ))
-                elif fill_rate < DRIFT_THRESHOLDS["required_fill_rate"]["warning"] and include_warnings:
-                    alerts.append(DriftAlert(
-                        alert_type="fill_rate_warning",
-                        severity="warning",
-                        auction_code=auction,
-                        message=f"Required fill rate below threshold for {auction}",
-                        current_value=fill_rate,
-                        threshold=DRIFT_THRESHOLDS["required_fill_rate"]["warning"],
-                        days_below=check_days,
-                        created_at=datetime.utcnow().isoformat(),
-                    ))
+                    alerts.append(
+                        DriftAlert(
+                            alert_type="fill_rate_critical",
+                            severity="critical",
+                            auction_code=auction,
+                            message=f"Required fill rate critically low for {auction}",
+                            current_value=fill_rate,
+                            threshold=DRIFT_THRESHOLDS["required_fill_rate"]["critical"],
+                            days_below=check_days,
+                            created_at=datetime.utcnow().isoformat(),
+                        )
+                    )
+                elif (
+                    fill_rate < DRIFT_THRESHOLDS["required_fill_rate"]["warning"]
+                    and include_warnings
+                ):
+                    alerts.append(
+                        DriftAlert(
+                            alert_type="fill_rate_warning",
+                            severity="warning",
+                            auction_code=auction,
+                            message=f"Required fill rate below threshold for {auction}",
+                            current_value=fill_rate,
+                            threshold=DRIFT_THRESHOLDS["required_fill_rate"]["warning"],
+                            days_below=check_days,
+                            created_at=datetime.utcnow().isoformat(),
+                        )
+                    )
 
                 # Check OCR rate (high OCR rate may indicate source document changes)
                 ocr_rate = row["ocr_rate"] or 0
                 if ocr_rate > DRIFT_THRESHOLDS["ocr_rate"]["critical"]:
-                    alerts.append(DriftAlert(
-                        alert_type="ocr_rate_critical",
-                        severity="critical",
-                        auction_code=auction,
-                        message=f"OCR rate unusually high for {auction} - may indicate document format change",
-                        current_value=ocr_rate,
-                        threshold=DRIFT_THRESHOLDS["ocr_rate"]["critical"],
-                        days_below=check_days,
-                        created_at=datetime.utcnow().isoformat(),
-                    ))
+                    alerts.append(
+                        DriftAlert(
+                            alert_type="ocr_rate_critical",
+                            severity="critical",
+                            auction_code=auction,
+                            message=f"OCR rate unusually high for {auction} - may indicate document format change",
+                            current_value=ocr_rate,
+                            threshold=DRIFT_THRESHOLDS["ocr_rate"]["critical"],
+                            days_below=check_days,
+                            created_at=datetime.utcnow().isoformat(),
+                        )
+                    )
 
                 # Check classification confidence
                 confidence = row["confidence"] or 0
                 if confidence < DRIFT_THRESHOLDS["classification_confidence"]["critical"]:
-                    alerts.append(DriftAlert(
-                        alert_type="classification_critical",
-                        severity="critical",
-                        auction_code=auction,
-                        message=f"Classification confidence very low for {auction}",
-                        current_value=confidence,
-                        threshold=DRIFT_THRESHOLDS["classification_confidence"]["critical"],
-                        days_below=check_days,
-                        created_at=datetime.utcnow().isoformat(),
-                    ))
+                    alerts.append(
+                        DriftAlert(
+                            alert_type="classification_critical",
+                            severity="critical",
+                            auction_code=auction,
+                            message=f"Classification confidence very low for {auction}",
+                            current_value=confidence,
+                            threshold=DRIFT_THRESHOLDS["classification_confidence"]["critical"],
+                            days_below=check_days,
+                            created_at=datetime.utcnow().isoformat(),
+                        )
+                    )
 
     # Deduplicate alerts (keep most recent)
     seen = set()
@@ -380,6 +404,7 @@ async def get_drift_alerts(
 # DASHBOARD SUMMARY
 # =============================================================================
 
+
 @router.get("/summary")
 async def get_metrics_summary(
     days: int = Query(7, ge=1, le=30),
@@ -393,7 +418,8 @@ async def get_metrics_summary(
 
     with get_connection() as conn:
         # Total counts
-        totals = conn.execute("""
+        totals = conn.execute(
+            """
             SELECT
                 COUNT(*) as total_runs,
                 SUM(CASE WHEN status = 'exported' THEN 1 ELSE 0 END) as exported,
@@ -403,10 +429,13 @@ async def get_metrics_summary(
                 AVG(COALESCE(extraction_score, 0)) as avg_score
             FROM extraction_runs
             WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?
-        """, [start_date, end_date]).fetchone()
+        """,
+            [start_date, end_date],
+        ).fetchone()
 
         # By auction type
-        by_auction = conn.execute("""
+        by_auction = conn.execute(
+            """
             SELECT
                 COALESCE(at.code, 'UNKNOWN') as auction,
                 COUNT(*) as count,
@@ -416,10 +445,13 @@ async def get_metrics_summary(
             WHERE DATE(r.created_at) >= ? AND DATE(r.created_at) <= ?
             GROUP BY at.code
             ORDER BY count DESC
-        """, [start_date, end_date]).fetchall()
+        """,
+            [start_date, end_date],
+        ).fetchall()
 
         # Recent trend (last 7 days)
-        trend = conn.execute("""
+        trend = conn.execute(
+            """
             SELECT
                 DATE(created_at) as day,
                 COUNT(*) as count,
@@ -429,7 +461,9 @@ async def get_metrics_summary(
             GROUP BY DATE(created_at)
             ORDER BY day DESC
             LIMIT 7
-        """, [start_date]).fetchall()
+        """,
+            [start_date],
+        ).fetchall()
 
     total_runs = totals["total_runs"] or 0
 

@@ -6,10 +6,11 @@ Understands document layout by grouping text into logical regions/blocks,
 enabling more accurate field extraction based on visual structure.
 """
 
-import re
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Tuple, Any
+from typing import Optional
+
 import pdfplumber
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TextElement:
     """A text element with position information."""
+
     text: str
     x0: float  # Left edge
     y0: float  # Top edge (from page top)
@@ -45,9 +47,10 @@ class TextElement:
 @dataclass
 class DocumentBlock:
     """A logical block/region in the document."""
+
     id: str
     label: Optional[str]  # Detected label (e.g., "PHYSICAL ADDRESS OF LOT")
-    elements: List[TextElement] = field(default_factory=list)
+    elements: list[TextElement] = field(default_factory=list)
     x0: float = 0
     y0: float = 0
     x1: float = 0
@@ -62,14 +65,14 @@ class DocumentBlock:
         return "\n".join(e.text for e in sorted_elements)
 
     @property
-    def lines(self) -> List[str]:
+    def lines(self) -> list[str]:
         """Get text as lines, grouped by Y position."""
         if not self.elements:
             return []
 
         # Group elements by Y position (with tolerance)
         y_tolerance = 5
-        lines_dict: Dict[float, List[TextElement]] = {}
+        lines_dict: dict[float, list[TextElement]] = {}
 
         for elem in self.elements:
             # Find matching Y group
@@ -97,31 +100,35 @@ class DocumentBlock:
         """Check if point is within this block."""
         return self.x0 <= x <= self.x1 and self.y0 <= y <= self.y1
 
-    def overlaps(self, other: 'DocumentBlock') -> bool:
+    def overlaps(self, other: "DocumentBlock") -> bool:
         """Check if this block overlaps with another."""
-        return not (self.x1 < other.x0 or self.x0 > other.x1 or
-                    self.y1 < other.y0 or self.y0 > other.y1)
+        return not (
+            self.x1 < other.x0 or self.x0 > other.x1 or self.y1 < other.y0 or self.y0 > other.y1
+        )
 
 
 @dataclass
 class DocumentStructure:
     """Parsed document structure with blocks and metadata."""
-    blocks: List[DocumentBlock] = field(default_factory=list)
+
+    blocks: list[DocumentBlock] = field(default_factory=list)
     raw_text: str = ""
     page_count: int = 0
     width: float = 0
     height: float = 0
 
     # Detected regions by type
-    header_blocks: List[DocumentBlock] = field(default_factory=list)
-    data_blocks: List[DocumentBlock] = field(default_factory=list)
-    table_blocks: List[DocumentBlock] = field(default_factory=list)
+    header_blocks: list[DocumentBlock] = field(default_factory=list)
+    data_blocks: list[DocumentBlock] = field(default_factory=list)
+    table_blocks: list[DocumentBlock] = field(default_factory=list)
 
     # Label to block mapping
-    labeled_blocks: Dict[str, DocumentBlock] = field(default_factory=dict)
+    labeled_blocks: dict[str, DocumentBlock] = field(default_factory=dict)
 
     # Column detection (M3.P1.1)
-    detected_columns: List[Tuple[float, float]] = field(default_factory=list)  # (x_start, x_end) per column
+    detected_columns: list[tuple[float, float]] = field(
+        default_factory=list
+    )  # (x_start, x_end) per column
     column_count: int = 1
     reading_order_strategy: str = "linear"  # linear, column_aware
 
@@ -133,21 +140,21 @@ class DocumentStructure:
                 return block
         return None
 
-    def get_text_near_label(self, label_pattern: str, max_lines: int = 5) -> List[str]:
+    def get_text_near_label(self, label_pattern: str, max_lines: int = 5) -> list[str]:
         """Get text lines below/after a label."""
         block = self.get_block_by_label(label_pattern)
         if block:
             return block.lines[:max_lines]
 
         # Fallback: search in raw text
-        lines = self.raw_text.split('\n')
+        lines = self.raw_text.split("\n")
         pattern = re.compile(label_pattern, re.IGNORECASE)
         for i, line in enumerate(lines):
             if pattern.search(line):
-                return lines[i + 1:i + 1 + max_lines]
+                return lines[i + 1 : i + 1 + max_lines]
         return []
 
-    def get_blocks_in_region(self, region: str) -> List[DocumentBlock]:
+    def get_blocks_in_region(self, region: str) -> list[DocumentBlock]:
         """Get blocks in a named region (left, right, top, bottom, center)."""
         if not self.blocks:
             return []
@@ -157,15 +164,15 @@ class DocumentStructure:
 
         result = []
         for block in self.blocks:
-            if region == 'left' and block.center_x < mid_x:
+            if region == "left" and block.center_x < mid_x:
                 result.append(block)
-            elif region == 'right' and block.center_x >= mid_x:
+            elif region == "right" and block.center_x >= mid_x:
                 result.append(block)
-            elif region == 'top' and block.center_y < mid_y * 0.5:
+            elif region == "top" and block.center_y < mid_y * 0.5:
                 result.append(block)
-            elif region == 'bottom' and block.center_y > mid_y * 1.5:
+            elif region == "bottom" and block.center_y > mid_y * 1.5:
                 result.append(block)
-            elif region == 'center':
+            elif region == "center":
                 if mid_x * 0.3 < block.center_x < mid_x * 1.7:
                     result.append(block)
 
@@ -186,18 +193,18 @@ class SpatialParser:
 
     # Common document labels that indicate data blocks
     BLOCK_LABELS = [
-        r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT',
-        r'MEMBER',
-        r'SELLER',
-        r'BUYER',
-        r'VEHICLE',
-        r'PICKUP\s*(?:LOCATION|ADDRESS)',
-        r'DELIVERY\s*(?:LOCATION|ADDRESS)',
-        r'LOT\s*#',
-        r'VIN',
-        r'CHARGES?\s*(?:AND\s*)?PAYMENTS?',
-        r'TOTAL',
-        r'SALE\s*(?:DATE|PRICE)',
+        r"PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT",
+        r"MEMBER",
+        r"SELLER",
+        r"BUYER",
+        r"VEHICLE",
+        r"PICKUP\s*(?:LOCATION|ADDRESS)",
+        r"DELIVERY\s*(?:LOCATION|ADDRESS)",
+        r"LOT\s*#",
+        r"VIN",
+        r"CHARGES?\s*(?:AND\s*)?PAYMENTS?",
+        r"TOTAL",
+        r"SALE\s*(?:DATE|PRICE)",
     ]
 
     # Vertical gap threshold to separate blocks (in points)
@@ -207,7 +214,7 @@ class SpatialParser:
     LINE_GAP_THRESHOLD = 50
 
     def __init__(self):
-        self._cached_structures: Dict[str, DocumentStructure] = {}
+        self._cached_structures: dict[str, DocumentStructure] = {}
 
     def parse(self, pdf_path: str) -> DocumentStructure:
         """
@@ -220,7 +227,7 @@ class SpatialParser:
             return self._cached_structures[pdf_path]
 
         structure = DocumentStructure()
-        all_elements: List[TextElement] = []
+        all_elements: list[TextElement] = []
 
         try:
             with pdfplumber.open(pdf_path) as pdf:
@@ -240,11 +247,11 @@ class SpatialParser:
 
                     for word in words:
                         elem = TextElement(
-                            text=word['text'],
-                            x0=word['x0'],
-                            y0=word['top'],
-                            x1=word['x1'],
-                            y1=word['bottom'],
+                            text=word["text"],
+                            x0=word["x0"],
+                            y0=word["top"],
+                            x1=word["x1"],
+                            y1=word["bottom"],
                             page=page_num,
                         )
                         all_elements.append(elem)
@@ -279,10 +286,8 @@ class SpatialParser:
         return structure
 
     def _group_into_blocks(
-        self,
-        elements: List[TextElement],
-        structure: DocumentStructure
-    ) -> List[DocumentBlock]:
+        self, elements: list[TextElement], structure: DocumentStructure
+    ) -> list[DocumentBlock]:
         """Group text elements into logical blocks based on spatial proximity."""
         if not elements:
             return []
@@ -290,7 +295,7 @@ class SpatialParser:
         # Sort by page, then Y, then X
         sorted_elements = sorted(elements, key=lambda e: (e.page, e.y0, e.x0))
 
-        blocks: List[DocumentBlock] = []
+        blocks: list[DocumentBlock] = []
         current_block: Optional[DocumentBlock] = None
 
         for elem in sorted_elements:
@@ -359,21 +364,21 @@ class SpatialParser:
         for block in structure.blocks:
             # Header blocks are at the top
             if block.y0 < structure.height * 0.15:
-                block.block_type = 'header'
+                block.block_type = "header"
                 structure.header_blocks.append(block)
             # Footer blocks are at the bottom
             elif block.y0 > structure.height * 0.85:
-                block.block_type = 'footer'
+                block.block_type = "footer"
             # Labeled blocks are data blocks
             elif block.label:
-                block.block_type = 'label'
+                block.block_type = "label"
                 structure.data_blocks.append(block)
             # Check for table-like structure (multiple aligned columns)
             elif self._looks_like_table(block):
-                block.block_type = 'table'
+                block.block_type = "table"
                 structure.table_blocks.append(block)
             else:
-                block.block_type = 'data'
+                block.block_type = "data"
                 structure.data_blocks.append(block)
 
     def _looks_like_table(self, block: DocumentBlock) -> bool:
@@ -390,6 +395,7 @@ class SpatialParser:
 
         # If many elements share similar X positions, likely a table
         from collections import Counter
+
         x_counts = Counter(x_positions)
         if len(x_counts) > 2 and max(x_counts.values()) >= len(lines):
             return True
@@ -424,32 +430,36 @@ class SpatialParser:
         # Collect all block x-coordinates
         block_positions = []
         for block in structure.blocks:
-            if block.block_type in ('data', 'label'):
-                block_positions.append({
-                    'x0': block.x0,
-                    'x1': block.x1,
-                    'center_x': (block.x0 + block.x1) / 2,
-                    'block': block,
-                })
+            if block.block_type in ("data", "label"):
+                block_positions.append(
+                    {
+                        "x0": block.x0,
+                        "x1": block.x1,
+                        "center_x": (block.x0 + block.x1) / 2,
+                        "block": block,
+                    }
+                )
 
         if len(block_positions) < 2:
             structure.column_count = 1
             return 1
 
         # Sort by x position
-        block_positions.sort(key=lambda b: b['x0'])
+        block_positions.sort(key=lambda b: b["x0"])
 
         # Find gaps between blocks
         gaps = []
         for i in range(len(block_positions) - 1):
             current = block_positions[i]
             next_block = block_positions[i + 1]
-            gap = next_block['x0'] - current['x1']
+            gap = next_block["x0"] - current["x1"]
             if gap > min_gap:
-                gaps.append({
-                    'position': (current['x1'] + next_block['x0']) / 2,
-                    'size': gap,
-                })
+                gaps.append(
+                    {
+                        "position": (current["x1"] + next_block["x0"]) / 2,
+                        "size": gap,
+                    }
+                )
 
         if not gaps:
             structure.column_count = 1
@@ -457,10 +467,10 @@ class SpatialParser:
             return 1
 
         # Sort gaps by size (largest first) and take significant ones
-        gaps.sort(key=lambda g: g['size'], reverse=True)
+        gaps.sort(key=lambda g: g["size"], reverse=True)
 
         # Determine column boundaries
-        column_dividers = [g['position'] for g in gaps[:3]]  # Max 4 columns
+        column_dividers = [g["position"] for g in gaps[:3]]  # Max 4 columns
         column_dividers.sort()
 
         # Build column ranges
@@ -481,7 +491,7 @@ class SpatialParser:
     def sort_reading_order(
         self,
         structure: DocumentStructure,
-    ) -> List[DocumentBlock]:
+    ) -> list[DocumentBlock]:
         """
         Sort blocks in reading order (M3.P1.2).
 
@@ -505,10 +515,7 @@ class SpatialParser:
 
         if structure.column_count <= 1:
             # Single column: simple top-to-bottom, left-to-right
-            return sorted(
-                structure.blocks,
-                key=lambda b: (b.page, b.y0, b.x0)
-            )
+            return sorted(structure.blocks, key=lambda b: (b.page, b.y0, b.x0))
 
         # Multi-column: assign blocks to columns, then sort
         columns = structure.detected_columns
@@ -520,7 +527,7 @@ class SpatialParser:
                 if col_start <= center_x <= col_end:
                     return i
             # Fallback: find closest column
-            min_dist = float('inf')
+            min_dist = float("inf")
             best_col = 0
             for i, (col_start, col_end) in enumerate(columns):
                 col_center = (col_start + col_end) / 2
@@ -531,10 +538,7 @@ class SpatialParser:
             return best_col
 
         # Sort by: page, column index, y position, x position
-        return sorted(
-            structure.blocks,
-            key=lambda b: (b.page, get_column_index(b), b.y0, b.x0)
-        )
+        return sorted(structure.blocks, key=lambda b: (b.page, get_column_index(b), b.y0, b.x0))
 
     def get_column_text(
         self,
@@ -575,8 +579,8 @@ class SpatialParser:
     def extract_field_by_label(
         self,
         structure: DocumentStructure,
-        label_patterns: List[str],
-        field_type: str = 'text',
+        label_patterns: list[str],
+        field_type: str = "text",
         max_lines: int = 5,
         region_hint: str = None,
     ) -> Optional[str]:
@@ -620,7 +624,7 @@ class SpatialParser:
                     return self._format_extracted_value(data_lines, field_type)
 
             # Fallback: search in raw text
-            lines = structure.raw_text.split('\n')
+            lines = structure.raw_text.split("\n")
             for i, line in enumerate(lines):
                 if re.search(pattern, line, re.IGNORECASE):
                     # Check same line
@@ -639,23 +643,20 @@ class SpatialParser:
 
         return None
 
-    def _format_extracted_value(self, lines: List[str], field_type: str) -> str:
+    def _format_extracted_value(self, lines: list[str], field_type: str) -> str:
         """Format extracted lines based on field type."""
-        if field_type == 'address':
+        if field_type == "address":
             # For addresses, join with comma
-            return ', '.join(lines)
-        elif field_type == 'single':
+            return ", ".join(lines)
+        elif field_type == "single":
             # Return just the first line
-            return lines[0] if lines else ''
+            return lines[0] if lines else ""
         else:
             # Default: join with newlines
-            return '\n'.join(lines)
+            return "\n".join(lines)
 
     def get_adjacent_block(
-        self,
-        structure: DocumentStructure,
-        label_pattern: str,
-        direction: str = 'below'
+        self, structure: DocumentStructure, label_pattern: str, direction: str = "below"
     ) -> Optional[DocumentBlock]:
         """
         Get the block adjacent to a labeled block in the specified direction.
@@ -677,28 +678,24 @@ class SpatialParser:
             if block.id == ref_block.id:
                 continue
 
-            if direction == 'below':
+            if direction == "below":
                 # Block should be below and horizontally overlapping
-                if (block.y0 > ref_block.y1 and
-                    block.x0 < ref_block.x1 and block.x1 > ref_block.x0):
+                if block.y0 > ref_block.y1 and block.x0 < ref_block.x1 and block.x1 > ref_block.x0:
                     distance = block.y0 - ref_block.y1
                     candidates.append((distance, block))
 
-            elif direction == 'above':
-                if (block.y1 < ref_block.y0 and
-                    block.x0 < ref_block.x1 and block.x1 > ref_block.x0):
+            elif direction == "above":
+                if block.y1 < ref_block.y0 and block.x0 < ref_block.x1 and block.x1 > ref_block.x0:
                     distance = ref_block.y0 - block.y1
                     candidates.append((distance, block))
 
-            elif direction == 'right':
-                if (block.x0 > ref_block.x1 and
-                    block.y0 < ref_block.y1 and block.y1 > ref_block.y0):
+            elif direction == "right":
+                if block.x0 > ref_block.x1 and block.y0 < ref_block.y1 and block.y1 > ref_block.y0:
                     distance = block.x0 - ref_block.x1
                     candidates.append((distance, block))
 
-            elif direction == 'left':
-                if (block.x1 < ref_block.x0 and
-                    block.y0 < ref_block.y1 and block.y1 > ref_block.y0):
+            elif direction == "left":
+                if block.x1 < ref_block.x0 and block.y0 < ref_block.y1 and block.y1 > ref_block.y0:
                     distance = ref_block.x0 - block.x1
                     candidates.append((distance, block))
 

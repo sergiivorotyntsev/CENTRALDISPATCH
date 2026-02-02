@@ -12,58 +12,61 @@ Examples:
 """
 
 import json
-import re
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any, Optional
 
 from api.database import get_connection
 
 
 class FieldValueSource(str, Enum):
     """Source type for field values."""
-    AUCTION_CONST = "auction_const"      # From auction profile
+
+    AUCTION_CONST = "auction_const"  # From auction profile
     WAREHOUSE_CONST = "warehouse_const"  # From warehouse override
-    EXTRACTED = "extracted"              # Extracted from document
-    USER_OVERRIDE = "user_override"      # Manual user correction
-    DEFAULT = "default"                  # Default value
+    EXTRACTED = "extracted"  # Extracted from document
+    USER_OVERRIDE = "user_override"  # Manual user correction
+    DEFAULT = "default"  # Default value
 
 
 @dataclass
 class FieldDefault:
     """Default value for a field in an auction profile."""
+
     field_key: str
     value: Any
     is_required: bool = False
     apply_when: str = "always"  # always, if_empty, if_missing
     transform: Optional[str] = None  # Optional transformation rule
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
 class FieldPattern:
     """Extraction pattern for a field in an auction profile."""
+
     field_key: str
-    patterns: List[str]  # Regex patterns
+    patterns: list[str]  # Regex patterns
     position_hint: str = "inline"  # inline, below, right
     max_lines: int = 3
-    stop_patterns: List[str] = field(default_factory=list)  # Stop extraction at these
+    stop_patterns: list[str] = field(default_factory=list)  # Stop extraction at these
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
 class FieldTransform:
     """Transformation rule for a field value."""
+
     field_key: str
     transform_type: str  # normalize, format, validate, map
-    transform_config: Dict[str, Any] = field(default_factory=dict)
+    transform_config: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -75,6 +78,7 @@ class AuctionProfile:
     Contains default values, extraction patterns, and transformations
     that apply to all documents from this auction.
     """
+
     id: Optional[int] = None
     auction_type_id: int = 0
     auction_code: str = ""  # COPART, IAA, MANHEIM
@@ -82,16 +86,16 @@ class AuctionProfile:
     description: str = ""
 
     # Field defaults (auction constants)
-    field_defaults: Dict[str, FieldDefault] = field(default_factory=dict)
+    field_defaults: dict[str, FieldDefault] = field(default_factory=dict)
 
     # Custom extraction patterns
-    field_patterns: Dict[str, FieldPattern] = field(default_factory=dict)
+    field_patterns: dict[str, FieldPattern] = field(default_factory=dict)
 
     # Field transformations
-    field_transforms: Dict[str, FieldTransform] = field(default_factory=dict)
+    field_transforms: dict[str, FieldTransform] = field(default_factory=dict)
 
     # Document classification patterns
-    classification_patterns: List[str] = field(default_factory=list)
+    classification_patterns: list[str] = field(default_factory=list)
 
     # Metadata
     version: int = 1
@@ -99,7 +103,7 @@ class AuctionProfile:
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON storage."""
         return {
             "id": self.id,
@@ -118,7 +122,7 @@ class AuctionProfile:
         }
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'AuctionProfile':
+    def from_dict(data: dict[str, Any]) -> "AuctionProfile":
         """Create AuctionProfile from dictionary."""
         profile = AuctionProfile(
             id=data.get("id"),
@@ -159,11 +163,7 @@ class AuctionProfile:
             return field_def.value
         return None
 
-    def should_apply_default(
-        self,
-        field_key: str,
-        current_value: Any = None
-    ) -> bool:
+    def should_apply_default(self, field_key: str, current_value: Any = None) -> bool:
         """Check if default should be applied based on apply_when rule."""
         field_def = self.field_defaults.get(field_key)
         if not field_def:
@@ -183,6 +183,7 @@ class AuctionProfile:
 # DEFAULT AUCTION PROFILES
 # =============================================================================
 
+
 def get_default_copart_profile() -> AuctionProfile:
     """Get default Copart auction profile."""
     return AuctionProfile(
@@ -191,26 +192,20 @@ def get_default_copart_profile() -> AuctionProfile:
         description="Default profile for Copart auction documents",
         field_defaults={
             "pickup_name": FieldDefault(
-                field_key="pickup_name",
-                value="Copart",
-                apply_when="if_empty"
+                field_key="pickup_name", value="Copart", apply_when="if_empty"
             ),
             "auction_source": FieldDefault(
-                field_key="auction_source",
-                value="COPART",
-                apply_when="always"
+                field_key="auction_source", value="COPART", apply_when="always"
             ),
         },
         field_patterns={
             "buyer_id": FieldPattern(
-                field_key="buyer_id",
-                patterns=[r"MEMBER\s*:\s*(\d{4,10})"],
-                position_hint="inline"
+                field_key="buyer_id", patterns=[r"MEMBER\s*:\s*(\d{4,10})"], position_hint="inline"
             ),
             "vehicle_lot": FieldPattern(
                 field_key="vehicle_lot",
                 patterns=[r"LOT#?\s*:?\s*(\d{6,10})"],
-                position_hint="inline"
+                position_hint="inline",
             ),
         },
         classification_patterns=[
@@ -230,21 +225,15 @@ def get_default_iaa_profile() -> AuctionProfile:
         description="Default profile for IAA auction documents",
         field_defaults={
             "pickup_name": FieldDefault(
-                field_key="pickup_name",
-                value="IAA",
-                apply_when="if_empty"
+                field_key="pickup_name", value="IAA", apply_when="if_empty"
             ),
             "auction_source": FieldDefault(
-                field_key="auction_source",
-                value="IAA",
-                apply_when="always"
+                field_key="auction_source", value="IAA", apply_when="always"
             ),
         },
         field_patterns={
             "buyer_id": FieldPattern(
-                field_key="buyer_id",
-                patterns=[r"BUYER\s*#?\s*:?\s*(\d+)"],
-                position_hint="inline"
+                field_key="buyer_id", patterns=[r"BUYER\s*#?\s*:?\s*(\d+)"], position_hint="inline"
             ),
         },
         classification_patterns=[
@@ -263,21 +252,15 @@ def get_default_manheim_profile() -> AuctionProfile:
         description="Default profile for Manheim auction documents",
         field_defaults={
             "pickup_name": FieldDefault(
-                field_key="pickup_name",
-                value="Manheim",
-                apply_when="if_empty"
+                field_key="pickup_name", value="Manheim", apply_when="if_empty"
             ),
             "auction_source": FieldDefault(
-                field_key="auction_source",
-                value="MANHEIM",
-                apply_when="always"
+                field_key="auction_source", value="MANHEIM", apply_when="always"
             ),
         },
         field_patterns={
             "buyer_id": FieldPattern(
-                field_key="buyer_id",
-                patterns=[r"Buyer\s*#?\s*:?\s*(\d+)"],
-                position_hint="inline"
+                field_key="buyer_id", patterns=[r"Buyer\s*#?\s*:?\s*(\d+)"], position_hint="inline"
             ),
         },
         classification_patterns=[
@@ -292,6 +275,7 @@ def get_default_manheim_profile() -> AuctionProfile:
 # =============================================================================
 # DATABASE SCHEMA
 # =============================================================================
+
 
 def init_auction_profiles_schema():
     """Initialize auction profiles database schema."""
@@ -327,6 +311,7 @@ def init_auction_profiles_schema():
 # REPOSITORY
 # =============================================================================
 
+
 class AuctionProfileRepository:
     """Repository for AuctionProfile operations."""
 
@@ -339,9 +324,15 @@ class AuctionProfileRepository:
                    (auction_type_id, auction_code, name, description,
                     profile_json, version, is_active)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (profile.auction_type_id, profile.auction_code, profile.name,
-                 profile.description, json.dumps(profile.to_dict()),
-                 profile.version, profile.is_active)
+                (
+                    profile.auction_type_id,
+                    profile.auction_code,
+                    profile.name,
+                    profile.description,
+                    json.dumps(profile.to_dict()),
+                    profile.version,
+                    profile.is_active,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -350,9 +341,7 @@ class AuctionProfileRepository:
     def get_by_id(id: int) -> Optional[AuctionProfile]:
         """Get auction profile by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM auction_profiles WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM auction_profiles WHERE id = ?", (id,)).fetchone()
             if row:
                 data = json.loads(row["profile_json"])
                 data["id"] = row["id"]
@@ -367,7 +356,7 @@ class AuctionProfileRepository:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM auction_profiles WHERE auction_code = ? AND is_active = TRUE",
-                (auction_code.upper(),)
+                (auction_code.upper(),),
             ).fetchone()
             if row:
                 data = json.loads(row["profile_json"])
@@ -378,7 +367,7 @@ class AuctionProfileRepository:
             return None
 
     @staticmethod
-    def list_all(include_inactive: bool = False) -> List[AuctionProfile]:
+    def list_all(include_inactive: bool = False) -> list[AuctionProfile]:
         """List all auction profiles."""
         sql = "SELECT * FROM auction_profiles"
         if not include_inactive:
@@ -411,8 +400,15 @@ class AuctionProfileRepository:
                    name = ?, description = ?, profile_json = ?,
                    version = ?, is_active = ?, updated_at = ?
                    WHERE id = ?""",
-                (profile.name, profile.description, json.dumps(profile.to_dict()),
-                 profile.version, profile.is_active, profile.updated_at, profile.id)
+                (
+                    profile.name,
+                    profile.description,
+                    json.dumps(profile.to_dict()),
+                    profile.version,
+                    profile.is_active,
+                    profile.updated_at,
+                    profile.id,
+                ),
             )
             conn.commit()
             return True
@@ -423,7 +419,7 @@ class AuctionProfileRepository:
         with get_connection() as conn:
             conn.execute(
                 "UPDATE auction_profiles SET is_active = FALSE, updated_at = ? WHERE id = ?",
-                (datetime.utcnow().isoformat(), id)
+                (datetime.utcnow().isoformat(), id),
             )
             conn.commit()
             return True
@@ -456,11 +452,12 @@ class AuctionProfileRepository:
 # PROFILE SERVICE
 # =============================================================================
 
+
 class AuctionProfileService:
     """Service for working with auction profiles."""
 
     def __init__(self):
-        self._profiles_cache: Dict[str, AuctionProfile] = {}
+        self._profiles_cache: dict[str, AuctionProfile] = {}
 
     def get_profile(self, auction_code: str) -> Optional[AuctionProfile]:
         """Get auction profile by code (cached)."""
@@ -471,11 +468,7 @@ class AuctionProfileService:
                 self._profiles_cache[code] = profile
         return self._profiles_cache.get(code)
 
-    def apply_defaults(
-        self,
-        auction_code: str,
-        extracted_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def apply_defaults(self, auction_code: str, extracted_fields: dict[str, Any]) -> dict[str, Any]:
         """
         Apply auction profile defaults to extracted fields.
 
@@ -494,11 +487,7 @@ class AuctionProfileService:
 
         return result
 
-    def get_field_patterns(
-        self,
-        auction_code: str,
-        field_key: str
-    ) -> Optional[List[str]]:
+    def get_field_patterns(self, auction_code: str, field_key: str) -> Optional[list[str]]:
         """Get custom extraction patterns for a field."""
         profile = self.get_profile(auction_code)
         if not profile:

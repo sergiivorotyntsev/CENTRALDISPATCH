@@ -206,7 +206,6 @@ class TransportListing:
 
         return listing
 ''',
-
     # ============== extractors/__init__.py ==============
     "extractors/__init__.py": '''"""Extractor manager - auto-detects document type and uses appropriate extractor."""
 from typing import Optional, List
@@ -254,7 +253,6 @@ def extract_from_pdf(pdf_path: str) -> Optional[AuctionInvoice]:
     manager = ExtractorManager()
     return manager.extract(pdf_path)
 ''',
-
     # ============== extractors/base.py ==============
     "extractors/base.py": '''"""Base extractor class for auction invoices."""
 import re
@@ -393,7 +391,6 @@ class BaseExtractor(ABC):
             return float(amount)
         return None
 ''',
-
     # ============== extractors/iaa.py ==============
     "extractors/iaa.py": '''"""IAA (Insurance Auto Auctions) document extractor."""
 import re
@@ -515,7 +512,6 @@ class IAAExtractor(BaseExtractor):
                 )
         return None
 ''',
-
     # ============== extractors/manheim.py ==============
     "extractors/manheim.py": '''"""Manheim (Cox Automotive) document extractor."""
 import re
@@ -672,7 +668,6 @@ class ManheimExtractor(BaseExtractor):
             vehicle_type=self.detect_vehicle_type(make, model or "")
         )
 ''',
-
     # ============== extractors/copart.py ==============
     "extractors/copart.py": '''"""Copart document extractor."""
 import re
@@ -800,7 +795,6 @@ class CopartExtractor(BaseExtractor):
             vehicle_type=self.detect_vehicle_type(make or "", model or "")
         )
 ''',
-
     # ============== extractors/gate_pass.py ==============
     "extractors/gate_pass.py": '''"""Gate Pass / PIN extractor from email body."""
 import re
@@ -909,7 +903,6 @@ def _html_to_text(html: str) -> str:
     text = text.replace('&nbsp;', ' ').replace('&amp;', '&')
     return text.strip()
 ''',
-
     # ============== services/clickup.py ==============
     "services/clickup.py": '''"""ClickUp API client for creating vehicle pickup tasks."""
 import os
@@ -1028,7 +1021,6 @@ def create_vehicle_pickup_task(
     task = ClickUpTask(name=name, description="\\n".join(desc_parts), priority=3, tags=[source.lower()])
     return client.create_task(task)
 ''',
-
     # ============== services/idempotency.py ==============
     "services/idempotency.py": '''"""Idempotency storage for email deduplication."""
 import sqlite3
@@ -1121,7 +1113,6 @@ class IdempotencyStore:
         except sqlite3.IntegrityError:
             return False
 ''',
-
     # ============== services/central_dispatch.py ==============
     "services/central_dispatch.py": '''"""Central Dispatch API client service."""
 import os
@@ -1233,9 +1224,8 @@ def create_client_from_env() -> CentralDispatchClient:
     marketplace_id = os.environ.get("CD_MARKETPLACE_ID")
     return CentralDispatchClient(client_id=client_id, client_secret=client_secret, marketplace_id=int(marketplace_id) if marketplace_id else None)
 ''',
-
     # ============== .gitignore ==============
-    ".gitignore": '''# Environment variables (NEVER commit!)
+    ".gitignore": """# Environment variables (NEVER commit!)
 .env
 .env.local
 .env.production
@@ -1264,10 +1254,9 @@ Thumbs.db
 
 # Logs
 *.log
-''',
-
+""",
     # ============== .env.example ==============
-    ".env.example": '''# Email Configuration (IMAP)
+    ".env.example": """# Email Configuration (IMAP)
 EMAIL_IMAP_SERVER=imap.gmail.com
 EMAIL_ADDRESS=info@y7agency.com
 EMAIL_PASSWORD=your-app-password-here
@@ -1282,12 +1271,11 @@ CLICKUP_LIST_ID=901317344729
 CD_CLIENT_ID=your-client-id
 CD_CLIENT_SECRET=your-client-secret
 CD_MARKETPLACE_ID=10000
-''',
-
+""",
     # ============== requirements.txt ==============
-    "requirements.txt": '''pdfplumber>=0.10.0
+    "requirements.txt": """pdfplumber>=0.10.0
 requests>=2.28.0
-''',
+""",
 }
 
 

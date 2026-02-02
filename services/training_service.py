@@ -8,17 +8,19 @@ This service handles:
 4. Providing learned rules to extractors
 """
 
-import re
 import json
 import logging
+import re
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
+from typing import Any, Optional
 
 from sqlmodel import Session, select
+
 from models.training import (
-    ExtractionRule, FieldCorrection, TrainingExample,
-    ExtractionPattern, FieldCorrectionCreate
+    ExtractionRule,
+    FieldCorrection,
+    FieldCorrectionCreate,
+    TrainingExample,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,11 +37,8 @@ class TrainingService:
     # =========================================================================
 
     def save_corrections(
-        self,
-        run_id: int,
-        corrections: List[FieldCorrectionCreate],
-        mark_validated: bool = True
-    ) -> Tuple[int, int]:
+        self, run_id: int, corrections: list[FieldCorrectionCreate], mark_validated: bool = True
+    ) -> tuple[int, int]:
         """
         Save field corrections from user review.
 
@@ -50,9 +49,9 @@ class TrainingService:
         if not run_info:
             raise ValueError(f"Extraction run {run_id} not found")
 
-        auction_type_id = run_info.get('auction_type_id', 1)
-        document_id = run_info.get('document_id', run_id)
-        extracted_text = run_info.get('extracted_text', '')
+        auction_type_id = run_info.get("auction_type_id", 1)
+        document_id = run_info.get("document_id", run_id)
+        extracted_text = run_info.get("extracted_text", "")
 
         saved_count = 0
         error_count = 0
@@ -69,7 +68,9 @@ class TrainingService:
                     corrected_value=correction.corrected_value,
                     was_correct=correction.was_correct,
                     context_text=self._find_context(extracted_text, correction.corrected_value),
-                    preceding_label=self._find_preceding_label(extracted_text, correction.corrected_value),
+                    preceding_label=self._find_preceding_label(
+                        extracted_text, correction.corrected_value
+                    ),
                 )
                 self.session.add(fc)
                 saved_count += 1
@@ -80,8 +81,7 @@ class TrainingService:
         # Create training example
         if saved_count > 0:
             corrected_fields = {
-                c.field_key: c.corrected_value or c.predicted_value
-                for c in corrections
+                c.field_key: c.corrected_value or c.predicted_value for c in corrections
             }
             example = TrainingExample(
                 auction_type_id=auction_type_id,
@@ -104,20 +104,20 @@ class TrainingService:
 
         return saved_count, error_count
 
-    def _get_run_info(self, run_id: int) -> Optional[Dict[str, Any]]:
+    def _get_run_info(self, run_id: int) -> Optional[dict[str, Any]]:
         """Get extraction run info from main database."""
         try:
             from api.database import get_connection
+
             with get_connection() as conn:
                 row = conn.execute(
-                    "SELECT * FROM extraction_runs WHERE id = ?",
-                    (run_id,)
+                    "SELECT * FROM extraction_runs WHERE id = ?", (run_id,)
                 ).fetchone()
                 if row:
                     return dict(row)
         except Exception as e:
             logger.warning(f"Could not get run info: {e}")
-        return {'auction_type_id': 1, 'document_id': run_id, 'extracted_text': ''}
+        return {"auction_type_id": 1, "document_id": run_id, "extracted_text": ""}
 
     def _find_context(self, text: str, value: str, window: int = 200) -> Optional[str]:
         """Find context around a value in text."""
@@ -149,7 +149,7 @@ class TrainingService:
 
         # Look at the lines before the value
         before = text[:pos]
-        lines = before.split('\n')
+        lines = before.split("\n")
 
         # Try to find the closest label
         for i in range(len(lines) - 1, max(len(lines) - 5, -1), -1):
@@ -160,31 +160,31 @@ class TrainingService:
             # Check if it looks like a label
             # Common label patterns in auction documents
             label_indicators = [
-                r'PHYSICAL\s*ADDRESS',
-                r'LOT\s*(LOCATION|ADDRESS)',
-                r'PICKUP',
-                r'DELIVERY',
-                r'MEMBER',
-                r'SELLER',
-                r'BUYER',
-                r'VEHICLE',
-                r'VIN',
-                r'LOT\s*#',
+                r"PHYSICAL\s*ADDRESS",
+                r"LOT\s*(LOCATION|ADDRESS)",
+                r"PICKUP",
+                r"DELIVERY",
+                r"MEMBER",
+                r"SELLER",
+                r"BUYER",
+                r"VEHICLE",
+                r"VIN",
+                r"LOT\s*#",
             ]
 
             for indicator in label_indicators:
                 if re.search(indicator, line, re.IGNORECASE):
-                    return line.rstrip(':').strip()
+                    return line.rstrip(":").strip()
 
             # Generic: ends with colon or is ALL CAPS short phrase
-            if line.endswith(':'):
-                return line.rstrip(':').strip()
+            if line.endswith(":"):
+                return line.rstrip(":").strip()
             if line.isupper() and 3 < len(line) < 50:
                 return line
 
         return None
 
-    def _extract_text_patterns(self, text: str, value: str) -> List[str]:
+    def _extract_text_patterns(self, text: str, value: str) -> list[str]:
         """
         Extract patterns that could identify this value in similar documents.
 
@@ -200,22 +200,22 @@ class TrainingService:
             return patterns
 
         # Get preceding text (up to 200 chars)
-        before = text[max(0, pos - 200):pos]
-        lines_before = before.split('\n')
+        before = text[max(0, pos - 200) : pos]
+        lines_before = before.split("\n")
 
         # Pattern 1: Direct preceding label
         for line in reversed(lines_before[-3:]):
             line = line.strip()
-            if line and (line.endswith(':') or line.isupper()):
+            if line and (line.endswith(":") or line.isupper()):
                 # Create regex pattern from the label
-                escaped = re.escape(line.rstrip(':'))
+                escaped = re.escape(line.rstrip(":"))
                 patterns.append(escaped)
                 break
 
         # Pattern 2: Same-line prefix (e.g., "Address: 123 Main St")
-        same_line_start = before.rfind('\n')
+        same_line_start = before.rfind("\n")
         if same_line_start >= 0:
-            same_line_prefix = before[same_line_start + 1:].strip()
+            same_line_prefix = before[same_line_start + 1 :].strip()
             if same_line_prefix:
                 escaped = re.escape(same_line_prefix)
                 patterns.append(f"{escaped}[:\\s]*")
@@ -232,7 +232,7 @@ class TrainingService:
         corrections = self.session.exec(
             select(FieldCorrection)
             .where(FieldCorrection.auction_type_id == auction_type_id)
-            .where(FieldCorrection.is_processed == False)
+            .where(not FieldCorrection.is_processed)
             .order_by(FieldCorrection.created_at.desc())
             .limit(100)
         ).all()
@@ -241,7 +241,7 @@ class TrainingService:
             return
 
         # Group by field_key
-        by_field: Dict[str, List[FieldCorrection]] = {}
+        by_field: dict[str, list[FieldCorrection]] = {}
         for c in corrections:
             if c.field_key not in by_field:
                 by_field[c.field_key] = []
@@ -257,10 +257,7 @@ class TrainingService:
         self.session.commit()
 
     def _learn_field_patterns(
-        self,
-        auction_type_id: int,
-        field_key: str,
-        corrections: List[FieldCorrection]
+        self, auction_type_id: int, field_key: str, corrections: list[FieldCorrection]
     ):
         """
         Learn extraction patterns for a specific field.
@@ -272,7 +269,6 @@ class TrainingService:
         """
         # Collect labels and patterns from corrections
         labels = []
-        exclude_patterns = []
 
         for c in corrections:
             if c.preceding_label:
@@ -294,12 +290,14 @@ class TrainingService:
             for c in corrections:
                 if c.corrected_value:
                     # For address fields, look for common address label patterns
-                    if 'address' in field_key or 'city' in field_key or 'state' in field_key:
-                        labels.extend([
-                            r'PHYSICAL\s*ADDRESS',
-                            r'LOT\s*(LOCATION|ADDRESS)',
-                            r'PICKUP\s*(LOCATION|ADDRESS)?',
-                        ])
+                    if "address" in field_key or "city" in field_key or "state" in field_key:
+                        labels.extend(
+                            [
+                                r"PHYSICAL\s*ADDRESS",
+                                r"LOT\s*(LOCATION|ADDRESS)",
+                                r"PICKUP\s*(LOCATION|ADDRESS)?",
+                            ]
+                        )
                         break
             if not labels:
                 return
@@ -321,7 +319,7 @@ class TrainingService:
             # Escape special characters but keep the pattern flexible
             pattern = re.escape(clean_label)
             # Make whitespace flexible
-            pattern = re.sub(r'\\ +', r'\\s+', pattern)
+            pattern = re.sub(r"\\ +", r"\\s+", pattern)
             label_patterns.append(pattern)
 
         if not label_patterns:
@@ -332,7 +330,7 @@ class TrainingService:
             select(ExtractionRule)
             .where(ExtractionRule.auction_type_id == auction_type_id)
             .where(ExtractionRule.field_key == field_key)
-            .where(ExtractionRule.is_active == True)
+            .where(ExtractionRule.is_active)
         ).first()
 
         if not rule:
@@ -367,20 +365,22 @@ class TrainingService:
         old_weight = min(rule.validation_count, 10) / 10
         new_weight = 1 - old_weight
         new_confidence = correct_count / total_count if total_count > 0 else 0.5
-        rule.confidence = (rule.confidence * old_weight + new_confidence * new_weight)
+        rule.confidence = rule.confidence * old_weight + new_confidence * new_weight
 
         rule.validation_count += total_count
         rule.updated_at = datetime.utcnow()
 
         self.session.commit()
 
-        logger.info(f"Updated rule for {field_key}: {len(unique_patterns)} patterns, confidence={rule.confidence:.2f}")
+        logger.info(
+            f"Updated rule for {field_key}: {len(unique_patterns)} patterns, confidence={rule.confidence:.2f}"
+        )
 
     # =========================================================================
     # STATS AND QUERIES
     # =========================================================================
 
-    def get_training_stats(self, auction_type_id: Optional[int] = None) -> Dict[str, Any]:
+    def get_training_stats(self, auction_type_id: Optional[int] = None) -> dict[str, Any]:
         """Get training statistics."""
         stats = {"by_auction_type": {}}
 
@@ -388,29 +388,27 @@ class TrainingService:
         auction_types = self._get_auction_types()
 
         for at in auction_types:
-            at_id = at['id']
-            at_code = at['code']
+            at_id = at["id"]
+            at_code = at["code"]
 
             if auction_type_id and at_id != auction_type_id:
                 continue
 
             # Count corrections
             correction_count = self.session.exec(
-                select(FieldCorrection)
-                .where(FieldCorrection.auction_type_id == at_id)
+                select(FieldCorrection).where(FieldCorrection.auction_type_id == at_id)
             ).all()
 
             # Count examples
             examples = self.session.exec(
-                select(TrainingExample)
-                .where(TrainingExample.auction_type_id == at_id)
+                select(TrainingExample).where(TrainingExample.auction_type_id == at_id)
             ).all()
 
             # Count rules
             rules = self.session.exec(
                 select(ExtractionRule)
                 .where(ExtractionRule.auction_type_id == at_id)
-                .where(ExtractionRule.is_active == True)
+                .where(ExtractionRule.is_active)
             ).all()
 
             validated = sum(1 for e in examples if e.is_validated)
@@ -427,10 +425,11 @@ class TrainingService:
 
         return stats
 
-    def _get_auction_types(self) -> List[Dict[str, Any]]:
+    def _get_auction_types(self) -> list[dict[str, Any]]:
         """Get auction types from main database."""
         try:
             from api.database import get_connection
+
             with get_connection() as conn:
                 rows = conn.execute("SELECT id, code, name FROM auction_types").fetchall()
                 return [dict(row) for row in rows]
@@ -443,14 +442,11 @@ class TrainingService:
             ]
 
     def get_extraction_rules(
-        self,
-        auction_type_id: int,
-        field_key: Optional[str] = None
-    ) -> List[ExtractionRule]:
+        self, auction_type_id: int, field_key: Optional[str] = None
+    ) -> list[ExtractionRule]:
         """Get extraction rules for an auction type."""
         query = select(ExtractionRule).where(
-            ExtractionRule.auction_type_id == auction_type_id,
-            ExtractionRule.is_active == True
+            ExtractionRule.auction_type_id == auction_type_id, ExtractionRule.is_active
         )
 
         if field_key:
@@ -458,14 +454,14 @@ class TrainingService:
 
         return list(self.session.exec(query).all())
 
-    def get_rules_for_extractor(self, auction_type_code: str) -> Dict[str, Any]:
+    def get_rules_for_extractor(self, auction_type_code: str) -> dict[str, Any]:
         """Get rules in format suitable for extractors."""
         # Find auction type ID
         auction_types = self._get_auction_types()
         auction_type_id = None
         for at in auction_types:
-            if at['code'].lower() == auction_type_code.lower():
-                auction_type_id = at['id']
+            if at["code"].lower() == auction_type_code.lower():
+                auction_type_id = at["id"]
                 break
 
         if not auction_type_id:

@@ -12,20 +12,19 @@ Features:
 - No sensitive data (tokens redacted)
 """
 
-import json
 import hashlib
-import time
+import json
 import uuid
-from datetime import datetime
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
 from enum import Enum
+from typing import Any, Optional
 
 from api.database import get_connection
 
 
 class AuditEventType(str, Enum):
     """Types of audit events."""
+
     UPLOAD = "UPLOAD"
     EXTRACT = "EXTRACT"
     OCR = "OCR"
@@ -46,6 +45,7 @@ class AuditEventType(str, Enum):
 @dataclass
 class AuditEvent:
     """An audit event record."""
+
     id: int = None
     event_type: str = None
     entity_type: str = None  # document, run, listing
@@ -54,7 +54,7 @@ class AuditEvent:
     document_id: Optional[int] = None
     request_id: Optional[str] = None
     payload_hash: Optional[str] = None
-    metadata_json: Optional[Dict] = None
+    metadata_json: Optional[dict] = None
     response_status: Optional[int] = None
     response_snippet: Optional[str] = None
     cd_listing_id: Optional[str] = None
@@ -62,7 +62,7 @@ class AuditEvent:
     etag_after: Optional[str] = None
     created_at: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "event_type": self.event_type,
@@ -136,7 +136,7 @@ class AuditLogRepository:
         document_id: int = None,
         request_id: str = None,
         payload_hash: str = None,
-        metadata: Dict = None,
+        metadata: dict = None,
         response_status: int = None,
         response_snippet: str = None,
         cd_listing_id: str = None,
@@ -171,20 +171,19 @@ class AuditLogRepository:
                     cd_listing_id,
                     etag_before,
                     etag_after,
-                )
+                ),
             )
             conn.commit()
             return cursor.lastrowid
 
     @staticmethod
-    def get_by_run(run_id: int) -> List[AuditEvent]:
+    def get_by_run(run_id: int) -> list[AuditEvent]:
         """Get all audit events for an extraction run."""
         _init_audit_table()
 
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT * FROM audit_events WHERE run_id = ? ORDER BY created_at ASC",
-                (run_id,)
+                "SELECT * FROM audit_events WHERE run_id = ? ORDER BY created_at ASC", (run_id,)
             ).fetchall()
 
         events = []
@@ -197,14 +196,14 @@ class AuditLogRepository:
         return events
 
     @staticmethod
-    def get_by_listing(cd_listing_id: str) -> List[AuditEvent]:
+    def get_by_listing(cd_listing_id: str) -> list[AuditEvent]:
         """Get all audit events for a CD listing."""
         _init_audit_table()
 
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM audit_events WHERE cd_listing_id = ? ORDER BY created_at ASC",
-                (cd_listing_id,)
+                (cd_listing_id,),
             ).fetchall()
 
         events = []
@@ -220,7 +219,7 @@ class AuditLogRepository:
     def get_recent(
         event_type: str = None,
         limit: int = 100,
-    ) -> List[AuditEvent]:
+    ) -> list[AuditEvent]:
         """Get recent audit events."""
         _init_audit_table()
 
@@ -247,7 +246,7 @@ class AuditLogRepository:
         return events
 
 
-def _redact_sensitive(data: Dict) -> Dict:
+def _redact_sensitive(data: dict) -> dict:
     """Redact sensitive information from data."""
     sensitive_keys = {"token", "password", "secret", "api_key", "authorization"}
     result = {}
@@ -259,17 +258,14 @@ def _redact_sensitive(data: Dict) -> Dict:
         elif isinstance(value, dict):
             result[key] = _redact_sensitive(value)
         elif isinstance(value, list):
-            result[key] = [
-                _redact_sensitive(v) if isinstance(v, dict) else v
-                for v in value
-            ]
+            result[key] = [_redact_sensitive(v) if isinstance(v, dict) else v for v in value]
         else:
             result[key] = value
 
     return result
 
 
-def compute_payload_hash(payload: Dict) -> str:
+def compute_payload_hash(payload: dict) -> str:
     """Compute deterministic hash of payload for change detection."""
     # Sort keys for deterministic ordering
     normalized = json.dumps(payload, sort_keys=True, default=str)
@@ -283,11 +279,12 @@ def generate_request_id() -> str:
 
 # Convenience functions for logging audit events
 
+
 def log_post_create(
     run_id: int,
-    payload: Dict,
+    payload: dict,
     response_status: int,
-    response_body: Dict,
+    response_body: dict,
     cd_listing_id: str = None,
     etag: str = None,
     request_id: str = None,
@@ -313,9 +310,9 @@ def log_post_create(
 
 def log_post_update(
     run_id: int,
-    payload: Dict,
+    payload: dict,
     response_status: int,
-    response_body: Dict,
+    response_body: dict,
     cd_listing_id: str,
     etag_before: str = None,
     etag_after: str = None,
@@ -342,7 +339,7 @@ def log_post_update(
 
 def log_post_fail(
     run_id: int,
-    payload: Dict,
+    payload: dict,
     response_status: int,
     error_message: str,
     cd_listing_id: str = None,
@@ -420,7 +417,7 @@ def log_duplicate_detected(
     )
 
 
-def get_audit_trail(run_id: int) -> List[Dict]:
+def get_audit_trail(run_id: int) -> list[dict]:
     """Get complete audit trail for an extraction run."""
     events = AuditLogRepository.get_by_run(run_id)
     return [e.to_dict() for e in events]

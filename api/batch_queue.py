@@ -5,22 +5,21 @@ Manages batch job processing for posting multiple listings to Central Dispatch.
 Tracks progress, supports cancellation, and provides job status.
 """
 
-import asyncio
 import logging
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable
-from concurrent.futures import ThreadPoolExecutor
-
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class JobStatus(Enum):
     """Batch job status."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -32,9 +31,10 @@ class JobStatus(Enum):
 @dataclass
 class JobItem:
     """Single item in a batch job."""
+
     run_id: int
     status: str = "pending"  # pending, processing, completed, failed, skipped
-    result: Optional[Dict[str, Any]] = None
+    result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -43,8 +43,9 @@ class JobItem:
 @dataclass
 class BatchJob:
     """Batch job definition."""
+
     job_id: str
-    items: List[JobItem]
+    items: list[JobItem]
     status: JobStatus = JobStatus.PENDING
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     started_at: Optional[str] = None
@@ -65,12 +66,12 @@ class BatchQueue:
     """
 
     def __init__(self, max_workers: int = 3):
-        self._jobs: Dict[str, BatchJob] = {}
+        self._jobs: dict[str, BatchJob] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._max_workers = max_workers
 
-    def create_job(self, run_ids: List[int]) -> str:
+    def create_job(self, run_ids: list[int]) -> str:
         """
         Create a new batch job.
 
@@ -95,7 +96,7 @@ class BatchQueue:
         logger.info(f"Created batch job {job_id} with {len(run_ids)} items")
         return job_id
 
-    def start_job(self, job_id: str, processor: Callable[[int], Dict[str, Any]]) -> bool:
+    def start_job(self, job_id: str, processor: Callable[[int], dict[str, Any]]) -> bool:
         """
         Start processing a batch job.
 
@@ -121,7 +122,7 @@ class BatchQueue:
         self._executor.submit(self._process_job, job_id, processor)
         return True
 
-    def _process_job(self, job_id: str, processor: Callable[[int], Dict[str, Any]]):
+    def _process_job(self, job_id: str, processor: Callable[[int], dict[str, Any]]):
         """Process job items sequentially."""
         job = self._jobs.get(job_id)
         if not job:
@@ -185,7 +186,7 @@ class BatchQueue:
 
             return False
 
-    def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_status(self, job_id: str) -> Optional[dict[str, Any]]:
         """
         Get job status and progress.
 
@@ -211,14 +212,16 @@ class BatchQueue:
             "skipped": skipped,
             "pending": pending,
             "processing": processing,
-            "progress_percent": int((completed + failed + skipped) / len(job.items) * 100) if job.items else 0,
+            "progress_percent": int((completed + failed + skipped) / len(job.items) * 100)
+            if job.items
+            else 0,
             "created_at": job.created_at,
             "started_at": job.started_at,
             "completed_at": job.completed_at,
             "current_item": job.current_index,
         }
 
-    def get_results(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_results(self, job_id: str) -> Optional[dict[str, Any]]:
         """
         Get detailed results for a completed job.
 
@@ -244,14 +247,18 @@ class BatchQueue:
                 for item in job.items
             ],
             "summary": {
-                "posted": sum(1 for i in job.items if i.result and i.result.get("action") == "posted"),
-                "updated": sum(1 for i in job.items if i.result and i.result.get("action") == "updated"),
+                "posted": sum(
+                    1 for i in job.items if i.result and i.result.get("action") == "posted"
+                ),
+                "updated": sum(
+                    1 for i in job.items if i.result and i.result.get("action") == "updated"
+                ),
                 "failed": sum(1 for i in job.items if i.status == "failed"),
                 "skipped": sum(1 for i in job.items if i.status == "skipped"),
-            }
+            },
         }
 
-    def list_jobs(self, status: Optional[JobStatus] = None) -> List[Dict[str, Any]]:
+    def list_jobs(self, status: Optional[JobStatus] = None) -> list[dict[str, Any]]:
         """List all jobs, optionally filtered by status."""
         jobs = []
         for job in self._jobs.values():

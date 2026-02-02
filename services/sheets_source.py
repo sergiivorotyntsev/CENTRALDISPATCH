@@ -11,19 +11,18 @@ Features:
 4. Update export status after CD operations
 """
 
-import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional
 
 from core.config import SheetsConfig
 from schemas.sheets_schema_v1 import (
-    get_column_names,
-    get_column_index,
     column_index_to_letter,
     compute_payload_hash,
+    get_column_index,
+    get_column_names,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ class PickupRecordFinal:
     Final pickup record built from *_final columns.
     This is what gets exported to Central Dispatch.
     """
+
     # Identification
     pickup_uid: str
     row_number: int
@@ -82,7 +82,7 @@ class PickupRecordFinal:
     cd_listing_id: str = ""
     cd_payload_hash: str = ""
 
-    def to_cd_payload(self) -> Dict[str, Any]:
+    def to_cd_payload(self) -> dict[str, Any]:
         """Convert to Central Dispatch API payload format."""
         # Build CD payload based on cd_field_mapping.yaml
         payload = {
@@ -216,17 +216,22 @@ class SheetsSource:
                 "Run: pip install google-auth google-api-python-client"
             )
 
-    def _read_all_rows(self) -> List[Dict[str, Any]]:
+    def _read_all_rows(self) -> list[dict[str, Any]]:
         """Read all data rows from the sheet."""
         service = self._get_service()
 
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.config.sheet_name}!A:{last_col}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         if not values:
@@ -242,12 +247,11 @@ class SheetsSource:
 
         return rows
 
-    def _row_to_final_record(self, row: Dict[str, Any]) -> PickupRecordFinal:
+    def _row_to_final_record(self, row: dict[str, Any]) -> PickupRecordFinal:
         """Convert a row dict to PickupRecordFinal using *_final columns."""
         return PickupRecordFinal(
             pickup_uid=row.get("pickup_uid", ""),
             row_number=row.get("_row_number", 0),
-
             # Vehicle (from *_final columns)
             vin=row.get("vin_final", ""),
             year=self._to_int(row.get("year_final", 0)),
@@ -257,7 +261,6 @@ class SheetsSource:
             running=row.get("running_final", "unknown"),
             mileage=self._to_int(row.get("mileage_final", 0)),
             color=row.get("color_final", ""),
-
             # Pickup location
             pickup_address1=row.get("pickup_address1_final", ""),
             pickup_city=row.get("pickup_city_final", ""),
@@ -265,7 +268,6 @@ class SheetsSource:
             pickup_zip=row.get("pickup_zip_final", ""),
             pickup_contact=row.get("pickup_contact_final", ""),
             pickup_phone=row.get("pickup_phone_final", ""),
-
             # Delivery location
             warehouse_id=row.get("warehouse_id_final", ""),
             warehouse_name=row.get("warehouse_name_final", ""),
@@ -275,13 +277,11 @@ class SheetsSource:
             delivery_zip=row.get("delivery_zip_final", ""),
             delivery_contact=row.get("delivery_contact_final", ""),
             delivery_phone=row.get("delivery_phone_final", ""),
-
             # Pricing & scheduling
             price=self._to_float(row.get("price_final", 0)),
             trailer_type=row.get("trailer_type_final", "open"),
             pickup_date=row.get("pickup_date_final", ""),
             delivery_date=row.get("delivery_date_final", ""),
-
             # Metadata
             auction=row.get("auction_detected", ""),
             auction_ref=row.get("auction_ref_base", ""),
@@ -310,7 +310,7 @@ class SheetsSource:
         except (ValueError, TypeError):
             return 0.0
 
-    def list_ready_for_cd(self, include_changed: bool = True) -> List[PickupRecordFinal]:
+    def list_ready_for_cd(self, include_changed: bool = True) -> list[PickupRecordFinal]:
         """
         List rows that are ready for CD export.
 
@@ -333,10 +333,7 @@ class SheetsSource:
             cd_status = row.get("cd_export_status", "")
 
             # Check if ready for export
-            is_ready = (
-                status == "READY_FOR_CD"
-                or cd_status == "READY"
-            )
+            is_ready = status == "READY_FOR_CD" or cd_status == "READY"
 
             # Check if payload changed (for re-export)
             has_changed = False
@@ -352,16 +349,12 @@ class SheetsSource:
         logger.info(f"Found {len(ready)} rows ready for CD export")
         return ready
 
-    def list_by_status(self, status: str) -> List[PickupRecordFinal]:
+    def list_by_status(self, status: str) -> list[PickupRecordFinal]:
         """List rows with a specific status."""
         rows = self._read_all_rows()
-        return [
-            self._row_to_final_record(row)
-            for row in rows
-            if row.get("status") == status
-        ]
+        return [self._row_to_final_record(row) for row in rows if row.get("status") == status]
 
-    def list_by_cd_status(self, cd_status: str) -> List[PickupRecordFinal]:
+    def list_by_cd_status(self, cd_status: str) -> list[PickupRecordFinal]:
         """List rows with a specific CD export status."""
         rows = self._read_all_rows()
         return [
@@ -385,10 +378,15 @@ class SheetsSource:
         last_col = column_index_to_letter(len(self.column_names) - 1)
         range_name = f"{self.config.sheet_name}!A{row_number}:{last_col}{row_number}"
 
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=range_name,
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=range_name,
+            )
+            .execute()
+        )
 
         values = result.get("values", [[]])[0]
         if not values:
@@ -441,19 +439,23 @@ class SheetsSource:
         if cd_status_idx >= 0:
             col_letter = column_index_to_letter(cd_status_idx)
             status_value = "SENT" if success else "ERROR"
-            updates.append({
-                "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                "values": [[status_value]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                    "values": [[status_value]],
+                }
+            )
 
         # cd_last_export_at
         export_at_idx = get_column_index("cd_last_export_at")
         if export_at_idx >= 0:
             col_letter = column_index_to_letter(export_at_idx)
-            updates.append({
-                "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                "values": [[now]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                    "values": [[now]],
+                }
+            )
 
         if success:
             # cd_listing_id
@@ -461,57 +463,69 @@ class SheetsSource:
                 listing_id_idx = get_column_index("cd_listing_id")
                 if listing_id_idx >= 0:
                     col_letter = column_index_to_letter(listing_id_idx)
-                    updates.append({
-                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                        "values": [[listing_id]],
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                            "values": [[listing_id]],
+                        }
+                    )
 
             # status -> EXPORTED_TO_CD
             status_idx = get_column_index("status")
             if status_idx >= 0:
                 col_letter = column_index_to_letter(status_idx)
-                updates.append({
-                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                    "values": [["EXPORTED_TO_CD"]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                        "values": [["EXPORTED_TO_CD"]],
+                    }
+                )
 
             # Clear error
             error_idx = get_column_index("cd_last_error")
             if error_idx >= 0:
                 col_letter = column_index_to_letter(error_idx)
-                updates.append({
-                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                    "values": [[""]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                        "values": [[""]],
+                    }
+                )
         else:
             # cd_last_error
             if error:
                 error_idx = get_column_index("cd_last_error")
                 if error_idx >= 0:
                     col_letter = column_index_to_letter(error_idx)
-                    updates.append({
-                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                        "values": [[error[:500]]],  # Truncate long errors
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                            "values": [[error[:500]]],  # Truncate long errors
+                        }
+                    )
 
             # status -> FAILED
             status_idx = get_column_index("status")
             if status_idx >= 0:
                 col_letter = column_index_to_letter(status_idx)
-                updates.append({
-                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                    "values": [["FAILED"]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                        "values": [["FAILED"]],
+                    }
+                )
 
         # cd_payload_json (snapshot)
         if payload_json:
             payload_idx = get_column_index("cd_payload_json")
             if payload_idx >= 0:
                 col_letter = column_index_to_letter(payload_idx)
-                updates.append({
-                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                    "values": [[payload_json[:10000]]],  # Truncate if very long
-                })
+                updates.append(
+                    {
+                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                        "values": [[payload_json[:10000]]],  # Truncate if very long
+                    }
+                )
 
         # cd_payload_hash
         if payload_json:
@@ -520,10 +534,12 @@ class SheetsSource:
                 hash_idx = get_column_index("cd_payload_hash")
                 if hash_idx >= 0:
                     col_letter = column_index_to_letter(hash_idx)
-                    updates.append({
-                        "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                        "values": [[record.compute_payload_hash()]],
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                            "values": [[record.compute_payload_hash()]],
+                        }
+                    )
 
         # Execute updates
         if updates:
@@ -557,19 +573,23 @@ class SheetsSource:
         status_idx = get_column_index("status")
         if status_idx >= 0:
             col_letter = column_index_to_letter(status_idx)
-            updates.append({
-                "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                "values": [["READY_FOR_CD"]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                    "values": [["READY_FOR_CD"]],
+                }
+            )
 
         # cd_export_status -> READY
         cd_status_idx = get_column_index("cd_export_status")
         if cd_status_idx >= 0:
             col_letter = column_index_to_letter(cd_status_idx)
-            updates.append({
-                "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
-                "values": [["READY"]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.config.sheet_name}!{col_letter}{row_number}",
+                    "values": [["READY"]],
+                }
+            )
 
         if updates:
             service.spreadsheets().values().batchUpdate(
@@ -582,7 +602,7 @@ class SheetsSource:
 
             logger.info(f"Marked pickup_uid={pickup_uid} as ready for CD")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get statistics about rows in the sheet."""
         rows = self._read_all_rows()
 

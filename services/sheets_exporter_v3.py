@@ -17,20 +17,19 @@ Schema Version: 3
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any, Optional
 
 from schemas.sheets_schema_v3 import (
     COLUMNS,
     ColumnClass,
     RowStatus,
     WarehouseMode,
-    get_column_names,
+    generate_dispatch_id,
     get_column_index,
-    get_columns_by_class,
-    get_system_audit_columns,
+    get_column_names,
     get_delivery_columns,
     get_release_notes_columns,
-    generate_dispatch_id,
+    get_system_audit_columns,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ class SheetsExporterV3:
         self.config = sheets_config
         self.sheet_name = sheet_name
         self._service = None
-        self._headers_cache: Optional[List[str]] = None
+        self._headers_cache: Optional[list[str]] = None
 
     def _get_service(self):
         """Get or create Google Sheets API service."""
@@ -71,16 +70,21 @@ class SheetsExporterV3:
             self._service = build("sheets", "v4", credentials=credentials)
         return self._service
 
-    def _get_headers(self) -> List[str]:
+    def _get_headers(self) -> list[str]:
         """Get current headers from the sheet."""
         if self._headers_cache is not None:
             return self._headers_cache
 
         service = self._get_service()
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=f"{self.sheet_name}!1:1",
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=f"{self.sheet_name}!1:1",
+            )
+            .execute()
+        )
 
         values = result.get("values", [])
         self._headers_cache = values[0] if values else []
@@ -95,10 +99,15 @@ class SheetsExporterV3:
         expected_headers = get_column_names()
 
         # Get current headers
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=f"{self.sheet_name}!1:1",
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=f"{self.sheet_name}!1:1",
+            )
+            .execute()
+        )
 
         current_headers = result.get("values", [[]])[0]
 
@@ -116,7 +125,7 @@ class SheetsExporterV3:
         self._headers_cache = expected_headers
         return True
 
-    def _find_row_by_dispatch_id(self, dispatch_id: str) -> Optional[Tuple[int, Dict[str, Any]]]:
+    def _find_row_by_dispatch_id(self, dispatch_id: str) -> Optional[tuple[int, dict[str, Any]]]:
         """
         Find row by dispatch_id.
 
@@ -133,10 +142,15 @@ class SheetsExporterV3:
         dispatch_id_col = headers.index("dispatch_id")
 
         # Get all rows
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=f"{self.sheet_name}!A:ZZ",
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=f"{self.sheet_name}!A:ZZ",
+            )
+            .execute()
+        )
 
         rows = result.get("values", [])
         if len(rows) <= 1:
@@ -163,7 +177,7 @@ class SheetsExporterV3:
         auction_reference: Optional[str] = None,
         vin: Optional[str] = None,
         attachment_hash: Optional[str] = None,
-    ) -> Optional[Tuple[int, Dict[str, Any]]]:
+    ) -> Optional[tuple[int, dict[str, Any]]]:
         """
         Fallback matching when dispatch_id is not available.
 
@@ -180,10 +194,15 @@ class SheetsExporterV3:
         headers = self._get_headers()
 
         # Get all rows
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=f"{self.sheet_name}!A:ZZ",
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=f"{self.sheet_name}!A:ZZ",
+            )
+            .execute()
+        )
 
         rows = result.get("values", [])
         if len(rows) <= 1:
@@ -199,7 +218,7 @@ class SheetsExporterV3:
         vin_idx = get_col_idx("vehicle_vin")
         hash_idx = get_col_idx("attachment_hash")
 
-        def get_cell(row: List[str], idx: int) -> str:
+        def get_cell(row: list[str], idx: int) -> str:
             if idx < 0 or idx >= len(row):
                 return ""
             return str(row[idx]).strip()
@@ -220,7 +239,10 @@ class SheetsExporterV3:
 
             # Priority 2: auction_source + auction_reference
             elif auction_reference and auction_reference.strip():
-                if row_auction == auction_source and row_ref.lower() == auction_reference.strip().lower():
+                if (
+                    row_auction == auction_source
+                    and row_ref.lower() == auction_reference.strip().lower()
+                ):
                     matched = True
 
             # Priority 3: vin
@@ -246,9 +268,9 @@ class SheetsExporterV3:
 
     def upsert_record(
         self,
-        extracted_record: Dict[str, Any],
+        extracted_record: dict[str, Any],
         force_refresh: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Upsert a record using Source of Truth semantics.
 
@@ -316,7 +338,7 @@ class SheetsExporterV3:
                 extracted_record["dispatch_id"] = dispatch_id
             return self._insert_new_row(extracted_record)
 
-    def _insert_new_row(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _insert_new_row(self, record: dict[str, Any]) -> dict[str, Any]:
         """
         Insert a new row with all extracted data.
 
@@ -391,11 +413,11 @@ class SheetsExporterV3:
 
     def _update_existing_row(
         self,
-        record: Dict[str, Any],
+        record: dict[str, Any],
         row_number: int,
-        existing_data: Dict[str, Any],
+        existing_data: dict[str, Any],
         force_refresh: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Update existing row with Source of Truth rules.
 
@@ -532,7 +554,7 @@ class SheetsExporterV3:
             },
         }
 
-    def get_row_by_dispatch_id(self, dispatch_id: str) -> Optional[Dict[str, Any]]:
+    def get_row_by_dispatch_id(self, dispatch_id: str) -> Optional[dict[str, Any]]:
         """
         Get a single row by dispatch_id.
 
@@ -546,9 +568,9 @@ class SheetsExporterV3:
 
     def get_rows_by_status(
         self,
-        statuses: List[RowStatus],
+        statuses: list[RowStatus],
         limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get rows with specific status(es).
 
@@ -567,10 +589,15 @@ class SheetsExporterV3:
             return []
 
         # Get all rows
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.config.spreadsheet_id,
-            range=f"{self.sheet_name}!A:ZZ",
-        ).execute()
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.config.spreadsheet_id,
+                range=f"{self.sheet_name}!A:ZZ",
+            )
+            .execute()
+        )
 
         rows = result.get("values", [])
         if len(rows) <= 1:
@@ -667,7 +694,7 @@ class SheetsExporterV3:
     def save_payload_snapshot(
         self,
         dispatch_id: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
     ) -> bool:
         """
         Save CD payload snapshot for debugging.

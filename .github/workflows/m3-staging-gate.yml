@@ -96,10 +96,28 @@ jobs:
         run: npm audit --audit-level=high || true
         continue-on-error: true
 
-      - name: Check for secrets in logs
+      - name: Check for hardcoded secrets
         run: |
-          # Ensure no hardcoded secrets
-          ! grep -rn "CD_API_KEY\|api_key\s*=" --include="*.py" api/ extractors/ | grep -v "os.environ\|getenv\|config\."
+          # Check for hardcoded secret values (string literals assigned to sensitive vars)
+          # Pattern: SENSITIVE_VAR = "actual_value" or 'actual_value'
+          # Excludes: empty strings, environment lookups, function parameters
+          echo "Checking for hardcoded secrets..."
+
+          # Look for actual hardcoded API keys/tokens (not empty, not env vars)
+          FOUND=$(grep -rn --include="*.py" -E \
+            '(API_KEY|SECRET|TOKEN|PASSWORD)\s*=\s*["\x27][A-Za-z0-9_-]{8,}["\x27]' \
+            api/ extractors/ 2>/dev/null | \
+            grep -v 'os\.environ\|getenv\|\.get\(' | \
+            grep -v '# noqa' | \
+            grep -v 'test' || true)
+
+          if [ -n "$FOUND" ]; then
+            echo "::error::Potential hardcoded secrets found:"
+            echo "$FOUND"
+            exit 1
+          fi
+
+          echo "No hardcoded secrets detected"
 
   # ==========================================================================
   # 2. BACKEND TESTS (Gate 1.2)

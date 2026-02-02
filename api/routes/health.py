@@ -1,11 +1,13 @@
 """Health check endpoints."""
+
+import os
 import subprocess
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
-import os
-from pathlib import Path
 
 router = APIRouter()
 
@@ -14,17 +16,23 @@ APP_VERSION = "1.1.0"
 BUILD_TIME = datetime.utcnow().isoformat() + "Z"
 
 
-def get_git_info() -> Dict[str, str]:
+def get_git_info() -> dict[str, str]:
     """Get git commit info for version tracking."""
     try:
-        git_sha = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
-        git_branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
+        git_sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
+        git_branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
         return {"sha": git_sha, "branch": git_branch}
     except Exception:
         return {"sha": "unknown", "branch": "unknown"}
@@ -32,12 +40,13 @@ def get_git_info() -> Dict[str, str]:
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     version: str
     git_sha: str
     git_branch: str
     build_time: str
-    checks: Dict[str, Any]
+    checks: dict[str, Any]
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -56,6 +65,7 @@ async def health_check():
     # Check database
     try:
         from api.database import DB_PATH
+
         checks["database"] = {
             "status": "ok" if DB_PATH.exists() else "not_initialized",
             "path": str(DB_PATH),
@@ -77,7 +87,9 @@ async def health_check():
     config_files = {
         "local_settings": "config/local_settings.json",
         "env_file": ".env",
-        "sheets_credentials": os.getenv("SHEETS_CREDENTIALS_FILE", "config/sheets_credentials.json"),
+        "sheets_credentials": os.getenv(
+            "SHEETS_CREDENTIALS_FILE", "config/sheets_credentials.json"
+        ),
     }
     for name, path in config_files.items():
         checks[f"config_{name}"] = {
@@ -87,6 +99,7 @@ async def health_check():
     # Check export targets
     try:
         from core.config import load_local_settings
+
         settings = load_local_settings()
         checks["export_targets"] = {
             "enabled": settings.get("export_targets", []),

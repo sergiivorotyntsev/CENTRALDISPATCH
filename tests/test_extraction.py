@@ -7,15 +7,15 @@ Test categories:
 3. E2E tests - full extraction pipeline
 """
 
-import pytest
 import os
-import json
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 # Add project root to path
 import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
@@ -26,11 +26,7 @@ class TestSpatialParser:
         """Test TextElement dataclass properties."""
         from extractors.spatial_parser import TextElement
 
-        elem = TextElement(
-            text="Test",
-            x0=10, y0=20, x1=50, y1=30,
-            page=0
-        )
+        elem = TextElement(text="Test", x0=10, y0=20, x1=50, y1=30, page=0)
 
         assert elem.width == 40
         assert elem.height == 10
@@ -48,7 +44,11 @@ class TestSpatialParser:
                 TextElement("Hello", x0=10, y0=10, x1=50, y1=20, page=0),
                 TextElement("World", x0=10, y0=25, x1=50, y1=35, page=0),
             ],
-            x0=10, y0=10, x1=50, y1=35, page=0
+            x0=10,
+            y0=10,
+            x1=50,
+            y1=35,
+            page=0,
         )
 
         assert "Hello" in block.text
@@ -67,7 +67,11 @@ class TestSpatialParser:
                 TextElement("Second", x0=10, y0=30, x1=50, y1=40, page=0),
                 TextElement("Line", x0=60, y0=30, x1=100, y1=40, page=0),
             ],
-            x0=10, y0=10, x1=100, y1=40, page=0
+            x0=10,
+            y0=10,
+            x1=100,
+            y1=40,
+            page=0,
         )
 
         lines = block.lines
@@ -76,14 +80,14 @@ class TestSpatialParser:
 
     def test_document_structure_label_search(self):
         """Test finding blocks by label pattern."""
-        from extractors.spatial_parser import DocumentStructure, DocumentBlock
+        from extractors.spatial_parser import DocumentBlock, DocumentStructure
 
         structure = DocumentStructure()
         block = DocumentBlock(id="1", label="PHYSICAL ADDRESS OF LOT")
         structure.labeled_blocks["PHYSICAL ADDRESS OF LOT"] = block
         structure.blocks = [block]
 
-        found = structure.get_block_by_label(r'PHYSICAL\s*ADDRESS')
+        found = structure.get_block_by_label(r"PHYSICAL\s*ADDRESS")
         assert found is not None
         assert found.id == "1"
 
@@ -110,7 +114,7 @@ class TestCopartExtractor:
 
         score, matched = extractor.score(copart_text)
         assert score > 0.5
-        assert 'Copart' in matched or 'SOLD THROUGH COPART' in matched
+        assert "Copart" in matched or "SOLD THROUGH COPART" in matched
 
     def test_score_negative_indicators(self):
         """Test that IAA indicators reduce Copart score."""
@@ -226,12 +230,13 @@ class TestExtractionPipeline:
     def test_extraction_run_creates_all_fields(self):
         """Test that extraction creates review items for ALL configured fields."""
         # This tests the Phase 1 fix
-        from api.routes.extractions import _create_review_items_for_all_fields
         from unittest.mock import MagicMock, patch
 
+        from api.routes.extractions import _create_review_items_for_all_fields
+
         # Mock the database connection and repository
-        with patch('api.routes.extractions.ReviewItemRepository') as mock_repo:
-            with patch('api.database.get_connection') as mock_conn:
+        with patch("api.routes.extractions.ReviewItemRepository") as mock_repo:
+            with patch("api.database.get_connection") as mock_conn:
                 # Setup mock connection to return empty mappings
                 mock_context = MagicMock()
                 mock_context.__enter__ = MagicMock(return_value=mock_context)
@@ -254,11 +259,11 @@ class TestExtractionPipeline:
                 items = call_args[1]
 
                 # Should have items for ALL default fields
-                keys = [item['source_key'] for item in items]
-                assert 'vehicle_vin' in keys
-                assert 'pickup_address' in keys  # This should be present even though not extracted
-                assert 'pickup_city' in keys
-                assert 'pickup_state' in keys
+                keys = [item["source_key"] for item in items]
+                assert "vehicle_vin" in keys
+                assert "pickup_address" in keys  # This should be present even though not extracted
+                assert "pickup_city" in keys
+                assert "pickup_state" in keys
 
 
 class TestTrainingService:
@@ -266,8 +271,9 @@ class TestTrainingService:
 
     def test_find_preceding_label(self):
         """Test finding labels that precede values."""
-        from services.training_service import TrainingService
         from unittest.mock import MagicMock
+
+        from services.training_service import TrainingService
 
         service = TrainingService(MagicMock())
 
@@ -282,8 +288,9 @@ Dallas TX 75001
 
     def test_extract_text_patterns(self):
         """Test pattern extraction from context."""
-        from services.training_service import TrainingService
         from unittest.mock import MagicMock
+
+        from services.training_service import TrainingService
 
         service = TrainingService(MagicMock())
 
@@ -304,17 +311,17 @@ class TestFieldMappings:
 
         # Required fields for Central Dispatch
         required_fields = [
-            'vehicle_vin',
-            'pickup_address',
-            'pickup_city',
-            'pickup_state',
-            'pickup_zip',
+            "vehicle_vin",
+            "pickup_address",
+            "pickup_city",
+            "pickup_state",
+            "pickup_zip",
         ]
 
         # Get the DEFAULT_FIELDS from the function (we can't import it directly)
         # So we test via the behavior
-        with patch('api.routes.extractions.ReviewItemRepository') as mock_repo:
-            with patch('api.database.get_connection') as mock_conn:
+        with patch("api.routes.extractions.ReviewItemRepository") as mock_repo:
+            with patch("api.database.get_connection") as mock_conn:
                 mock_context = MagicMock()
                 mock_context.__enter__ = MagicMock(return_value=mock_context)
                 mock_context.__exit__ = MagicMock(return_value=False)
@@ -324,7 +331,7 @@ class TestFieldMappings:
                 _create_review_items_for_all_fields(run_id=1, auction_type_id=1, outputs={})
 
                 items = mock_repo.create_batch.call_args[0][1]
-                keys = [item['source_key'] for item in items]
+                keys = [item["source_key"] for item in items]
 
                 for field in required_fields:
                     assert field in keys, f"Required field {field} missing from defaults"
@@ -335,7 +342,7 @@ class TestE2E:
 
     @pytest.mark.skipif(
         not os.path.exists("/home/user/CENTRALDISPATCH/data/uploads"),
-        reason="No test documents available"
+        reason="No test documents available",
     )
     def test_full_extraction_pipeline(self):
         """Test complete extraction from PDF to review items."""
@@ -392,8 +399,9 @@ class TestE2E:
 
     def test_order_id_generation(self):
         """Test Order ID generation format."""
-        from api.routes.extractions import generate_order_id
         from datetime import datetime
+
+        from api.routes.extractions import generate_order_id
 
         # Test: Feb 1, Jeep Grand Cherokee
         date = datetime(2026, 2, 1)
@@ -405,22 +413,21 @@ class TestE2E:
 
     def test_order_id_unique_per_day(self):
         """Test that Order IDs are unique per day with sequence numbers."""
-        from api.routes.extractions import generate_order_id
         from datetime import datetime
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
+        from api.routes.extractions import generate_order_id
 
         date = datetime(2026, 1, 15)
 
         # Mock database to return different counts
-        with patch('api.database.get_connection') as mock_conn:
+        with patch("api.database.get_connection") as mock_conn:
             mock_context = MagicMock()
             mock_context.__enter__ = MagicMock(return_value=mock_context)
             mock_context.__exit__ = MagicMock(return_value=False)
 
             # First call: no existing orders
-            mock_context.execute = MagicMock(return_value=MagicMock(
-                fetchone=lambda: (0,)
-            ))
+            mock_context.execute = MagicMock(return_value=MagicMock(fetchone=lambda: (0,)))
             mock_conn.return_value = mock_context
 
             order1 = generate_order_id("Toyota", "Camry", date)

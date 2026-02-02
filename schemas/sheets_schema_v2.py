@@ -19,30 +19,33 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import List, Dict, Optional, Any
+from typing import Any, Optional
 
 
 class ColumnClass(Enum):
     """Column ownership/protection class."""
-    REQUIRED = "required"    # Must be filled for export
-    SYSTEM = "system"        # Updated by automation
+
+    REQUIRED = "required"  # Must be filled for export
+    SYSTEM = "system"  # Updated by automation
     PROTECTED = "protected"  # Never overwritten if has value
-    LOCK = "lock"            # Boolean flag protecting a group
+    LOCK = "lock"  # Boolean flag protecting a group
 
 
 class RowStatus(Enum):
     """Row lifecycle status (state machine)."""
-    NEW = "NEW"              # Just imported, not reviewed
-    READY = "READY"          # Validated, ready for CD export
-    HOLD = "HOLD"            # On hold, don't export
-    ERROR = "ERROR"          # Validation or export error
-    EXPORTED = "EXPORTED"    # Successfully exported to CD
-    RETRY = "RETRY"          # Manual retry requested
+
+    NEW = "NEW"  # Just imported, not reviewed
+    READY = "READY"  # Validated, ready for CD export
+    HOLD = "HOLD"  # On hold, don't export
+    ERROR = "ERROR"  # Validation or export error
+    EXPORTED = "EXPORTED"  # Successfully exported to CD
+    RETRY = "RETRY"  # Manual retry requested
     CANCELLED = "CANCELLED"  # Cancelled, don't process
 
 
 class AuctionSource(Enum):
     """Auction source types."""
+
     COPART = "COPART"
     IAA = "IAA"
     MANHEIM = "MANHEIM"
@@ -51,7 +54,8 @@ class AuctionSource(Enum):
 
 class WarehouseMode(Enum):
     """Warehouse selection mode."""
-    AUTO = "AUTO"      # Auto-selected by routing
+
+    AUTO = "AUTO"  # Auto-selected by routing
     MANUAL = "MANUAL"  # Manually selected by operator
 
 
@@ -61,6 +65,7 @@ SCHEMA_VERSION = 2
 @dataclass
 class ColumnDef:
     """Column definition."""
+
     name: str
     col_class: ColumnClass
     required: bool = False
@@ -73,7 +78,7 @@ class ColumnDef:
 # SCHEMA COLUMNS - Organized by CD Listings API V2 structure
 # =============================================================================
 
-COLUMNS: List[ColumnDef] = [
+COLUMNS: list[ColumnDef] = [
     # =========================================================================
     # 1. IDENTITY & SOURCES
     # =========================================================================
@@ -132,7 +137,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="Parser confidence 0.0-1.0",
     ),
-
     # =========================================================================
     # 2. VEHICLE (vehicles[0] in CD API)
     # =========================================================================
@@ -205,7 +209,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.PROTECTED,
         description="Manual operable override",
     ),
-
     # =========================================================================
     # 3. PICKUP STOP (stops[0] in CD API)
     # =========================================================================
@@ -320,7 +323,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.PROTECTED,
         description="Manual pickup ZIP override",
     ),
-
     # =========================================================================
     # 4. DELIVERY STOP (stops[1] in CD API)
     # =========================================================================
@@ -417,7 +419,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.PROTECTED,
         description="Manual delivery ZIP override",
     ),
-
     # =========================================================================
     # 5. WAREHOUSE SELECTION
     # =========================================================================
@@ -442,7 +443,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="When warehouse was selected",
     ),
-
     # =========================================================================
     # 6. DATES / AVAILABILITY (ListingRequest)
     # =========================================================================
@@ -470,7 +470,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.PROTECTED,
         description="Manual expiration datetime override",
     ),
-
     # =========================================================================
     # 7. TRAILER / LOAD FLAGS (ListingRequest)
     # =========================================================================
@@ -500,7 +499,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.PROTECTED,
         description="Manual trailer type override",
     ),
-
     # =========================================================================
     # 8. PRICE (ListingRequest.price)
     # =========================================================================
@@ -594,7 +592,6 @@ COLUMNS: List[ColumnDef] = [
         description="Balance payment note",
         cd_field="price.balance.paymentMethodNote",
     ),
-
     # =========================================================================
     # 9. MARKETPLACE / SLA / COMPANY (ListingRequest)
     # =========================================================================
@@ -636,7 +633,6 @@ COLUMNS: List[ColumnDef] = [
         description="Include current day after rollover",
         cd_field="sla.includeCurrentDayAfterRollOver",
     ),
-
     # =========================================================================
     # 10. RELEASE NOTES / TAGS
     # =========================================================================
@@ -652,7 +648,6 @@ COLUMNS: List[ColumnDef] = [
         description="Tags as JSON array",
         cd_field="tags",
     ),
-
     # =========================================================================
     # 11. EXPORT RESULTS / AUDIT
     # =========================================================================
@@ -691,7 +686,6 @@ COLUMNS: List[ColumnDef] = [
         col_class=ColumnClass.SYSTEM,
         description="ClickUp task ID",
     ),
-
     # =========================================================================
     # 12. LOCK FLAGS (protection controls)
     # =========================================================================
@@ -720,7 +714,8 @@ COLUMNS: List[ColumnDef] = [
 # HELPER FUNCTIONS
 # =============================================================================
 
-def get_column_names() -> List[str]:
+
+def get_column_names() -> list[str]:
     """Get ordered list of column names."""
     return [col.name for col in COLUMNS]
 
@@ -746,7 +741,7 @@ def column_index_to_letter(index: int) -> str:
     """Convert 0-based column index to Excel-style letter."""
     result = ""
     while index >= 0:
-        result = chr(index % 26 + ord('A')) + result
+        result = chr(index % 26 + ord("A")) + result
         index = index // 26 - 1
     return result
 
@@ -759,22 +754,22 @@ def get_column_letter(name: str) -> str:
     return column_index_to_letter(index)
 
 
-def get_required_columns() -> List[str]:
+def get_required_columns() -> list[str]:
     """Get names of required columns."""
     return [col.name for col in COLUMNS if col.required]
 
 
-def get_protected_columns() -> List[str]:
+def get_protected_columns() -> list[str]:
     """Get names of protected (override_*) columns."""
     return [col.name for col in COLUMNS if col.col_class == ColumnClass.PROTECTED]
 
 
-def get_lock_columns() -> List[str]:
+def get_lock_columns() -> list[str]:
     """Get names of lock flag columns."""
     return [col.name for col in COLUMNS if col.col_class == ColumnClass.LOCK]
 
 
-def get_cd_field_mapping() -> Dict[str, str]:
+def get_cd_field_mapping() -> dict[str, str]:
     """Get mapping of column names to CD API fields."""
     return {col.name: col.cd_field for col in COLUMNS if col.cd_field}
 
@@ -782,6 +777,7 @@ def get_cd_field_mapping() -> Dict[str, str]:
 # =============================================================================
 # DISPATCH_ID GENERATION
 # =============================================================================
+
 
 def generate_dispatch_id(
     auction_source: str,
@@ -834,7 +830,8 @@ def generate_dispatch_id(
 # FINAL VALUE RESOLUTION
 # =============================================================================
 
-def get_final_value(row: Dict[str, Any], field: str) -> Any:
+
+def get_final_value(row: dict[str, Any], field: str) -> Any:
     """
     Get the final value for a field, considering overrides.
 
@@ -850,7 +847,7 @@ def get_final_value(row: Dict[str, Any], field: str) -> Any:
     return row.get(field)
 
 
-def apply_overrides(row: Dict[str, Any]) -> Dict[str, Any]:
+def apply_overrides(row: dict[str, Any]) -> dict[str, Any]:
     """
     Apply all overrides to get final values.
     Returns a dict with resolved values.
@@ -859,11 +856,23 @@ def apply_overrides(row: Dict[str, Any]) -> Dict[str, Any]:
 
     # List of fields that can have overrides
     override_fields = [
-        "vin", "year", "make", "model", "operable",
-        "pickup_street1", "pickup_city", "pickup_state", "pickup_postal_code",
-        "delivery_street1", "delivery_city", "delivery_state", "delivery_postal_code",
-        "available_datetime", "expiration_datetime",
-        "trailer_type", "price_amount",
+        "vin",
+        "year",
+        "make",
+        "model",
+        "operable",
+        "pickup_street1",
+        "pickup_city",
+        "pickup_state",
+        "pickup_postal_code",
+        "delivery_street1",
+        "delivery_city",
+        "delivery_state",
+        "delivery_postal_code",
+        "available_datetime",
+        "expiration_datetime",
+        "trailer_type",
+        "price_amount",
     ]
 
     for field in override_fields:
@@ -878,7 +887,8 @@ def apply_overrides(row: Dict[str, Any]) -> Dict[str, Any]:
 # VALIDATION
 # =============================================================================
 
-def validate_row_for_ready(row: Dict[str, Any]) -> List[str]:
+
+def validate_row_for_ready(row: dict[str, Any]) -> list[str]:
     """
     Validate a row before setting status to READY.
     Returns list of error messages (empty if valid).

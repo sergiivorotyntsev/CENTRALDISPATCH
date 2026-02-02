@@ -13,31 +13,31 @@ Usage:
 
 import argparse
 import json
-import os
 import subprocess
 import sys
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-import shutil
+from typing import Any, Optional
 
 
 @dataclass
 class CheckResult:
     """Result of a single check."""
+
     name: str
     passed: bool
     message: str
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
     duration_seconds: float = 0
 
 
 @dataclass
 class GateSection:
     """A section of the staging gate checklist."""
+
     name: str
-    checks: List[CheckResult]
+    checks: list[CheckResult]
 
     @property
     def passed(self) -> bool:
@@ -57,18 +57,14 @@ class M3StagingGate:
 
     def __init__(self, project_root: Path):
         self.project_root = project_root
-        self.sections: List[GateSection] = []
-        self.artifacts: Dict[str, str] = {}
+        self.sections: list[GateSection] = []
+        self.artifacts: dict[str, str] = {}
 
-    def run_command(self, cmd: List[str], cwd: Optional[Path] = None, timeout: int = 300) -> tuple:
+    def run_command(self, cmd: list[str], cwd: Optional[Path] = None, timeout: int = 300) -> tuple:
         """Run a command and return (success, output)."""
         try:
             result = subprocess.run(
-                cmd,
-                cwd=cwd or self.project_root,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                cmd, cwd=cwd or self.project_root, capture_output=True, text=True, timeout=timeout
             )
             return result.returncode == 0, result.stdout + result.stderr
         except subprocess.TimeoutExpired:
@@ -86,71 +82,84 @@ class M3StagingGate:
 
         # Ruff lint
         import time
+
         start = time.time()
         passed, output = self.run_command(["ruff", "check", "."])
-        checks.append(CheckResult(
-            name="Ruff lint (Python)",
-            passed=passed,
-            message="No linting errors" if passed else "Linting errors found",
-            details={"output": output[:1000] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        checks.append(
+            CheckResult(
+                name="Ruff lint (Python)",
+                passed=passed,
+                message="No linting errors" if passed else "Linting errors found",
+                details={"output": output[:1000] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Black format check
         start = time.time()
         passed, output = self.run_command(["black", "--check", "--diff", "."])
-        checks.append(CheckResult(
-            name="Black format check",
-            passed=passed,
-            message="Code is formatted" if passed else "Formatting issues found",
-            details={"output": output[:1000] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        checks.append(
+            CheckResult(
+                name="Black format check",
+                passed=passed,
+                message="Code is formatted" if passed else "Formatting issues found",
+                details={"output": output[:1000] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Mypy typecheck (warning only)
         start = time.time()
-        passed, output = self.run_command([
-            "mypy", "api/", "extractors/",
-            "--ignore-missing-imports", "--no-error-summary"
-        ])
-        checks.append(CheckResult(
-            name="Mypy typecheck",
-            passed=True,  # Warning only
-            message="Typecheck completed (warnings allowed)",
-            details={"output": output[:1000], "strict": False},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            ["mypy", "api/", "extractors/", "--ignore-missing-imports", "--no-error-summary"]
+        )
+        checks.append(
+            CheckResult(
+                name="Mypy typecheck",
+                passed=True,  # Warning only
+                message="Typecheck completed (warnings allowed)",
+                details={"output": output[:1000], "strict": False},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Frontend build check
         start = time.time()
-        passed, output = self.run_command(
-            ["npm", "run", "build"],
-            cwd=self.project_root / "web"
+        passed, output = self.run_command(["npm", "run", "build"], cwd=self.project_root / "web")
+        checks.append(
+            CheckResult(
+                name="Frontend build (TS check)",
+                passed=passed,
+                message="Build successful" if passed else "Build failed",
+                details={"output": output[:1000] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
         )
-        checks.append(CheckResult(
-            name="Frontend build (TS check)",
-            passed=passed,
-            message="Build successful" if passed else "Build failed",
-            details={"output": output[:1000] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
 
         # Security: No hardcoded secrets
         start = time.time()
-        passed, output = self.run_command([
-            "grep", "-rn", "--include=*.py",
-            "-E", "(api_key|secret|password)\\s*=\\s*['\"][^'\"]+['\"]",
-            "api/", "extractors/"
-        ])
+        passed, output = self.run_command(
+            [
+                "grep",
+                "-rn",
+                "--include=*.py",
+                "-E",
+                "(api_key|secret|password)\\s*=\\s*['\"][^'\"]+['\"]",
+                "api/",
+                "extractors/",
+            ]
+        )
         # grep returns 1 if no matches (which is what we want)
         no_secrets = not passed
-        checks.append(CheckResult(
-            name="No hardcoded secrets",
-            passed=no_secrets,
-            message="No secrets found" if no_secrets else "Potential secrets in code",
-            details={"matches": output[:500] if passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        checks.append(
+            CheckResult(
+                name="No hardcoded secrets",
+                passed=no_secrets,
+                message="No secrets found" if no_secrets else "Potential secrets in code",
+                details={"matches": output[:500] if passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         return GateSection(name="1. Static Analysis & Code Quality", checks=checks)
 
@@ -165,67 +174,76 @@ class M3StagingGate:
 
         # Unit tests
         start = time.time()
-        passed, output = self.run_command([
-            "pytest",
-            "tests/test_extractors.py",
-            "tests/test_config.py",
-            "tests/test_listing_fields.py",
-            "-v", "--tb=short"
-        ])
-        checks.append(CheckResult(
-            name="Unit tests",
-            passed=passed,
-            message="All unit tests pass" if passed else "Unit test failures",
-            details={"output": output[-2000:] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            [
+                "pytest",
+                "tests/test_extractors.py",
+                "tests/test_config.py",
+                "tests/test_listing_fields.py",
+                "-v",
+                "--tb=short",
+            ]
+        )
+        checks.append(
+            CheckResult(
+                name="Unit tests",
+                passed=passed,
+                message="All unit tests pass" if passed else "Unit test failures",
+                details={"output": output[-2000:] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Integration tests
         start = time.time()
-        passed, output = self.run_command([
-            "pytest",
-            "tests/test_extraction.py",
-            "tests/test_api_contracts.py",
-            "-v", "--tb=short"
-        ])
-        checks.append(CheckResult(
-            name="Integration tests",
-            passed=passed,
-            message="All integration tests pass" if passed else "Integration test failures",
-            details={"output": output[-2000:] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            [
+                "pytest",
+                "tests/test_extraction.py",
+                "tests/test_api_contracts.py",
+                "-v",
+                "--tb=short",
+            ]
+        )
+        checks.append(
+            CheckResult(
+                name="Integration tests",
+                passed=passed,
+                message="All integration tests pass" if passed else "Integration test failures",
+                details={"output": output[-2000:] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Regression/Golden tests
         start = time.time()
-        passed, output = self.run_command([
-            "pytest",
-            "tests/test_golden_set.py",
-            "tests/test_cd_v2_golden.py",
-            "-v", "--tb=short"
-        ])
-        checks.append(CheckResult(
-            name="Regression/Golden tests",
-            passed=passed,
-            message="Golden set passes" if passed else "Regression failures",
-            details={"output": output[-2000:] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            ["pytest", "tests/test_golden_set.py", "tests/test_cd_v2_golden.py", "-v", "--tb=short"]
+        )
+        checks.append(
+            CheckResult(
+                name="Regression/Golden tests",
+                passed=passed,
+                message="Golden set passes" if passed else "Regression failures",
+                details={"output": output[-2000:] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # M3-specific tests
         start = time.time()
-        passed, output = self.run_command([
-            "pytest",
-            "tests/test_m3_staging_gate.py",
-            "-v", "--tb=short"
-        ])
-        checks.append(CheckResult(
-            name="M3-specific tests",
-            passed=passed,
-            message="M3 tests pass" if passed else "M3 test failures",
-            details={"output": output[-2000:] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            ["pytest", "tests/test_m3_staging_gate.py", "-v", "--tb=short"]
+        )
+        checks.append(
+            CheckResult(
+                name="M3-specific tests",
+                passed=passed,
+                message="M3 tests pass" if passed else "M3 test failures",
+                details={"output": output[-2000:] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         return GateSection(name="2. Backend Tests", checks=checks)
 
@@ -243,15 +261,17 @@ class M3StagingGate:
         passed, output = self.run_command(
             ["npx", "playwright", "test", "--project=chromium", "--reporter=list"],
             cwd=self.project_root / "e2e",
-            timeout=600
+            timeout=600,
         )
-        checks.append(CheckResult(
-            name="E2E smoke tests (Playwright)",
-            passed=passed,
-            message="Smoke tests pass" if passed else "E2E failures",
-            details={"output": output[-3000:] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        checks.append(
+            CheckResult(
+                name="E2E smoke tests (Playwright)",
+                passed=passed,
+                message="Smoke tests pass" if passed else "E2E failures",
+                details={"output": output[-3000:] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Save E2E report artifact path
         e2e_report = self.project_root / "e2e" / "playwright-report"
@@ -275,18 +295,23 @@ class M3StagingGate:
         if test_db.exists():
             test_db.unlink()
 
-        passed, output = self.run_command([
-            "python", "-c",
-            f"import os; os.environ['DATABASE_URL']='sqlite:///{test_db}'; "
-            "from api.database import init_db; init_db(); print('OK')"
-        ])
-        checks.append(CheckResult(
-            name="Migration on empty DB",
-            passed=passed and "OK" in output,
-            message="Empty DB migration OK" if passed else "Migration failed",
-            details={"output": output[:500] if not passed else ""},
-            duration_seconds=time.time() - start
-        ))
+        passed, output = self.run_command(
+            [
+                "python",
+                "-c",
+                f"import os; os.environ['DATABASE_URL']='sqlite:///{test_db}'; "
+                "from api.database import init_db; init_db(); print('OK')",
+            ]
+        )
+        checks.append(
+            CheckResult(
+                name="Migration on empty DB",
+                passed=passed and "OK" in output,
+                message="Empty DB migration OK" if passed else "Migration failed",
+                details={"output": output[:500] if not passed else ""},
+                duration_seconds=time.time() - start,
+            )
+        )
 
         # Cleanup
         if test_db.exists():
@@ -298,17 +323,24 @@ class M3StagingGate:
     # 5. REGRESSION REPORT
     # =========================================================================
 
-    def run_regression_report(self) -> Dict[str, Any]:
+    def run_regression_report(self) -> dict[str, Any]:
         """Run regression runner and return report."""
         import time
-        start = time.time()
+
+        time.time()
 
         report_file = self.project_root / "regression_report.json"
-        passed, output = self.run_command([
-            "python", "-m", "tests.regression_runner",
-            "--dataset", "tests/golden_set/sample_docs",
-            "--output", str(report_file)
-        ])
+        passed, output = self.run_command(
+            [
+                "python",
+                "-m",
+                "tests.regression_runner",
+                "--dataset",
+                "tests/golden_set/sample_docs",
+                "--output",
+                str(report_file),
+            ]
+        )
 
         if report_file.exists():
             with open(report_file) as f:
@@ -330,12 +362,19 @@ class M3StagingGate:
         start = time.time()
         report_file = self.project_root / "load_test_report.json"
 
-        passed, output = self.run_command([
-            "python", "scripts/load_test_m3.py",
-            "--batch-size", str(batch_size),
-            "--test", "batch",  # Just batch for CI
-            "--output", str(report_file)
-        ], timeout=1800)  # 30 min timeout
+        passed, output = self.run_command(
+            [
+                "python",
+                "scripts/load_test_m3.py",
+                "--batch-size",
+                str(batch_size),
+                "--test",
+                "batch",  # Just batch for CI
+                "--output",
+                str(report_file),
+            ],
+            timeout=1800,
+        )  # 30 min timeout
 
         if report_file.exists():
             with open(report_file) as f:
@@ -347,21 +386,25 @@ class M3StagingGate:
             for test in tests:
                 if test.get("test_name") == "batch_extraction":
                     p95_ok = test.get("p95_ms", 99999) < 30000
-                    checks.append(CheckResult(
-                        name=f"Batch extraction p95 < 30s",
-                        passed=p95_ok,
-                        message=f"p95={test.get('p95_ms', 0):.0f}ms",
-                        details=test,
-                        duration_seconds=time.time() - start
-                    ))
+                    checks.append(
+                        CheckResult(
+                            name="Batch extraction p95 < 30s",
+                            passed=p95_ok,
+                            message=f"p95={test.get('p95_ms', 0):.0f}ms",
+                            details=test,
+                            duration_seconds=time.time() - start,
+                        )
+                    )
         else:
-            checks.append(CheckResult(
-                name="Load test execution",
-                passed=False,
-                message="Load test failed to produce report",
-                details={"output": output[-1000:]},
-                duration_seconds=time.time() - start
-            ))
+            checks.append(
+                CheckResult(
+                    name="Load test execution",
+                    passed=False,
+                    message="Load test failed to produce report",
+                    details={"output": output[-1000:]},
+                    duration_seconds=time.time() - start,
+                )
+            )
 
         return GateSection(name="5. Load Tests", checks=checks)
 
@@ -369,7 +412,7 @@ class M3StagingGate:
     # GENERATE REPORT
     # =========================================================================
 
-    def generate_report(self) -> Dict[str, Any]:
+    def generate_report(self) -> dict[str, Any]:
         """Generate final deployment report."""
         all_passed = all(s.passed for s in self.sections)
 
@@ -397,15 +440,17 @@ class M3StagingGate:
                 "Check regression report for field-level accuracy",
                 "Verify load test p95 meets targets",
                 "Manual UAT on staging environment",
-            ]
+            ],
         }
 
         for section in self.sections:
-            report["sections"].append({
-                "name": section.name,
-                "passed": section.passed,
-                "checks": [asdict(c) for c in section.checks]
-            })
+            report["sections"].append(
+                {
+                    "name": section.name,
+                    "passed": section.passed,
+                    "checks": [asdict(c) for c in section.checks],
+                }
+            )
 
         return report
 
@@ -414,7 +459,7 @@ class M3StagingGate:
         passed, output = self.run_command(["git", "rev-parse", "HEAD"])
         return output.strip() if passed else "unknown"
 
-    def run_full_gate(self, skip_load: bool = False) -> Dict[str, Any]:
+    def run_full_gate(self, skip_load: bool = False) -> dict[str, Any]:
         """Run full staging gate checklist."""
         print("=" * 70)
         print("M3 STAGING GATE - PRE-DEPLOYMENT VERIFICATION")
@@ -466,8 +511,12 @@ class M3StagingGate:
         print("\n" + "=" * 70)
         print("STAGING GATE SUMMARY")
         print("=" * 70)
-        print(f"  Total checks: {report['summary']['passed_checks']}/{report['summary']['total_checks']}")
-        print(f"  Sections passed: {report['summary']['sections_passed']}/{report['summary']['sections_total']}")
+        print(
+            f"  Total checks: {report['summary']['passed_checks']}/{report['summary']['total_checks']}"
+        )
+        print(
+            f"  Sections passed: {report['summary']['sections_passed']}/{report['summary']['sections_total']}"
+        )
         print()
 
         if report["overall_passed"]:
@@ -497,8 +546,12 @@ def main():
     parser = argparse.ArgumentParser(description="M3 Staging Gate Runner")
     parser.add_argument("--full", action="store_true", help="Run full gate including load tests")
     parser.add_argument("--quick", action="store_true", help="Skip load tests")
-    parser.add_argument("--report-only", action="store_true", help="Generate report from existing results")
-    parser.add_argument("--output", type=str, default="m3_staging_gate_report.json", help="Report output file")
+    parser.add_argument(
+        "--report-only", action="store_true", help="Generate report from existing results"
+    )
+    parser.add_argument(
+        "--output", type=str, default="m3_staging_gate_report.json", help="Report output file"
+    )
 
     args = parser.parse_args()
 

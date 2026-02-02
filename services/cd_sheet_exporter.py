@@ -17,15 +17,15 @@ Usage:
 import json
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any, Optional
 
-from core.config import SheetsConfig, CentralDispatchConfig
-from services.sheets_exporter_v2 import SheetsExporterV2
+from core.config import CentralDispatchConfig, SheetsConfig
 from schemas.sheets_schema_v2 import (
-    get_final_value,
-    get_column_index,
     column_index_to_letter,
+    get_column_index,
+    get_final_value,
 )
+from services.sheets_exporter_v2 import SheetsExporterV2
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +61,13 @@ class CDSheetExporter:
         )
         return self._cd_client
 
-    def _row_to_listing_request(self, row: Dict[str, Any]) -> Dict[str, Any]:
+    def _row_to_listing_request(self, row: dict[str, Any]) -> dict[str, Any]:
         """
         Convert a sheet row to CD Listings API V2 ListingRequest.
 
         Uses get_final_value() to respect overrides.
         """
+
         # Helper to get final value
         def final(field: str, default=None):
             val = get_final_value(row, field)
@@ -260,7 +261,9 @@ class CDSheetExporter:
             if final("sla_rollover_time"):
                 listing_request["sla"]["rolloverTime"] = final("sla_rollover_time")
             if final("sla_include_current_day"):
-                listing_request["sla"]["includeCurrentDayAfterRollOver"] = str(final("sla_include_current_day")).upper() == "TRUE"
+                listing_request["sla"]["includeCurrentDayAfterRollOver"] = (
+                    str(final("sla_include_current_day")).upper() == "TRUE"
+                )
 
         # Tags (optional)
         if final("tags_json"):
@@ -282,12 +285,13 @@ class CDSheetExporter:
         success: bool,
         listing_id: str = None,
         error: str = None,
-        payload: Dict = None,
+        payload: dict = None,
     ):
         """Update the sheet with export results."""
+        from pathlib import Path
+
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
-        from pathlib import Path
 
         creds_path = Path(self.sheets_config.credentials_file)
         creds = service_account.Credentials.from_service_account_file(
@@ -304,19 +308,23 @@ class CDSheetExporter:
         if status_idx >= 0:
             col_letter = column_index_to_letter(status_idx)
             status_value = "EXPORTED" if success else "ERROR"
-            updates.append({
-                "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                "values": [[status_value]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                    "values": [[status_value]],
+                }
+            )
 
         # cd_last_attempt_at
         attempt_idx = get_column_index("cd_last_attempt_at")
         if attempt_idx >= 0:
             col_letter = column_index_to_letter(attempt_idx)
-            updates.append({
-                "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                "values": [[now]],
-            })
+            updates.append(
+                {
+                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                    "values": [[now]],
+                }
+            )
 
         if success:
             # cd_listing_id
@@ -324,48 +332,58 @@ class CDSheetExporter:
                 listing_id_idx = get_column_index("cd_listing_id")
                 if listing_id_idx >= 0:
                     col_letter = column_index_to_letter(listing_id_idx)
-                    updates.append({
-                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                        "values": [[listing_id]],
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                            "values": [[listing_id]],
+                        }
+                    )
 
             # cd_exported_at
             exported_idx = get_column_index("cd_exported_at")
             if exported_idx >= 0:
                 col_letter = column_index_to_letter(exported_idx)
-                updates.append({
-                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                    "values": [[now]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                        "values": [[now]],
+                    }
+                )
 
             # Clear error
             error_idx = get_column_index("cd_last_error")
             if error_idx >= 0:
                 col_letter = column_index_to_letter(error_idx)
-                updates.append({
-                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                    "values": [[""]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                        "values": [[""]],
+                    }
+                )
         else:
             # cd_last_error
             if error:
                 error_idx = get_column_index("cd_last_error")
                 if error_idx >= 0:
                     col_letter = column_index_to_letter(error_idx)
-                    updates.append({
-                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                        "values": [[error[:500]]],
-                    })
+                    updates.append(
+                        {
+                            "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                            "values": [[error[:500]]],
+                        }
+                    )
 
         # cd_payload_snapshot
         if payload:
             payload_idx = get_column_index("cd_payload_snapshot")
             if payload_idx >= 0:
                 col_letter = column_index_to_letter(payload_idx)
-                updates.append({
-                    "range": f"{self.sheet_name}!{col_letter}{row_number}",
-                    "values": [[json.dumps(payload)[:10000]]],
-                })
+                updates.append(
+                    {
+                        "range": f"{self.sheet_name}!{col_letter}{row_number}",
+                        "values": [[json.dumps(payload)[:10000]]],
+                    }
+                )
 
         if updates:
             service.spreadsheets().values().batchUpdate(
@@ -376,7 +394,7 @@ class CDSheetExporter:
                 },
             ).execute()
 
-    def export_row(self, row: Dict[str, Any], dry_run: bool = False) -> Dict[str, Any]:
+    def export_row(self, row: dict[str, Any], dry_run: bool = False) -> dict[str, Any]:
         """
         Export a single row to CD.
 
@@ -449,7 +467,7 @@ class CDSheetExporter:
 
         return result
 
-    def export_ready_rows(self, dry_run: bool = False, limit: int = None) -> Dict[str, Any]:
+    def export_ready_rows(self, dry_run: bool = False, limit: int = None) -> dict[str, Any]:
         """
         Export all READY rows to CD.
 
@@ -498,7 +516,7 @@ class CDSheetExporter:
             "results": results,
         }
 
-    def preview_payload(self, dispatch_id: str) -> Optional[Dict[str, Any]]:
+    def preview_payload(self, dispatch_id: str) -> Optional[dict[str, Any]]:
         """
         Preview the CD payload for a row without exporting.
         """

@@ -1,12 +1,10 @@
 """Tests for PDF extractors."""
-import pytest
-from unittest.mock import Mock, patch
 
+from extractors import ExtractorManager
 from extractors.base import BaseExtractor
+from extractors.copart import CopartExtractor
 from extractors.iaa import IAAExtractor
 from extractors.manheim import ManheimExtractor
-from extractors.copart import CopartExtractor
-from extractors import ExtractorManager
 from models.vehicle import AuctionSource, VehicleType
 
 
@@ -39,7 +37,7 @@ class TestBaseExtractor:
             ("Phone: 555-123-4567", "555-123-4567"),
             ("Contact: 555.123.4567", "555.123.4567"),
         ]
-        for text, expected in test_cases:
+        for text, _expected in test_cases:
             result = BaseExtractor.extract_phone(text)
             assert result is not None, f"Failed to extract from: {text}"
 
@@ -142,7 +140,10 @@ class TestIAAExtractor:
         assert extractor.can_extract(self.IAA_SAMPLE), "Should recognize IAA sample"
 
         # Additional test with just key indicators
-        key_text = "Insurance Auto Auctions Buyer Receipt IAAI StockNo: 123 Pick-Up Location: FL" + " " * 50
+        key_text = (
+            "Insurance Auto Auctions Buyer Receipt IAAI StockNo: 123 Pick-Up Location: FL"
+            + " " * 50
+        )
         assert extractor.can_extract(key_text), "Should recognize key IAA indicators"
 
     def test_can_extract_negative(self):

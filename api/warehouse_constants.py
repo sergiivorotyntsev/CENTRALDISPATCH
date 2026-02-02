@@ -18,45 +18,48 @@ Examples:
 """
 
 import json
-from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any, Optional
 
 from api.database import get_connection
 
 
 class ApplyWhen(str, Enum):
     """When to apply a constant value."""
-    ALWAYS = "always"        # Always use this value
-    IF_EMPTY = "if_empty"    # Only if extracted value is empty
+
+    ALWAYS = "always"  # Always use this value
+    IF_EMPTY = "if_empty"  # Only if extracted value is empty
     IF_MISSING = "if_missing"  # Only if field is missing
 
 
 @dataclass
 class WarehouseConstant:
     """A single warehouse-specific constant value."""
+
     field_key: str
     value: Any
     apply_when: str = "if_empty"  # always, if_empty, if_missing
     description: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 @dataclass
 class WarehouseConstants:
     """All constants for a single warehouse."""
+
     id: Optional[int] = None
     warehouse_id: int = 0
     warehouse_code: str = ""
-    constants: Dict[str, WarehouseConstant] = field(default_factory=dict)
+    constants: dict[str, WarehouseConstant] = field(default_factory=dict)
     is_active: bool = True
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "warehouse_id": self.warehouse_id,
@@ -68,7 +71,7 @@ class WarehouseConstants:
         }
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'WarehouseConstants':
+    def from_dict(data: dict[str, Any]) -> "WarehouseConstants":
         """Create from dictionary."""
         wc = WarehouseConstants(
             id=data.get("id"),
@@ -114,6 +117,7 @@ class WarehouseConstants:
 # DATABASE SCHEMA
 # =============================================================================
 
+
 def init_warehouse_constants_schema():
     """Initialize warehouse constants database schema."""
     with get_connection() as conn:
@@ -145,6 +149,7 @@ def init_warehouse_constants_schema():
 # REPOSITORY
 # =============================================================================
 
+
 class WarehouseConstantsRepository:
     """Repository for warehouse constants operations."""
 
@@ -156,8 +161,7 @@ class WarehouseConstantsRepository:
                 """INSERT INTO warehouse_constants
                    (warehouse_id, warehouse_code, constants_json, is_active)
                    VALUES (?, ?, ?, ?)""",
-                (wc.warehouse_id, wc.warehouse_code,
-                 json.dumps(wc.to_dict()), wc.is_active)
+                (wc.warehouse_id, wc.warehouse_code, json.dumps(wc.to_dict()), wc.is_active),
             )
             conn.commit()
             return cursor.lastrowid
@@ -166,9 +170,7 @@ class WarehouseConstantsRepository:
     def get_by_id(id: int) -> Optional[WarehouseConstants]:
         """Get by ID."""
         with get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM warehouse_constants WHERE id = ?", (id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM warehouse_constants WHERE id = ?", (id,)).fetchone()
             if row:
                 data = json.loads(row["constants_json"])
                 data["id"] = row["id"]
@@ -183,7 +185,7 @@ class WarehouseConstantsRepository:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM warehouse_constants WHERE warehouse_code = ? AND is_active = TRUE",
-                (warehouse_code.upper(),)
+                (warehouse_code.upper(),),
             ).fetchone()
             if row:
                 data = json.loads(row["constants_json"])
@@ -199,7 +201,7 @@ class WarehouseConstantsRepository:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM warehouse_constants WHERE warehouse_id = ? AND is_active = TRUE",
-                (warehouse_id,)
+                (warehouse_id,),
             ).fetchone()
             if row:
                 data = json.loads(row["constants_json"])
@@ -210,7 +212,7 @@ class WarehouseConstantsRepository:
             return None
 
     @staticmethod
-    def list_all(include_inactive: bool = False) -> List[WarehouseConstants]:
+    def list_all(include_inactive: bool = False) -> list[WarehouseConstants]:
         """List all warehouse constants."""
         sql = "SELECT * FROM warehouse_constants"
         if not include_inactive:
@@ -241,7 +243,7 @@ class WarehouseConstantsRepository:
                 """UPDATE warehouse_constants SET
                    constants_json = ?, is_active = ?, updated_at = ?
                    WHERE id = ?""",
-                (json.dumps(wc.to_dict()), wc.is_active, wc.updated_at, wc.id)
+                (json.dumps(wc.to_dict()), wc.is_active, wc.updated_at, wc.id),
             )
             conn.commit()
             return True
@@ -252,7 +254,7 @@ class WarehouseConstantsRepository:
         field_key: str,
         value: Any,
         apply_when: str = "if_empty",
-        description: str = None
+        description: str = None,
     ) -> bool:
         """Set a single constant for a warehouse (convenience method)."""
         wc = WarehouseConstantsRepository.get_by_code(warehouse_code)
@@ -261,8 +263,7 @@ class WarehouseConstantsRepository:
             # Get warehouse ID
             with get_connection() as conn:
                 row = conn.execute(
-                    "SELECT id FROM warehouses WHERE code = ?",
-                    (warehouse_code.upper(),)
+                    "SELECT id FROM warehouses WHERE code = ?", (warehouse_code.upper(),)
                 ).fetchone()
 
                 if not row:
@@ -309,11 +310,12 @@ class WarehouseConstantsRepository:
 # SERVICE
 # =============================================================================
 
+
 class WarehouseConstantsService:
     """Service for applying warehouse constants to field values."""
 
     def __init__(self):
-        self._cache: Dict[str, WarehouseConstants] = {}
+        self._cache: dict[str, WarehouseConstants] = {}
 
     def get_constants(self, warehouse_code: str) -> Optional[WarehouseConstants]:
         """Get warehouse constants (cached)."""
@@ -324,11 +326,7 @@ class WarehouseConstantsService:
                 self._cache[code] = wc
         return self._cache.get(code)
 
-    def apply_constants(
-        self,
-        warehouse_code: str,
-        fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def apply_constants(self, warehouse_code: str, fields: dict[str, Any]) -> dict[str, Any]:
         """Apply warehouse constants to field values."""
         wc = self.get_constants(warehouse_code)
         if not wc:
@@ -344,10 +342,7 @@ class WarehouseConstantsService:
         return result
 
     def get_field_source(
-        self,
-        warehouse_code: str,
-        field_key: str,
-        current_value: Any = None
+        self, warehouse_code: str, field_key: str, current_value: Any = None
     ) -> Optional[str]:
         """Get the source type if this field would get a warehouse constant."""
         wc = self.get_constants(warehouse_code)

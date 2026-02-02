@@ -11,9 +11,9 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List
-import requests
+from typing import Any, Optional
 
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ RETRY_BACKOFF_BASE = 2  # Exponential backoff base (seconds)
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
 
 def generate_partner_reference_id(document_id: int, run_id: int) -> str:
     """
@@ -61,9 +62,11 @@ def generate_idempotency_key(ref_id: str, operation: str) -> str:
 # CD CLIENT
 # =============================================================================
 
+
 @dataclass
 class CDResponse:
     """Response from CD API."""
+
     success: bool
     listing_id: Optional[str] = None
     etag: Optional[str] = None
@@ -91,13 +94,14 @@ class CDClient:
     ):
         self.api_key = api_key or os.environ.get("CD_API_KEY", "")
         self.base_url = base_url or os.environ.get(
-            "CD_API_URL",
-            "https://api.centraldispatch.com/v2"
+            "CD_API_URL", "https://api.centraldispatch.com/v2"
         )
         self.timeout = timeout
         self._semaphore = asyncio.Semaphore(CD_SEMAPHORE_LIMIT)
 
-    def _get_headers(self, etag: Optional[str] = None, idempotency_key: Optional[str] = None) -> Dict[str, str]:
+    def _get_headers(
+        self, etag: Optional[str] = None, idempotency_key: Optional[str] = None
+    ) -> dict[str, str]:
         """Build request headers."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -118,7 +122,7 @@ class CDClient:
         except ValueError:
             return 5.0
 
-    def create_listing(self, payload: Dict[str, Any]) -> CDResponse:
+    def create_listing(self, payload: dict[str, Any]) -> CDResponse:
         """
         Create a new listing on Central Dispatch.
 
@@ -169,7 +173,7 @@ class CDClient:
             except requests.RequestException as e:
                 last_error = str(e)
                 retries += 1
-                time.sleep(RETRY_BACKOFF_BASE ** retries)
+                time.sleep(RETRY_BACKOFF_BASE**retries)
 
         return CDResponse(
             success=False,
@@ -180,7 +184,7 @@ class CDClient:
     def update_listing(
         self,
         listing_id: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         etag: str,
     ) -> CDResponse:
         """
@@ -237,7 +241,7 @@ class CDClient:
             except requests.RequestException as e:
                 last_error = str(e)
                 retries += 1
-                time.sleep(RETRY_BACKOFF_BASE ** retries)
+                time.sleep(RETRY_BACKOFF_BASE**retries)
 
         return CDResponse(
             success=False,
@@ -255,7 +259,7 @@ class CDClient:
             )
 
             if response.status_code == 200:
-                data = response.json()
+                response.json()
                 return CDResponse(
                     success=True,
                     listing_id=listing_id,
@@ -312,6 +316,7 @@ class CDClient:
 # ASYNC CLIENT (for batch operations)
 # =============================================================================
 
+
 class AsyncCDClient:
     """Async version of CD client for batch operations."""
 
@@ -319,30 +324,22 @@ class AsyncCDClient:
         self.sync_client = CDClient(api_key=api_key, base_url=base_url)
         self._semaphore = asyncio.Semaphore(CD_SEMAPHORE_LIMIT)
 
-    async def create_listing(self, payload: Dict[str, Any]) -> CDResponse:
+    async def create_listing(self, payload: dict[str, Any]) -> CDResponse:
         """Create listing with semaphore limiting."""
         async with self._semaphore:
             # Run sync client in executor
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                None,
-                self.sync_client.create_listing,
-                payload
-            )
+            return await loop.run_in_executor(None, self.sync_client.create_listing, payload)
 
     async def update_listing(
         self,
         listing_id: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         etag: str,
     ) -> CDResponse:
         """Update listing with semaphore limiting."""
         async with self._semaphore:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
-                None,
-                self.sync_client.update_listing,
-                listing_id,
-                payload,
-                etag
+                None, self.sync_client.update_listing, listing_id, payload, etag
             )
