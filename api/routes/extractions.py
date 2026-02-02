@@ -433,27 +433,93 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
 
         processing_time_ms = int((time.time() - start_time) * 1000)
 
-        # Determine status based on extraction quality
-        # All successful extractions go to needs_review (P0 requirement)
-        # Only after human review can a run be marked as approved/exported
+        # =================================================================
+        # PIPELINE INVARIANT CHECKS (M0.2)
+        # Must pass for extraction to be considered valid for review
+        # =================================================================
+        invariant_errors = []
+
+        # Invariant 1: Text extraction must succeed
+        # raw_text_length > 0 OR (ocr_applied AND words_count > 0)
+        if metrics["raw_text_length"] < 50:
+            if not metrics.get("ocr_applied", False) or metrics["words_count"] < 10:
+                invariant_errors.append({
+                    "code": "INV_TEXT_EXTRACTION",
+                    "message": "Text extraction failed - document may need OCR",
+                    "details": f"raw_text_length={metrics['raw_text_length']}, words_count={metrics['words_count']}",
+                })
+
+        # Invariant 2: Classification must succeed
+        # detected_source must be set with reasonable confidence
+        if not metrics.get("detected_source"):
+            invariant_errors.append({
+                "code": "INV_CLASSIFICATION",
+                "message": "Document classification failed - unknown auction type",
+                "details": f"classification_score={metrics.get('classification_score', 0)}",
+            })
+        elif metrics.get("classification_score", 0) < 0.1:
+            invariant_errors.append({
+                "code": "INV_CLASSIFICATION_LOW",
+                "message": "Document classification confidence too low",
+                "details": f"classification_score={metrics.get('classification_score', 0)}, detected={metrics.get('detected_source')}",
+            })
+
+        # Invariant 3: At least 3 anchor fields must be extracted
+        # Anchor fields: VIN/lot/stock (one of), pickup city/state, facility name/address
+        anchor_count = 0
+
+        # Check vehicle anchor (VIN, lot, or stock)
+        if outputs.get("vehicle_vin") or outputs.get("vehicle_lot") or outputs.get("reference_id"):
+            anchor_count += 1
+
+        # Check location anchor (city and state)
+        if outputs.get("pickup_city") and outputs.get("pickup_state"):
+            anchor_count += 1
+
+        # Check facility anchor (address or name)
+        if outputs.get("pickup_address") or outputs.get("pickup_name"):
+            anchor_count += 1
+
+        metrics["anchor_fields_count"] = anchor_count
+
+        if anchor_count < 3:
+            invariant_errors.append({
+                "code": "INV_ANCHOR_FIELDS",
+                "message": f"Only {anchor_count}/3 anchor fields extracted",
+                "details": f"Need: vehicle identifier, city/state, and facility. Check debug endpoint for details.",
+            })
+
+        # Store invariant check results in metrics
+        metrics["invariants_passed"] = len(invariant_errors) == 0
+        metrics["invariant_errors"] = [e["code"] for e in invariant_errors]
+
+        # Determine status based on extraction quality and invariants
         if not outputs:
             run_status = "failed"
+            errors_to_save = [{"error": "No fields extracted"}]
+        elif invariant_errors:
+            # Invariants failed - mark as failed with details
+            run_status = "failed"
+            errors_to_save = invariant_errors
         else:
-            # Check if any required fields are missing or low confidence
-            # For now, all successful extractions need review
+            # All invariants pass - ready for review
             run_status = "needs_review"
+            errors_to_save = None
 
         # Update run with results including metrics and field sources
-        ExtractionRunRepository.update(
-            run_id,
-            status=run_status,
-            extraction_score=extraction_score,
-            outputs_json=outputs,
-            metrics_json=metrics,
-            field_sources_json=field_sources,
-            processing_time_ms=processing_time_ms,
-            completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
+        update_kwargs = {
+            "status": run_status,
+            "extraction_score": extraction_score,
+            "outputs_json": outputs,
+            "metrics_json": metrics,
+            "field_sources_json": field_sources,
+            "processing_time_ms": processing_time_ms,
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        if errors_to_save:
+            update_kwargs["errors_json"] = errors_to_save
+
+        ExtractionRunRepository.update(run_id, **update_kwargs)
 
         # Create review items from outputs
         # CRITICAL: Always create review items for ALL configured field mappings,
