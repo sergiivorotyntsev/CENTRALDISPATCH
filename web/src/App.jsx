@@ -11,7 +11,6 @@ function App() {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: DashboardIcon },
     { path: '/documents', label: 'Documents', icon: DocumentsIcon },
-    { path: '/runs', label: 'Runs & Logs', icon: RunsIcon },
     { path: '/test-lab', label: 'Test Lab', icon: TestLabIcon },
     { path: '/settings', label: 'Settings', icon: SettingsIcon },
   ]

@@ -253,6 +253,7 @@ function Runs() {
                   <thead>
                     <tr>
                       <th>ID</th>
+                      <th>Order ID</th>
                       <th>Time</th>
                       <th>Document</th>
                       <th>Auction</th>
@@ -268,6 +269,9 @@ function Runs() {
                         className={`cursor-pointer ${selectedRun?.id === run.id ? 'bg-primary-50' : ''}`}
                       >
                         <td className="font-mono text-xs">{run.id}</td>
+                        <td className="font-mono text-xs text-primary-600">
+                          {run.outputs_json?.order_id || '-'}
+                        </td>
                         <td className="text-xs text-gray-500">
                           {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
                         </td>

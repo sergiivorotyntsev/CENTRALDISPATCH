@@ -603,6 +603,16 @@ function TestLab() {
           >
             Warehouses
           </button>
+          <button
+            onClick={() => setActiveTab('runs')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'runs'
+                ? 'border-primary-500 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            Runs & Logs
+          </button>
         </nav>
       </div>
 
@@ -1599,6 +1609,270 @@ function TestLab() {
           </div>
         </div>
       )}
+
+      {/* Runs & Logs Tab */}
+      {activeTab === 'runs' && (
+        <RunsAndLogs auctionTypes={auctionTypes} />
+      )}
+    </div>
+  )
+}
+
+// Embedded Runs & Logs component for Test Lab
+function RunsAndLogs({ auctionTypes }) {
+  const [runs, setRuns] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedRun, setSelectedRun] = useState(null)
+  const [filters, setFilters] = useState({
+    status: '',
+    auction_type_id: '',
+    limit: 25,
+  })
+
+  useEffect(() => {
+    loadRuns()
+  }, [filters])
+
+  async function loadRuns() {
+    setLoading(true)
+    try {
+      const params = {
+        limit: filters.limit,
+      }
+      if (filters.status) params.status = filters.status
+      if (filters.auction_type_id) params.auction_type_id = filters.auction_type_id
+
+      const data = await api.listExtractions(params)
+      setRuns(data.items || [])
+    } catch (err) {
+      console.error('Failed to load runs:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const statusColors = {
+    needs_review: 'badge-warning',
+    approved: 'badge-success',
+    reviewed: 'badge-success',
+    exported: 'badge-success',
+    failed: 'badge-error',
+    pending: 'badge-warning',
+    processing: 'badge-info',
+    manual_required: 'badge-info',
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Runs List */}
+      <div className="lg:col-span-2">
+        <div className="card">
+          <div className="card-header flex items-center justify-between">
+            <h2 className="font-semibold">Extraction Runs</h2>
+            <button onClick={loadRuns} className="btn btn-sm btn-secondary">
+              Refresh
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+            <div className="flex flex-wrap gap-3">
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters(f => ({ ...f, status: e.target.value }))}
+                className="form-select form-select-sm"
+              >
+                <option value="">All Status</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="approved">Approved</option>
+                <option value="exported">Exported</option>
+                <option value="failed">Failed</option>
+              </select>
+              <select
+                value={filters.auction_type_id}
+                onChange={(e) => setFilters(f => ({ ...f, auction_type_id: e.target.value }))}
+                className="form-select form-select-sm"
+              >
+                <option value="">All Types</option>
+                {auctionTypes.map(at => (
+                  <option key={at.id} value={at.id}>{at.name}</option>
+                ))}
+              </select>
+              <select
+                value={filters.limit}
+                onChange={(e) => setFilters(f => ({ ...f, limit: parseInt(e.target.value) }))}
+                className="form-select form-select-sm"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            {loading ? (
+              <div className="p-8 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
+              </div>
+            ) : runs.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                No extraction runs found
+              </div>
+            ) : (
+              <table className="table table-sm">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Order ID</th>
+                    <th>Time</th>
+                    <th>Document</th>
+                    <th>Auction</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map(run => (
+                    <tr
+                      key={run.id}
+                      onClick={() => setSelectedRun(run)}
+                      className={`cursor-pointer hover:bg-gray-50 ${selectedRun?.id === run.id ? 'bg-primary-50' : ''}`}
+                    >
+                      <td className="font-mono text-xs">{run.id}</td>
+                      <td className="font-mono text-xs text-primary-600">
+                        {run.outputs_json?.order_id || '-'}
+                      </td>
+                      <td className="text-xs text-gray-500">
+                        {run.created_at ? new Date(run.created_at).toLocaleString() : '-'}
+                      </td>
+                      <td className="text-xs truncate max-w-[120px]" title={run.document_filename}>
+                        {run.document_filename || `#${run.document_id}`}
+                      </td>
+                      <td>
+                        {run.auction_type_code && (
+                          <span className="badge badge-info">{run.auction_type_code}</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className={`badge ${statusColors[run.status] || 'badge-gray'}`}>
+                          {run.status}
+                        </span>
+                      </td>
+                      <td>
+                        {run.extraction_score != null ? (
+                          <span className={`font-medium ${
+                            run.extraction_score >= 0.6 ? 'text-green-600' :
+                            run.extraction_score >= 0.3 ? 'text-yellow-600' : 'text-red-600'
+                          }`}>
+                            {(run.extraction_score * 100).toFixed(0)}%
+                          </span>
+                        ) : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Run Details */}
+      <div className="lg:col-span-1">
+        {selectedRun ? (
+          <div className="card">
+            <div className="card-header flex items-center justify-between">
+              <h3 className="font-medium">Run #{selectedRun.id}</h3>
+              <button
+                onClick={() => setSelectedRun(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="card-body space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-gray-500">Order ID</p>
+                  <p className="font-mono text-primary-600">{selectedRun.outputs_json?.order_id || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Status</p>
+                  <span className={`badge ${statusColors[selectedRun.status] || 'badge-gray'}`}>
+                    {selectedRun.status}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-gray-500">Auction Type</p>
+                  <p>{selectedRun.auction_type_code || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Score</p>
+                  <p>{selectedRun.extraction_score != null ? `${(selectedRun.extraction_score * 100).toFixed(0)}%` : '-'}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-gray-500">Document</p>
+                  <p className="truncate">{selectedRun.document_filename || '-'}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-gray-500">Created</p>
+                  <p>{selectedRun.created_at ? new Date(selectedRun.created_at).toLocaleString() : '-'}</p>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="pt-4 border-t border-gray-200 space-y-2">
+                {selectedRun.status === 'needs_review' && (
+                  <a
+                    href={`/review/${selectedRun.id}`}
+                    className="btn btn-primary w-full text-center block"
+                  >
+                    Review Extraction
+                  </a>
+                )}
+                {selectedRun.document_id && (
+                  <a
+                    href={`/documents/${selectedRun.document_id}`}
+                    className="btn btn-secondary w-full text-center block"
+                  >
+                    View Document
+                  </a>
+                )}
+              </div>
+
+              {/* Extracted Fields Preview */}
+              {selectedRun.outputs_json && Object.keys(selectedRun.outputs_json).length > 0 && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="font-medium text-sm mb-2">Extracted Fields</h4>
+                  <div className="space-y-1 max-h-48 overflow-y-auto text-xs">
+                    {Object.entries(selectedRun.outputs_json).slice(0, 10).map(([key, value]) => (
+                      <div key={key} className="flex justify-between p-1 rounded bg-gray-50">
+                        <span className="text-gray-600 truncate">{key}</span>
+                        <span className="font-medium truncate ml-2">{String(value || '-').substring(0, 30)}</span>
+                      </div>
+                    ))}
+                    {Object.keys(selectedRun.outputs_json).length > 10 && (
+                      <p className="text-gray-400 text-center">+{Object.keys(selectedRun.outputs_json).length - 10} more fields</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="card">
+            <div className="card-body text-center text-gray-500 py-8">
+              <svg className="w-12 h-12 mx-auto text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <p>Select a run to view details</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
