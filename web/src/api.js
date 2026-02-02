@@ -316,6 +316,37 @@ export const api = {
   retryExportJob: (jobId, sandbox = true) => request(`/exports/jobs/${jobId}/retry?sandbox=${sandbox}`, {
     method: 'POST',
   }),
+
+  // Field Registry (single source of truth for CD fields)
+  getFieldRegistry: () => request('/exports/field-registry'),
+  getBlockingIssues: (runId) => request(`/exports/field-registry/blocking-issues/${runId}`),
+
+  // Batch Posting
+  batchPostPreflight: (runIds) => request('/exports/batch-post/preflight', {
+    method: 'POST',
+    body: JSON.stringify(runIds),
+  }),
+  batchPost: (runIds, postOnlyReady = true, sandbox = true) => request('/exports/batch-post', {
+    method: 'POST',
+    body: JSON.stringify({ run_ids: runIds, post_only_ready: postOnlyReady, sandbox }),
+  }),
+
+  // Production Corrections → Training
+  submitProductionCorrections: (data) => request('/exports/production-corrections', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  listProductionCorrections: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return request(`/exports/production-corrections${query ? `?${query}` : ''}`)
+  },
+  applyProductionCorrectionsToTraining: (correctionIds = null, applyAllPending = false) => request('/exports/production-corrections/apply-to-training', {
+    method: 'POST',
+    body: JSON.stringify({
+      correction_ids: correctionIds,
+      apply_all_pending: applyAllPending,
+    }),
+  }),
 }
 
 export default api

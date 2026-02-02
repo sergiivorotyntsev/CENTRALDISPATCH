@@ -1,74 +1,39 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import api from '../api'
 
 /**
- * Central Dispatch API Field Definitions
- * These are the only fields that can be exported to CD
- */
-const CD_API_FIELDS = [
-  // Vehicle Information
-  { key: 'vehicle_vin', label: 'VIN', type: 'text', required: true, section: 'vehicle' },
-  { key: 'vehicle_year', label: 'Year', type: 'number', required: true, section: 'vehicle' },
-  { key: 'vehicle_make', label: 'Make', type: 'text', required: true, section: 'vehicle' },
-  { key: 'vehicle_model', label: 'Model', type: 'text', required: true, section: 'vehicle' },
-  { key: 'vehicle_color', label: 'Color', type: 'text', required: false, section: 'vehicle' },
-  { key: 'vehicle_type', label: 'Vehicle Type', type: 'select', required: true, section: 'vehicle',
-    options: ['sedan', 'suv', 'truck', 'van', 'motorcycle', 'other'] },
-  { key: 'vehicle_condition', label: 'Condition', type: 'select', required: true, section: 'vehicle',
-    options: ['operable', 'inoperable'] },
-
-  // Pickup Location
-  { key: 'pickup_name', label: 'Location Name', type: 'text', required: false, section: 'pickup' },
-  { key: 'pickup_address', label: 'Street Address', type: 'text', required: true, section: 'pickup' },
-  { key: 'pickup_city', label: 'City', type: 'text', required: true, section: 'pickup' },
-  { key: 'pickup_state', label: 'State', type: 'text', required: true, section: 'pickup' },
-  { key: 'pickup_zip', label: 'ZIP Code', type: 'text', required: true, section: 'pickup' },
-  { key: 'pickup_phone', label: 'Phone', type: 'text', required: false, section: 'pickup' },
-  { key: 'pickup_contact', label: 'Contact Name', type: 'text', required: false, section: 'pickup' },
-
-  // Delivery Location
-  { key: 'delivery_name', label: 'Location Name', type: 'text', required: false, section: 'delivery' },
-  { key: 'delivery_address', label: 'Street Address', type: 'text', required: true, section: 'delivery' },
-  { key: 'delivery_city', label: 'City', type: 'text', required: true, section: 'delivery' },
-  { key: 'delivery_state', label: 'State', type: 'text', required: true, section: 'delivery' },
-  { key: 'delivery_zip', label: 'ZIP Code', type: 'text', required: true, section: 'delivery' },
-  { key: 'delivery_phone', label: 'Phone', type: 'text', required: false, section: 'delivery' },
-  { key: 'delivery_contact', label: 'Contact Name', type: 'text', required: false, section: 'delivery' },
-
-  // Additional Info
-  { key: 'lot_number', label: 'Lot Number', type: 'text', required: false, section: 'additional' },
-  { key: 'stock_number', label: 'Stock Number', type: 'text', required: false, section: 'additional' },
-  { key: 'buyer_id', label: 'Buyer ID', type: 'text', required: false, section: 'additional' },
-  { key: 'buyer_name', label: 'Buyer Name', type: 'text', required: false, section: 'additional' },
-  { key: 'sale_date', label: 'Sale Date', type: 'date', required: false, section: 'additional' },
-  { key: 'total_amount', label: 'Total Amount', type: 'number', required: false, section: 'additional' },
-
-  // Notes
-  { key: 'notes', label: 'Notes', type: 'textarea', required: false, section: 'notes' },
-  { key: 'transport_special_instructions', label: 'Special Instructions', type: 'textarea', required: false, section: 'notes' },
-]
-
-/**
- * Listing Review Page - Production Workflow
+ * Listing Review & Posting Page - Production Workflow
  *
- * Reviews and edits extracted data before exporting to Central Dispatch.
- * Different from Test Lab's Review & Train which is for training the model.
+ * Key features (per ТЗ):
+ * 1. ALWAYS shows ALL fields from CD API registry (even if empty)
+ * 2. Warehouse selection fills delivery stop + transport notes
+ * 3. Production corrections → training ingestion (second channel)
+ * 4. Blocking issues validation before posting
+ * 5. Single and batch posting support
  */
 function ListingReview() {
   const { id } = useParams() // extraction run ID
   const navigate = useNavigate()
 
+  // Loading and error states
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [errorDetails, setErrorDetails] = useState(null)
 
   // Data
   const [extraction, setExtraction] = useState(null)
   const [document, setDocument] = useState(null)
+  const [fieldRegistry, setFieldRegistry] = useState(null)
   const [fields, setFields] = useState({})
+  const [originalFields, setOriginalFields] = useState({}) // For tracking corrections
   const [warehouses, setWarehouses] = useState([])
   const [selectedWarehouse, setSelectedWarehouse] = useState(null)
+
+  // Blocking issues
+  const [blockingIssues, setBlockingIssues] = useState([])
+  const [isReady, setIsReady] = useState(false)
 
   // Export state
   const [exporting, setExporting] = useState(false)
@@ -76,24 +41,78 @@ function ListingReview() {
   const [showPayloadPreview, setShowPayloadPreview] = useState(false)
   const [payloadPreview, setPayloadPreview] = useState(null)
 
-  // Load data
+  // Track corrections for training
+  const [corrections, setCorrections] = useState([])
+
+  // =========================================================================
+  // LOAD DATA
+  // =========================================================================
+
+  // Load field registry (single source of truth)
+  const loadFieldRegistry = useCallback(async () => {
+    try {
+      const result = await api.getFieldRegistry()
+      setFieldRegistry(result)
+      return result
+    } catch (err) {
+      console.error('Failed to load field registry:', err)
+      return null
+    }
+  }, [])
+
+  // Load blocking issues
+  const loadBlockingIssues = useCallback(async () => {
+    try {
+      const result = await api.getBlockingIssues(id)
+      setBlockingIssues(result.issues || [])
+      setIsReady(result.is_ready)
+    } catch (err) {
+      console.error('Failed to load blocking issues:', err)
+    }
+  }, [id])
+
+  // Main data loader
   useEffect(() => {
     async function loadData() {
       setLoading(true)
       setError(null)
+      setErrorDetails(null)
+
       try {
+        // Load field registry first
+        const registry = await loadFieldRegistry()
+
         // Load extraction details
         const extResult = await api.getExtraction(id)
         setExtraction(extResult)
 
-        // Parse outputs_json
+        // Parse outputs_json and initialize ALL fields from registry
         let outputs = {}
         if (extResult.outputs_json) {
           outputs = typeof extResult.outputs_json === 'string'
             ? JSON.parse(extResult.outputs_json)
             : extResult.outputs_json
         }
-        setFields(outputs)
+
+        // Initialize fields from registry (ensures ALL fields are present)
+        const initialFields = {}
+        if (registry?.sections) {
+          Object.values(registry.sections).forEach(section => {
+            section.fields.forEach(fieldDef => {
+              initialFields[fieldDef.key] = outputs[fieldDef.key] || ''
+            })
+          })
+        }
+
+        // Also include any extra fields from extraction
+        Object.keys(outputs).forEach(key => {
+          if (!(key in initialFields)) {
+            initialFields[key] = outputs[key]
+          }
+        })
+
+        setFields(initialFields)
+        setOriginalFields({ ...initialFields })
 
         // Load document
         if (extResult.document_id) {
@@ -114,46 +133,105 @@ function ListingReview() {
           const wh = (whResult.items || []).find(w => w.id === parseInt(outputs.warehouse_id))
           if (wh) setSelectedWarehouse(wh)
         }
+
+        // Load blocking issues
+        await loadBlockingIssues()
       } catch (err) {
-        setError(err.message)
+        setError(err.message || 'Failed to load document')
+        setErrorDetails({
+          endpoint: `/api/extractions/${id}`,
+          requestId: err.requestId || null,
+          status: err.status || 500,
+        })
       } finally {
         setLoading(false)
       }
     }
     loadData()
-  }, [id])
+  }, [id, loadFieldRegistry, loadBlockingIssues])
 
-  // Update field value
+  // =========================================================================
+  // FIELD HANDLING
+  // =========================================================================
+
+  // Update field value and track correction
   function handleFieldChange(key, value) {
+    const oldValue = originalFields[key]
+
     setFields(prev => ({ ...prev, [key]: value }))
+
+    // Track correction if value changed
+    if (value !== oldValue) {
+      setCorrections(prev => {
+        const existing = prev.findIndex(c => c.field_key === key)
+        if (existing >= 0) {
+          const updated = [...prev]
+          updated[existing] = { ...updated[existing], new_value: value }
+          return updated
+        }
+        return [...prev, {
+          field_key: key,
+          old_value: oldValue || '',
+          new_value: value,
+        }]
+      })
+    }
   }
 
-  // Handle warehouse selection
+  // Handle warehouse selection - auto-fill delivery fields
   function handleWarehouseSelect(warehouseId) {
     const wh = warehouses.find(w => w.id === parseInt(warehouseId))
     setSelectedWarehouse(wh)
 
     if (wh) {
-      // Auto-fill delivery fields from warehouse
-      setFields(prev => ({
-        ...prev,
+      const deliveryFields = {
         warehouse_id: wh.id,
-        delivery_name: wh.name,
-        delivery_address: wh.address,
-        delivery_city: wh.city,
-        delivery_state: wh.state,
-        delivery_zip: wh.zip_code,
+        delivery_name: wh.name || '',
+        delivery_address: wh.address || '',
+        delivery_city: wh.city || '',
+        delivery_state: wh.state || '',
+        delivery_zip: wh.zip_code || '',
         delivery_phone: wh.contact?.phone || '',
         delivery_contact: wh.contact?.notes || '',
-        transport_special_instructions: wh.requirements?.special_instructions || prev.transport_special_instructions || '',
-      }))
+        transport_special_instructions: wh.requirements?.special_instructions || fields.transport_special_instructions || '',
+      }
+
+      setFields(prev => ({ ...prev, ...deliveryFields }))
+
+      // Track warehouse-sourced corrections
+      Object.entries(deliveryFields).forEach(([key, value]) => {
+        if (value && value !== originalFields[key]) {
+          setCorrections(prev => {
+            const existing = prev.findIndex(c => c.field_key === key)
+            if (existing >= 0) {
+              const updated = [...prev]
+              updated[existing] = { ...updated[existing], new_value: value }
+              return updated
+            }
+            return [...prev, {
+              field_key: key,
+              old_value: originalFields[key] || '',
+              new_value: value,
+              source: 'warehouse',
+            }]
+          })
+        }
+      })
     }
+
+    // Recheck blocking issues
+    setTimeout(loadBlockingIssues, 100)
   }
 
-  // Save changes
+  // =========================================================================
+  // SAVE & EXPORT
+  // =========================================================================
+
+  // Save changes (draft)
   async function handleSave() {
     setSaving(true)
     setError(null)
+
     try {
       // Update extraction with new field values
       await api.updateExtraction(id, {
@@ -161,9 +239,23 @@ function ListingReview() {
         status: 'reviewed',
       })
 
+      // Submit production corrections for training (second channel)
+      if (corrections.length > 0) {
+        await api.submitProductionCorrections({
+          run_id: parseInt(id),
+          corrections: corrections,
+          save_to_extraction: false, // Already saved above
+        })
+      }
+
       // Reload extraction
       const extResult = await api.getExtraction(id)
       setExtraction(extResult)
+      setOriginalFields({ ...fields })
+      setCorrections([])
+
+      // Recheck blocking issues
+      await loadBlockingIssues()
     } catch (err) {
       setError(`Save failed: ${err.message}`)
     } finally {
@@ -174,6 +266,10 @@ function ListingReview() {
   // Preview CD payload
   async function handlePreviewPayload() {
     try {
+      // Save first to ensure payload reflects current values
+      await api.updateExtraction(id, {
+        outputs_json: fields,
+      })
       const result = await api.getCDPayloadPreview(id)
       setPayloadPreview(result)
       setShowPayloadPreview(true)
@@ -184,23 +280,20 @@ function ListingReview() {
 
   // Export to Central Dispatch
   async function handleExport() {
+    // Validate
     if (!selectedWarehouse) {
-      setError('Please select a delivery warehouse before exporting')
+      setError('Please select a delivery warehouse before posting')
       return
     }
 
-    // Validate required fields
-    const missing = CD_API_FIELDS
-      .filter(f => f.required && !fields[f.key])
-      .map(f => f.label)
-
-    if (missing.length > 0) {
-      setError(`Missing required fields: ${missing.join(', ')}`)
+    if (blockingIssues.length > 0) {
+      setError(`Cannot post: ${blockingIssues.length} blocking issues`)
       return
     }
 
     setExporting(true)
     setExportResult(null)
+
     try {
       // Save first
       await api.updateExtraction(id, {
@@ -208,17 +301,27 @@ function ListingReview() {
         status: 'approved',
       })
 
-      // Then export
+      // Submit production corrections for training
+      if (corrections.length > 0) {
+        await api.submitProductionCorrections({
+          run_id: parseInt(id),
+          corrections: corrections,
+          save_to_extraction: false,
+        })
+      }
+
+      // Export
       const result = await api.exportToCentralDispatch(id)
       setExportResult({
         success: true,
-        message: 'Successfully exported to Central Dispatch',
+        message: 'Successfully posted to Central Dispatch',
         orderId: result.cd_listing_id || result.order_id,
       })
 
-      // Reload extraction to get updated status
+      // Reload extraction
       const extResult = await api.getExtraction(id)
       setExtraction(extResult)
+      setCorrections([])
     } catch (err) {
       setExportResult({
         success: false,
@@ -229,49 +332,143 @@ function ListingReview() {
     }
   }
 
-  // Render field input
-  function renderFieldInput(field) {
-    const value = fields[field.key] || ''
-    const isDisabled = extraction?.status === 'exported'
+  // =========================================================================
+  // RENDER HELPERS
+  // =========================================================================
 
-    if (field.type === 'select') {
-      return (
+  // Get field source for display
+  function getFieldSource(key) {
+    if (corrections.find(c => c.field_key === key)) {
+      return { label: 'User Override', color: 'bg-blue-100 text-blue-800' }
+    }
+    if (selectedWarehouse && key.startsWith('delivery_')) {
+      return { label: 'Warehouse', color: 'bg-green-100 text-green-800' }
+    }
+    if (originalFields[key]) {
+      return { label: 'Extracted', color: 'bg-gray-100 text-gray-600' }
+    }
+    return { label: 'Empty', color: 'bg-orange-100 text-orange-800' }
+  }
+
+  // Render field input
+  function renderFieldInput(fieldDef) {
+    const value = fields[fieldDef.key] || ''
+    const isDisabled = extraction?.status === 'exported'
+    const hasIssue = blockingIssues.find(i => i.field === fieldDef.key)
+    const source = getFieldSource(fieldDef.key)
+
+    const baseClass = `form-input w-full ${isDisabled ? 'bg-gray-100' : ''} ${
+      hasIssue ? 'border-red-300 bg-red-50' : ''
+    } ${!value && fieldDef.required ? 'border-orange-300' : ''}`
+
+    const wrapper = (input) => (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-sm font-medium text-gray-700">
+            {fieldDef.label}
+            {fieldDef.required && <span className="text-red-500 ml-1">*</span>}
+          </label>
+          <span className={`text-xs px-1.5 py-0.5 rounded ${source.color}`}>
+            {source.label}
+          </span>
+        </div>
+        {input}
+        {hasIssue && (
+          <p className="text-xs text-red-600 mt-1">{hasIssue.issue}</p>
+        )}
+        {fieldDef.help_text && !hasIssue && (
+          <p className="text-xs text-gray-500 mt-1">{fieldDef.help_text}</p>
+        )}
+      </div>
+    )
+
+    if (fieldDef.field_type === 'select' && fieldDef.options?.length) {
+      return wrapper(
         <select
           value={value}
-          onChange={(e) => handleFieldChange(field.key, e.target.value)}
+          onChange={(e) => handleFieldChange(fieldDef.key, e.target.value)}
           disabled={isDisabled}
           className={`form-select w-full ${isDisabled ? 'bg-gray-100' : ''}`}
         >
           <option value="">Select...</option>
-          {field.options.map((opt) => (
+          {fieldDef.options.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
       )
     }
 
-    if (field.type === 'textarea') {
-      return (
+    if (fieldDef.field_type === 'textarea') {
+      return wrapper(
         <textarea
           value={value}
-          onChange={(e) => handleFieldChange(field.key, e.target.value)}
+          onChange={(e) => handleFieldChange(fieldDef.key, e.target.value)}
           disabled={isDisabled}
-          className={`form-input w-full ${isDisabled ? 'bg-gray-100' : ''}`}
+          className={baseClass}
           rows={3}
         />
       )
     }
 
-    return (
+    return wrapper(
       <input
-        type={field.type}
+        type={fieldDef.field_type === 'number' ? 'number' : fieldDef.field_type === 'date' ? 'date' : 'text'}
         value={value}
-        onChange={(e) => handleFieldChange(field.key, e.target.value)}
+        onChange={(e) => handleFieldChange(fieldDef.key, e.target.value)}
         disabled={isDisabled}
-        className={`form-input w-full ${isDisabled ? 'bg-gray-100' : ''}`}
+        className={baseClass}
+        placeholder={fieldDef.extraction_hint || `Enter ${fieldDef.label.toLowerCase()}`}
       />
     )
   }
+
+  // Render section
+  function renderSection(sectionKey, sectionData) {
+    const sectionLabels = {
+      vehicle: 'Vehicle Information',
+      pickup: 'Pickup Location',
+      delivery: 'Delivery Location',
+      pricing: 'Pricing',
+      additional: 'Additional Information',
+      notes: 'Notes & Special Instructions',
+    }
+
+    const sectionIcons = {
+      vehicle: '🚗',
+      pickup: '📍',
+      delivery: '🏭',
+      pricing: '💰',
+      additional: '📋',
+      notes: '📝',
+    }
+
+    return (
+      <div key={sectionKey} className="bg-white rounded-lg border border-gray-200">
+        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <h2 className="font-medium text-gray-900">
+            <span className="mr-2">{sectionIcons[sectionKey]}</span>
+            {sectionLabels[sectionKey] || sectionData.label}
+          </h2>
+          {sectionKey === 'delivery' && selectedWarehouse && (
+            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+              From Warehouse: {selectedWarehouse.name}
+            </span>
+          )}
+        </div>
+        <div className="p-4 space-y-4">
+          {sectionData.fields.map((fieldDef) => (
+            <div key={fieldDef.key}>
+              {renderFieldInput(fieldDef)}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // =========================================================================
+  // ERROR & LOADING STATES
+  // =========================================================================
 
   if (loading) {
     return (
@@ -287,22 +484,43 @@ function ListingReview() {
   if (error && !extraction) {
     return (
       <div className="p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <h3 className="text-red-800 font-medium">Error</h3>
-          <p className="text-red-600 mt-1">{error}</p>
-          <button
-            onClick={() => navigate('/documents')}
-            className="mt-4 text-blue-600 hover:text-blue-800"
-          >
-            &larr; Back to Documents
-          </button>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <h3 className="text-red-800 font-medium text-lg mb-2">Error Loading Document</h3>
+          <p className="text-red-600 mb-4">{error}</p>
+          {errorDetails && (
+            <div className="bg-red-100 rounded p-3 mb-4 text-sm">
+              <p><strong>Endpoint:</strong> {errorDetails.endpoint}</p>
+              <p><strong>Status:</strong> {errorDetails.status}</p>
+              {errorDetails.requestId && (
+                <p><strong>Request ID:</strong> {errorDetails.requestId}</p>
+              )}
+            </div>
+          )}
+          <div className="flex gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => navigate('/documents')}
+              className="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50"
+            >
+              Back to Documents
+            </button>
+          </div>
         </div>
       </div>
     )
   }
 
+  // =========================================================================
+  // MAIN RENDER
+  // =========================================================================
+
   const isExported = extraction?.status === 'exported'
-  const canExport = !isExported && selectedWarehouse
+  const canExport = !isExported && selectedWarehouse && isReady
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -312,10 +530,10 @@ function ListingReview() {
           <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
             <Link to="/documents" className="hover:text-blue-600">&larr; Documents</Link>
             <span>/</span>
-            <span>Review Listing</span>
+            <span>Review & Post</span>
           </div>
           <h1 className="text-2xl font-bold text-gray-900">
-            Review & Export to Central Dispatch
+            Review & Post to Central Dispatch
           </h1>
           <div className="flex items-center gap-3 mt-2">
             <span className={`px-2 py-1 rounded text-xs font-medium ${
@@ -332,11 +550,19 @@ function ListingReview() {
               extraction?.status === 'needs_review' ? 'bg-yellow-100 text-yellow-800' :
               'bg-gray-100 text-gray-800'
             }`}>
-              {extraction?.status}
+              {extraction?.status === 'exported' ? 'Posted' :
+               extraction?.status === 'reviewed' || extraction?.status === 'approved' ? 'Ready to Post' :
+               extraction?.status === 'needs_review' ? 'Needs Review' :
+               extraction?.status}
             </span>
-            {fields.lot_number && (
+            {fields.vehicle_lot && (
               <span className="text-sm text-gray-600">
-                Lot: <span className="font-medium">{fields.lot_number}</span>
+                Lot: <span className="font-medium">{fields.vehicle_lot}</span>
+              </span>
+            )}
+            {corrections.length > 0 && (
+              <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                {corrections.length} unsaved correction{corrections.length > 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -354,7 +580,7 @@ function ListingReview() {
             disabled={saving || isExported}
             className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
-            {saving ? 'Saving...' : 'Save Changes'}
+            {saving ? 'Saving...' : 'Save Draft'}
           </button>
           <button
             onClick={handleExport}
@@ -365,12 +591,12 @@ function ListingReview() {
                 : 'bg-gray-200 text-gray-500 cursor-not-allowed'
             }`}
           >
-            {exporting ? 'Exporting...' : isExported ? 'Already Exported' : 'Export to CD'}
+            {exporting ? 'Posting...' : isExported ? 'Already Posted' : 'Post to CD'}
           </button>
         </div>
       </div>
 
-      {/* Error/Success Messages */}
+      {/* Messages */}
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
           <strong>Error:</strong> {error}
@@ -387,9 +613,25 @@ function ListingReview() {
           <p className={exportResult.success ? 'text-green-800' : 'text-red-800'}>
             {exportResult.message}
             {exportResult.orderId && (
-              <span className="ml-2 font-medium">(CD ID: {exportResult.orderId})</span>
+              <span className="ml-2 font-medium">(CD Listing ID: {exportResult.orderId})</span>
             )}
           </p>
+        </div>
+      )}
+
+      {/* Blocking Issues Alert */}
+      {!isExported && blockingIssues.length > 0 && (
+        <div className="mb-6 bg-orange-50 border border-orange-200 rounded-lg p-4">
+          <h3 className="font-medium text-orange-800 mb-2">
+            ⚠️ Blocking Issues ({blockingIssues.length})
+          </h3>
+          <ul className="list-disc list-inside text-sm text-orange-700 space-y-1">
+            {blockingIssues.map((issue, i) => (
+              <li key={i}>
+                <strong>{issue.field}:</strong> {issue.issue}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -399,7 +641,9 @@ function ListingReview() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-medium text-blue-800">Delivery Warehouse</h3>
-              <p className="text-sm text-blue-700">Select the warehouse where this vehicle will be delivered</p>
+              <p className="text-sm text-blue-700">
+                Select warehouse to auto-fill delivery address and transport instructions
+              </p>
             </div>
             <select
               value={selectedWarehouse?.id || ''}
@@ -418,100 +662,35 @@ function ListingReview() {
       )}
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Vehicle Information */}
-        <div className="bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <h2 className="font-medium text-gray-900">Vehicle Information</h2>
-          </div>
-          <div className="p-4 space-y-4">
-            {CD_API_FIELDS.filter(f => f.section === 'vehicle').map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                  {field.required && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {renderFieldInput(field)}
-              </div>
-            ))}
-          </div>
-        </div>
+      {fieldRegistry?.sections && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Vehicle */}
+          {fieldRegistry.sections.vehicle && renderSection('vehicle', fieldRegistry.sections.vehicle)}
 
-        {/* Pickup Location */}
-        <div className="bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <h2 className="font-medium text-gray-900">Pickup Location</h2>
-          </div>
-          <div className="p-4 space-y-4">
-            {CD_API_FIELDS.filter(f => f.section === 'pickup').map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                  {field.required && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {renderFieldInput(field)}
-              </div>
-            ))}
-          </div>
-        </div>
+          {/* Pickup */}
+          {fieldRegistry.sections.pickup && renderSection('pickup', fieldRegistry.sections.pickup)}
 
-        {/* Delivery Location */}
-        <div className="bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-            <h2 className="font-medium text-gray-900">Delivery Location</h2>
-            {selectedWarehouse && (
-              <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                From Warehouse
-              </span>
-            )}
-          </div>
-          <div className="p-4 space-y-4">
-            {CD_API_FIELDS.filter(f => f.section === 'delivery').map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                  {field.required && <span className="text-red-500 ml-1">*</span>}
-                </label>
-                {renderFieldInput(field)}
-              </div>
-            ))}
-          </div>
-        </div>
+          {/* Delivery */}
+          {fieldRegistry.sections.delivery && renderSection('delivery', fieldRegistry.sections.delivery)}
 
-        {/* Additional Information */}
-        <div className="bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <h2 className="font-medium text-gray-900">Additional Information</h2>
-          </div>
-          <div className="p-4 space-y-4">
-            {CD_API_FIELDS.filter(f => f.section === 'additional').map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                </label>
-                {renderFieldInput(field)}
-              </div>
-            ))}
-          </div>
-        </div>
+          {/* Pricing */}
+          {fieldRegistry.sections.pricing && renderSection('pricing', fieldRegistry.sections.pricing)}
 
-        {/* Notes & Instructions - Full Width */}
-        <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <h2 className="font-medium text-gray-900">Notes & Special Instructions</h2>
-          </div>
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {CD_API_FIELDS.filter(f => f.section === 'notes').map((field) => (
-              <div key={field.key}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {field.label}
-                </label>
-                {renderFieldInput(field)}
-              </div>
-            ))}
-          </div>
+          {/* Additional - Full Width */}
+          {fieldRegistry.sections.additional && (
+            <div className="lg:col-span-2">
+              {renderSection('additional', fieldRegistry.sections.additional)}
+            </div>
+          )}
+
+          {/* Notes - Full Width */}
+          {fieldRegistry.sections.notes && (
+            <div className="lg:col-span-2">
+              {renderSection('notes', fieldRegistry.sections.notes)}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Extraction Metadata */}
       <div className="mt-6 bg-gray-50 rounded-lg p-4">
@@ -554,7 +733,7 @@ function ListingReview() {
               <h2 className="text-xl font-bold">Central Dispatch API Payload</h2>
               <button
                 onClick={() => setShowPayloadPreview(false)}
-                className="text-gray-500 hover:text-gray-700"
+                className="text-gray-500 hover:text-gray-700 text-2xl"
               >
                 &times;
               </button>
@@ -570,6 +749,17 @@ function ListingReview() {
                 </ul>
               </div>
             )}
+
+            <div className="mb-4">
+              <p className="text-sm text-gray-600 mb-2">
+                <strong>Content-Type:</strong>{' '}
+                <code className="bg-gray-100 px-1 rounded">application/vnd.coxauto.v2+json</code>
+              </p>
+              <p className="text-sm text-gray-600">
+                <strong>Dispatch ID:</strong>{' '}
+                <code className="bg-gray-100 px-1 rounded">{payloadPreview.dispatch_id}</code>
+              </p>
+            </div>
 
             <pre className="bg-gray-100 p-4 rounded-lg text-xs overflow-auto max-h-96">
               {JSON.stringify(payloadPreview.payload, null, 2)}

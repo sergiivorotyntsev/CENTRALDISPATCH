@@ -7,6 +7,12 @@ import api from '../api'
  *
  * Lists documents ready for Central Dispatch export.
  * Different from Test Lab which is for training.
+ *
+ * Key features per ТЗ:
+ * - Row click → Review & Posting (not Review & Train)
+ * - Batch posting with preflight check
+ * - Warehouse dropdown per document
+ * - Status progression tracking
  */
 function Documents() {
   const navigate = useNavigate()
@@ -18,6 +24,13 @@ function Documents() {
 
   // Track extraction runs per document
   const [docExtractions, setDocExtractions] = useState({})
+
+  // Batch selection
+  const [selectedDocs, setSelectedDocs] = useState(new Set())
+  const [showBatchPost, setShowBatchPost] = useState(false)
+  const [batchPreflight, setBatchPreflight] = useState(null)
+  const [batchPosting, setBatchPosting] = useState(false)
+  const [batchResult, setBatchResult] = useState(null)
 
   // Filters
   const [filter, setFilter] = useState({
@@ -211,6 +224,84 @@ function Documents() {
     }
   }
 
+  // Batch selection handlers
+  function toggleSelectDoc(docId, e) {
+    e.stopPropagation()
+    setSelectedDocs(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(docId)) {
+        newSet.delete(docId)
+      } else {
+        newSet.add(docId)
+      }
+      return newSet
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedDocs.size === documents.length) {
+      setSelectedDocs(new Set())
+    } else {
+      setSelectedDocs(new Set(documents.map(d => d.id)))
+    }
+  }
+
+  // Get selected run IDs
+  function getSelectedRunIds() {
+    return Array.from(selectedDocs)
+      .map(docId => docExtractions[docId]?.id)
+      .filter(Boolean)
+  }
+
+  // Batch posting preflight
+  async function handleBatchPostPreflight() {
+    const runIds = getSelectedRunIds()
+    if (runIds.length === 0) {
+      setError('No documents with extractions selected')
+      return
+    }
+
+    setBatchPosting(true)
+    setBatchPreflight(null)
+    setBatchResult(null)
+
+    try {
+      const result = await api.batchPostPreflight(runIds)
+      setBatchPreflight(result)
+      setShowBatchPost(true)
+    } catch (err) {
+      setError(`Preflight check failed: ${err.message}`)
+    } finally {
+      setBatchPosting(false)
+    }
+  }
+
+  // Execute batch posting
+  async function handleBatchPost(postOnlyReady = true) {
+    const runIds = getSelectedRunIds()
+    setBatchPosting(true)
+
+    try {
+      const result = await api.batchPost(runIds, postOnlyReady, true)
+      setBatchResult(result)
+
+      // Refresh data
+      fetchDocuments()
+      fetchDocExtractions()
+    } catch (err) {
+      setError(`Batch post failed: ${err.message}`)
+    } finally {
+      setBatchPosting(false)
+    }
+  }
+
+  function closeBatchPostModal() {
+    setShowBatchPost(false)
+    setBatchPreflight(null)
+    setBatchResult(null)
+    setSelectedDocs(new Set())
+  }
+
   // Get source display
   function getSourceDisplay(doc) {
     if (doc.source === 'email') {
@@ -258,12 +349,23 @@ function Documents() {
             Production documents for Central Dispatch export
           </p>
         </div>
-        <button
-          onClick={() => setShowUpload(true)}
-          className="btn btn-primary"
-        >
-          Upload Document
-        </button>
+        <div className="flex items-center gap-3">
+          {selectedDocs.size > 0 && (
+            <button
+              onClick={handleBatchPostPreflight}
+              disabled={batchPosting}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+            >
+              {batchPosting ? 'Checking...' : `Post Selected (${selectedDocs.size})`}
+            </button>
+          )}
+          <button
+            onClick={() => setShowUpload(true)}
+            className="btn btn-primary"
+          >
+            Upload Document
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -425,6 +527,14 @@ function Documents() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocs.size === documents.length && documents.length > 0}
+                    onChange={toggleSelectAll}
+                    className="form-checkbox h-4 w-4 text-primary-600"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Order ID
                 </th>
@@ -475,9 +585,17 @@ function Documents() {
                 return (
                   <tr
                     key={doc.id}
-                    className="hover:bg-gray-50 cursor-pointer"
+                    className={`hover:bg-gray-50 cursor-pointer ${selectedDocs.has(doc.id) ? 'bg-blue-50' : ''}`}
                     onClick={() => handleRowClick(doc)}
                   >
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedDocs.has(doc.id)}
+                        onChange={(e) => toggleSelectDoc(doc.id, e)}
+                        className="form-checkbox h-4 w-4 text-primary-600"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <span className="font-mono text-sm font-medium text-gray-900">
                         {orderId}
@@ -588,6 +706,144 @@ function Documents() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Batch Post Modal */}
+      {showBatchPost && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Batch Post to Central Dispatch</h2>
+              <button
+                onClick={closeBatchPostModal}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                &times;
+              </button>
+            </div>
+
+            {batchResult ? (
+              // Results view
+              <div>
+                <div className={`p-4 rounded-lg mb-4 ${
+                  batchResult.failed === 0 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
+                }`}>
+                  <h3 className={`font-medium ${batchResult.failed === 0 ? 'text-green-800' : 'text-yellow-800'}`}>
+                    Batch Post Complete
+                  </h3>
+                  <div className="mt-2 grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">Posted:</span>
+                      <span className="ml-2 font-medium text-green-600">{batchResult.posted}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Failed:</span>
+                      <span className="ml-2 font-medium text-red-600">{batchResult.failed}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Skipped:</span>
+                      <span className="ml-2 font-medium text-gray-600">{batchResult.skipped}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Individual results */}
+                <div className="space-y-2 max-h-60 overflow-auto">
+                  {batchResult.results?.map((result, i) => (
+                    <div
+                      key={i}
+                      className={`p-3 rounded text-sm ${
+                        result.status === 'success' ? 'bg-green-50' :
+                        result.status === 'failed' ? 'bg-red-50' :
+                        result.status === 'blocked' ? 'bg-orange-50' :
+                        'bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium">{result.document_filename || `Run ${result.run_id}`}</span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          result.status === 'success' ? 'bg-green-100 text-green-800' :
+                          result.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          result.status === 'blocked' ? 'bg-orange-100 text-orange-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {result.status}
+                        </span>
+                      </div>
+                      <p className="text-gray-600 mt-1">{result.message}</p>
+                      {result.cd_listing_id && (
+                        <p className="text-green-700 mt-1">CD ID: {result.cd_listing_id}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 flex justify-end">
+                  <button onClick={closeBatchPostModal} className="btn btn-primary">
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : batchPreflight ? (
+              // Preflight view
+              <div>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <p className="text-sm text-green-700">Ready to Post</p>
+                    <p className="text-2xl font-bold text-green-800">{batchPreflight.ready_count}</p>
+                  </div>
+                  <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                    <p className="text-sm text-orange-700">Not Ready</p>
+                    <p className="text-2xl font-bold text-orange-800">{batchPreflight.not_ready_count}</p>
+                  </div>
+                </div>
+
+                {batchPreflight.not_ready?.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="font-medium text-gray-800 mb-2">Issues Preventing Posting:</h3>
+                    <div className="space-y-2 max-h-40 overflow-auto">
+                      {batchPreflight.not_ready.map((item, i) => (
+                        <div key={i} className="p-2 bg-orange-50 rounded text-sm">
+                          <span className="font-medium">{item.document_filename || `Run ${item.run_id}`}</span>
+                          {item.reason && <span className="text-orange-700 ml-2">— {item.reason}</span>}
+                          {item.issues?.length > 0 && (
+                            <ul className="mt-1 list-disc list-inside text-orange-700">
+                              {item.issues.slice(0, 3).map((issue, j) => (
+                                <li key={j}>{issue}</li>
+                              ))}
+                              {item.issues.length > 3 && <li>...and {item.issues.length - 3} more</li>}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3">
+                  <button onClick={closeBatchPostModal} className="btn btn-secondary">
+                    Cancel
+                  </button>
+                  {batchPreflight.ready_count > 0 && (
+                    <button
+                      onClick={() => handleBatchPost(true)}
+                      disabled={batchPosting}
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {batchPosting ? 'Posting...' : `Post ${batchPreflight.ready_count} Ready Documents`}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              // Loading
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+                <span className="ml-3 text-gray-600">Checking documents...</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -1,0 +1,336 @@
+"""
+Tests for Listing Field Registry
+
+Tests the single source of truth for CD Listings API fields.
+"""
+
+import pytest
+from datetime import datetime, timedelta
+
+from api.listing_fields import (
+    get_registry,
+    build_cd_payload,
+    ListingFieldRegistry,
+    ListingField,
+    FieldSection,
+    FieldType,
+    LISTING_FIELDS,
+)
+
+
+class TestListingFieldRegistry:
+    """Tests for ListingFieldRegistry."""
+
+    def test_get_registry_singleton(self):
+        """Registry should be singleton."""
+        r1 = get_registry()
+        r2 = get_registry()
+        assert r1 is r2
+
+    def test_get_all_fields(self):
+        """Should return all fields."""
+        registry = get_registry()
+        fields = registry.get_all_fields()
+        assert len(fields) > 0
+        assert all(isinstance(f, ListingField) for f in fields)
+
+    def test_get_required_fields(self):
+        """Should return required field keys."""
+        registry = get_registry()
+        required = registry.get_required_fields()
+        assert 'vehicle_vin' in required
+        assert 'vehicle_year' in required
+        assert 'pickup_address' in required
+        assert 'pickup_city' in required
+
+    def test_get_fields_by_section(self):
+        """Should return fields grouped by section."""
+        registry = get_registry()
+
+        vehicle_fields = registry.get_fields_by_section(FieldSection.VEHICLE)
+        assert len(vehicle_fields) > 0
+        assert all(f.section == FieldSection.VEHICLE for f in vehicle_fields)
+
+        pickup_fields = registry.get_fields_by_section(FieldSection.PICKUP)
+        assert len(pickup_fields) > 0
+        assert all(f.section == FieldSection.PICKUP for f in pickup_fields)
+
+    def test_get_field_by_key(self):
+        """Should return field by key."""
+        registry = get_registry()
+
+        vin_field = registry.get_field('vehicle_vin')
+        assert vin_field is not None
+        assert vin_field.key == 'vehicle_vin'
+        assert vin_field.required is True
+
+        unknown_field = registry.get_field('unknown_field')
+        assert unknown_field is None
+
+    def test_validate_vin(self):
+        """Should validate VIN format."""
+        registry = get_registry()
+
+        # Valid VIN
+        error = registry.validate_field('vehicle_vin', 'KM8JCCD18RU178398')
+        assert error is None
+
+        # Too short
+        error = registry.validate_field('vehicle_vin', 'ABC123')
+        assert error is not None
+        assert 'must be at least 17' in error
+
+        # Empty (required)
+        error = registry.validate_field('vehicle_vin', '')
+        assert error is not None
+        assert 'required' in error.lower()
+
+    def test_validate_year(self):
+        """Should validate year range."""
+        registry = get_registry()
+
+        # Valid year
+        error = registry.validate_field('vehicle_year', 2024)
+        assert error is None
+
+        # Too old
+        error = registry.validate_field('vehicle_year', 1800)
+        assert error is not None
+        assert 'at least 1900' in error
+
+    def test_validate_state(self):
+        """Should validate state format."""
+        registry = get_registry()
+
+        # Valid state
+        error = registry.validate_field('pickup_state', 'TX')
+        assert error is None
+
+        # Invalid format
+        error = registry.validate_field('pickup_state', 'Texas')
+        assert error is not None
+
+    def test_validate_all(self):
+        """Should validate all fields."""
+        registry = get_registry()
+
+        data = {
+            'vehicle_vin': 'ABC',  # Invalid
+            'vehicle_year': 2024,
+            'pickup_address': '',  # Missing required
+        }
+
+        errors = registry.validate_all(data)
+        assert len(errors) > 0
+
+        error_fields = [e['field'] for e in errors]
+        assert 'vehicle_vin' in error_fields
+        assert 'pickup_address' in error_fields
+
+    def test_get_blocking_issues(self):
+        """Should return blocking issues for posting."""
+        registry = get_registry()
+
+        # Missing required fields
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            # Missing pickup_address, etc.
+        }
+
+        issues = registry.get_blocking_issues(data, warehouse_selected=False)
+        assert len(issues) > 0
+
+        issue_fields = [i['field'] for i in issues]
+        assert 'warehouse' in issue_fields  # Warehouse not selected
+        assert any('pickup' in f for f in issue_fields)
+
+    def test_to_json_schema(self):
+        """Should export as JSON schema."""
+        registry = get_registry()
+        schema = registry.to_json_schema()
+
+        assert 'version' in schema
+        assert 'sections' in schema
+        assert 'required_fields' in schema
+
+        assert 'vehicle' in schema['sections']
+        assert 'pickup' in schema['sections']
+        assert 'delivery' in schema['sections']
+
+
+class TestBuildCDPayload:
+    """Tests for CD payload building."""
+
+    def test_build_minimal_payload(self):
+        """Should build payload with minimal data."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '5701 Whiteside Rd',
+            'pickup_city': 'Sandston',
+            'pickup_state': 'VA',
+            'pickup_zip': '23150',
+            'delivery_address': '123 Warehouse St',
+            'delivery_city': 'Dallas',
+            'delivery_state': 'TX',
+            'delivery_zip': '75001',
+        }
+
+        payload = build_cd_payload(data)
+
+        assert 'externalId' in payload
+        assert 'trailerType' in payload
+        assert 'stops' in payload
+        assert len(payload['stops']) == 2
+        assert 'vehicles' in payload
+        assert len(payload['vehicles']) == 1
+
+        # Verify vehicle
+        vehicle = payload['vehicles'][0]
+        assert vehicle['vin'] == 'KM8JCCD18RU178398'
+        assert vehicle['year'] == 2024
+        assert vehicle['make'] == 'Hyundai'
+
+        # Verify stops
+        pickup = payload['stops'][0]
+        assert pickup['stopNumber'] == 1
+        assert pickup['address']['city'] == 'Sandston'
+
+        delivery = payload['stops'][1]
+        assert delivery['stopNumber'] == 2
+        assert delivery['address']['city'] == 'Dallas'
+
+    def test_build_payload_with_pricing(self):
+        """Should include pricing when provided."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'price_total': 450.00,
+            'price_cod_amount': 450.00,
+            'price_cod_method': 'CASH',
+        }
+
+        payload = build_cd_payload(data)
+
+        assert 'price' in payload
+        assert payload['price']['total'] == 450.00
+        assert 'cod' in payload['price']
+        assert payload['price']['cod']['amount'] == 450.00
+
+    def test_build_payload_with_notes(self):
+        """Should include notes when provided."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+            'notes': 'Call before delivery',
+            'transport_special_instructions': 'Gate code: 1234',
+        }
+
+        payload = build_cd_payload(data)
+
+        assert payload.get('notes') == 'Call before delivery'
+        assert payload.get('transportationReleaseNotes') == 'Gate code: 1234'
+
+    def test_vehicle_operability(self):
+        """Should handle vehicle operability."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'vehicle_condition': 'INOPERABLE',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+        }
+
+        payload = build_cd_payload(data)
+
+        assert payload['hasInOpVehicle'] is True
+        assert payload['vehicles'][0]['isOperable'] is False
+
+
+class TestFieldDefinitions:
+    """Tests for field definitions completeness."""
+
+    def test_all_required_cd_fields_present(self):
+        """All required CD fields should be defined."""
+        required_keys = [
+            'vehicle_vin',
+            'vehicle_year',
+            'vehicle_make',
+            'vehicle_model',
+            'vehicle_type',
+            'vehicle_condition',
+            'pickup_address',
+            'pickup_city',
+            'pickup_state',
+            'pickup_zip',
+            'delivery_address',
+            'delivery_city',
+            'delivery_state',
+            'delivery_zip',
+            'available_date',
+            'trailer_type',
+        ]
+
+        field_keys = [f.key for f in LISTING_FIELDS]
+
+        for key in required_keys:
+            assert key in field_keys, f"Missing required field: {key}"
+
+    def test_fields_have_labels(self):
+        """All fields should have labels."""
+        for field in LISTING_FIELDS:
+            assert field.label, f"Field {field.key} missing label"
+
+    def test_fields_have_sections(self):
+        """All fields should have sections."""
+        for field in LISTING_FIELDS:
+            assert field.section, f"Field {field.key} missing section"
+            assert isinstance(field.section, FieldSection)
+
+    def test_select_fields_have_options(self):
+        """Select fields should have options."""
+        for field in LISTING_FIELDS:
+            if field.field_type == FieldType.SELECT:
+                assert field.options, f"Select field {field.key} missing options"
+                assert len(field.options) > 0
+
+    def test_fields_sorted_by_display_order(self):
+        """Fields within sections should be sorted by display_order."""
+        registry = get_registry()
+
+        for section in registry.get_sections():
+            fields = registry.get_fields_by_section(section)
+            orders = [f.display_order for f in fields]
+            assert orders == sorted(orders), f"Section {section} not sorted by display_order"
