@@ -148,23 +148,109 @@ class CopartExtractor(BaseExtractor):
 
     def _extract_pickup_location(self, text: str, pdf_path: str = None) -> Optional[Address]:
         """
-        Extract pickup address using universal base class method.
+        Extract pickup address from Copart document.
 
-        Copart-specific label patterns are passed to the universal extractor.
+        Copart documents have a 3-column layout:
+        - Column 1: MEMBER (buyer info)
+        - Column 2: PHYSICAL ADDRESS OF LOT (pickup location)
+        - Column 3: SELLER
+
+        The text extraction mixes columns, so we use targeted patterns.
         """
-        # Copart-specific label patterns
-        copart_patterns = [
-            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*',
-            r'LOT\s*(?:LOCATION|ADDRESS)[:\s]*',
-            r'PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*',
+        # Strategy 1: Look for address pattern after "PHYSICAL ADDRESS OF LOT"
+        # The lot address typically has a street number at the beginning
+        lot_addr_patterns = [
+            # Pattern: street with number, then city/state/zip on next occurrence
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*.*?(\d+\s+[A-Z0-9\s]+(?:ROAD|RD|STREET|ST|AVENUE|AVE|DRIVE|DR|HIGHWAY|HWY|BLVD|BOULEVARD|WAY|LANE|LN|COURT|CT|PARKWAY|PKWY)[A-Z\s]*?)(?:\s+SOLD|\s+SELLER|\s+GEICO|\s+[A-Z]{2}\s+\d{5})',
+            # Simpler pattern for street
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*[^\d]*(\d+\s+[A-Z0-9\s]+(?:SOUTH|NORTH|EAST|WEST|S|N|E|W)?)',
         ]
 
-        return self.extract_pickup_address_universal(
-            text=text,
-            pdf_path=pdf_path,
-            label_patterns=copart_patterns,
-            source_name="Copart"
-        )
+        street = None
+        for pattern in lot_addr_patterns:
+            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            if match:
+                street = match.group(1).strip()
+                # Take only the first line (address shouldn't span multiple lines)
+                street = street.split('\n')[0].strip()
+                # Clean up - remove trailing noise aggressively
+                # Remove anything after SOLD, SELLER, GEICO, MEMBER, COPART, THROUGH, or 9+ digit IDs
+                street = re.sub(r'\s*(SOLD|SELLER|GEICO|MEMBER|BROADWAY|THROUGH|COPART).*$', '', street, flags=re.IGNORECASE)
+                street = re.sub(r'\s+\d{8,}.*$', '', street)  # Remove 8+ digit numbers (IDs) and everything after
+                street = re.sub(r'\s{2,}', ' ', street)  # Normalize whitespace
+                street = street.strip()
+                if len(street) > 5 and len(street) < 100:
+                    break
+                street = None
+
+        # Strategy 2: Look for city/state/zip pattern near the lot section
+        # Format: CITY STATE ZIP (e.g., "RIVERVIEW FL 33578")
+        city, state, zip_code = "", "", ""
+
+        # First, try to find city/state/zip that appears AFTER the lot street address
+        # Look for pattern: street address followed by city state zip
+        if street:
+            # Extract just the street name (without numbers) for context matching
+            street_words = re.findall(r'[A-Z]+', street.upper())
+            # Look for city/state/zip after words from the street
+            after_street_pattern = r'(?:' + '|'.join(street_words[-2:]) + r')\s+([A-Z][A-Z]+)\s+([A-Z]{2})\s+(\d{5})'
+            match = re.search(after_street_pattern, text, re.IGNORECASE)
+            if match:
+                potential_city = match.group(1).strip()
+                potential_state = match.group(2).upper()
+                potential_zip = match.group(3)
+                # Validate - not noise
+                noise_words = ['MEMBER', 'SELLER', 'BUYER', 'BROADWAY', 'GEICO', 'COPART', 'SOLD', 'THROUGH', 'ROAD', 'STREET', 'HIGHWAY']
+                if not any(noise in potential_city.upper() for noise in noise_words):
+                    city, state, zip_code = potential_city, potential_state, potential_zip
+
+        # Fallback: look for common Florida patterns (Copart lots often in FL, TX, CA)
+        if not city:
+            fl_pattern = r'\b([A-Z][A-Z]+)\s+(FL|TX|CA|GA|NC|AZ|NV|OH|PA|NJ|NY)\s+(\d{5})\b'
+            matches = re.findall(fl_pattern, text, re.IGNORECASE)
+            for match in matches:
+                potential_city = match[0].strip()
+                potential_state = match[1].upper()
+                potential_zip = match[2]
+
+                # Filter out noise - city should be a real city name
+                noise_words = ['MEMBER', 'SELLER', 'BUYER', 'BROADWAY', 'GEICO', 'COPART', 'SOLD', 'THROUGH',
+                              'ROAD', 'RD', 'STREET', 'ST', 'AVENUE', 'AVE', 'FITCHBURG', 'AYER']
+                if any(noise in potential_city.upper() for noise in noise_words):
+                    continue
+
+                # City should be reasonable length
+                if len(potential_city) >= 3 and len(potential_city) <= 20:
+                    city = potential_city
+                    state = potential_state
+                    zip_code = potential_zip
+                    break
+
+        # If we couldn't find address parts, try the universal method as fallback
+        if not street and not city:
+            copart_patterns = [
+                r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*',
+                r'LOT\s*(?:LOCATION|ADDRESS)[:\s]*',
+                r'PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*',
+            ]
+            return self.extract_pickup_address_universal(
+                text=text,
+                pdf_path=pdf_path,
+                label_patterns=copart_patterns,
+                source_name="Copart"
+            )
+
+        # Build address
+        if street or (city and state):
+            return Address(
+                name="Copart",
+                street=street or "",
+                city=city,
+                state=state,
+                postal_code=zip_code,
+            )
+
+        return None
 
     def _parse_address_from_lines_legacy(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
         """Parse address from extracted lines."""

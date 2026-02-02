@@ -194,7 +194,12 @@ class IAAExtractor(BaseExtractor):
 
         return None
 
-    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None, location_name: str = None) -> Optional[Address]:
+    def _parse_address_from_lines(
+        self,
+        lines: list,
+        exclude_patterns: list = None,
+        source_name: str = None  # Match base class parameter name
+    ) -> Optional[Address]:
         """Parse address from extracted lines."""
         if not lines:
             return None
@@ -234,8 +239,8 @@ class IAAExtractor(BaseExtractor):
                 street = ""
 
         if street or (city and state):
-            # Use location_name if provided, otherwise default to "IAA"
-            name = location_name or "IAA"
+            # Use source_name if provided, otherwise default to "IAA"
+            name = source_name or "IAA"
             return Address(
                 name=name,
                 street=street,
