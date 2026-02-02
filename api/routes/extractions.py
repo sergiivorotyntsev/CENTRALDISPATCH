@@ -131,6 +131,68 @@ class ExtractionDetailResponse(BaseModel):
     raw_text_preview: Optional[str] = None
 
 
+class ExtractionMetricsResponse(BaseModel):
+    """Extraction metrics for diagnostics."""
+    raw_text_length: int = 0
+    words_count: int = 0
+    text_mode: str = "native"
+    pages_count: int = 0
+    detected_source: Optional[str] = None
+    classification_score: float = 0.0
+    classification_patterns: List[str] = []
+    fields_extracted_count: int = 0
+    fields_filled_count: int = 0
+    required_fields_filled: int = 0
+    required_fields_total: int = 0
+    needs_ocr: bool = False
+    has_pickup_address: bool = False
+    has_vehicle_vin: bool = False
+    has_vehicle_ymm: bool = False
+    extractor_version: str = "1.0"
+    extraction_timestamp: Optional[str] = None
+
+
+class FieldSourceInfo(BaseModel):
+    """Source info for a single field."""
+    field_key: str
+    value: Optional[str] = None
+    source: str  # "EXTRACTED", "USER_OVERRIDE", "WAREHOUSE_CONST", "AUCTION_CONST", "DEFAULT"
+    confidence: Optional[float] = None
+    extractor_method: Optional[str] = None  # Which extraction method produced this value
+
+
+class ExtractionDebugResponse(BaseModel):
+    """Debug response for extraction diagnostics."""
+    run_id: int
+    document_id: int
+    document_filename: Optional[str] = None
+    auction_type: Optional[str] = None
+
+    # Status and scoring
+    status: str
+    extraction_score: Optional[float] = None
+    processing_time_ms: Optional[int] = None
+
+    # Metrics
+    metrics: Optional[ExtractionMetricsResponse] = None
+
+    # Field sources - where each value came from
+    field_sources: List[FieldSourceInfo] = []
+
+    # Errors if any
+    errors: Optional[list] = None
+
+    # Raw text preview
+    raw_text_preview: Optional[str] = None
+    raw_text_length: int = 0
+
+    # Classification details
+    all_scores: List[dict] = []  # Scores from all extractors for comparison
+
+    # Recommendations
+    recommendations: List[str] = []
+
+
 # =============================================================================
 # EXTRACTION LOGIC
 # =============================================================================
@@ -141,8 +203,33 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
     Execute extraction on a document.
 
     This function is called synchronously or as a background task.
+    Tracks extraction metrics and field sources for diagnostics.
     """
     start_time = time.time()
+
+    # Initialize metrics tracking
+    metrics = {
+        "raw_text_length": 0,
+        "words_count": 0,
+        "text_mode": "native",
+        "pages_count": 0,
+        "detected_source": None,
+        "classification_score": 0.0,
+        "classification_patterns": [],
+        "fields_extracted_count": 0,
+        "fields_filled_count": 0,
+        "required_fields_filled": 0,
+        "required_fields_total": 4,  # vin, pickup_address, pickup_city, pickup_state
+        "needs_ocr": False,
+        "has_pickup_address": False,
+        "has_vehicle_vin": False,
+        "has_vehicle_ymm": False,
+        "extractor_version": "1.0",
+        "extraction_timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    # Initialize field sources tracking
+    field_sources = {}
 
     # Get document
     doc = DocumentRepository.get_by_id(document_id)
@@ -151,6 +238,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
             run_id,
             status="failed",
             errors_json=[{"error": "Document not found"}],
+            metrics_json=metrics,
         )
         return
 
@@ -161,6 +249,7 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
             run_id,
             status="failed",
             errors_json=[{"error": "Auction type not found"}],
+            metrics_json=metrics,
         )
         return
 
@@ -170,11 +259,13 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
     try:
         # Get raw text from document
         raw_text = doc.raw_text or ""
+        pages_count = 0
 
         if not raw_text and doc.file_path:
             # Try to extract text
             import pdfplumber
             with pdfplumber.open(doc.file_path) as pdf:
+                pages_count = len(pdf.pages)
                 text_parts = []
                 for page in pdf.pages:
                     text = page.extract_text()
@@ -182,11 +273,18 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         text_parts.append(text)
                 raw_text = "\n".join(text_parts)
 
+        # Update metrics with text info
+        metrics["raw_text_length"] = len(raw_text)
+        metrics["words_count"] = len(raw_text.split()) if raw_text else 0
+        metrics["pages_count"] = pages_count
+        metrics["needs_ocr"] = len(raw_text) < 100
+
         if not raw_text:
             ExtractionRunRepository.update(
                 run_id,
                 status="failed",
                 errors_json=[{"error": "Could not extract text from document"}],
+                metrics_json=metrics,
             )
             return
 
@@ -207,11 +305,16 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         classification = manager.get_extractor_for_text(raw_text)
         if classification:
             extractor = classification
+            score, patterns = extractor.score(raw_text)
+            metrics["classification_score"] = score
+            metrics["classification_patterns"] = patterns[:10] if patterns else []
+            metrics["detected_source"] = extractor.source.value
+
             result = extractor.extract_with_result(doc.file_path, raw_text)
 
             if result.invoice:
                 inv = result.invoice
-                # Map invoice to outputs
+                # Map invoice to outputs with field source tracking
                 outputs = {
                     "auction_source": result.source.value if result.source else auction_type.code,
                     "reference_id": inv.reference_id,
@@ -220,6 +323,15 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                     "sale_date": inv.sale_date,
                     "total_amount": inv.total_amount,
                 }
+
+                # Track field sources for base fields
+                for key, value in outputs.items():
+                    field_sources[key] = {
+                        "value": value,
+                        "source": "EXTRACTED" if value is not None else "DEFAULT",
+                        "confidence": 0.7 if value is not None else 0.0,
+                        "method": f"{extractor.source.value.lower()}_extractor",
+                    }
 
                 # Pickup address
                 if inv.pickup_address:
@@ -230,19 +342,32 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                     if not street_address and addr.name:
                         # Use location name as fallback (e.g., "IAA Tampa South")
                         street_address = addr.name
-                    outputs.update({
+
+                    pickup_fields = {
                         "pickup_name": addr.name,
                         "pickup_address": street_address,
                         "pickup_city": addr.city,
                         "pickup_state": addr.state,
                         "pickup_zip": addr.postal_code,
                         "pickup_phone": addr.phone,
-                    })
+                    }
+                    outputs.update(pickup_fields)
+
+                    # Track pickup field sources
+                    for key, value in pickup_fields.items():
+                        field_sources[key] = {
+                            "value": value,
+                            "source": "EXTRACTED" if value else "DEFAULT",
+                            "confidence": 0.6 if value else 0.0,
+                            "method": "address_extractor",
+                        }
+
+                    metrics["has_pickup_address"] = bool(street_address)
 
                 # Vehicles
                 if inv.vehicles:
                     v = inv.vehicles[0]
-                    outputs.update({
+                    vehicle_fields = {
                         "vehicle_vin": v.vin,
                         "vehicle_year": v.year,
                         "vehicle_make": v.make,
@@ -251,7 +376,20 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         "vehicle_lot": v.lot_number,
                         "vehicle_mileage": v.mileage,
                         "vehicle_is_inoperable": v.is_inoperable,
-                    })
+                    }
+                    outputs.update(vehicle_fields)
+
+                    # Track vehicle field sources
+                    for key, value in vehicle_fields.items():
+                        field_sources[key] = {
+                            "value": value,
+                            "source": "EXTRACTED" if value is not None else "DEFAULT",
+                            "confidence": 0.8 if value is not None else 0.0,
+                            "method": "vehicle_extractor",
+                        }
+
+                    metrics["has_vehicle_vin"] = bool(v.vin)
+                    metrics["has_vehicle_ymm"] = bool(v.year and v.make and v.model)
 
                     # Generate custom Order ID: MMDD + Make(3) + Model(1) + Seq
                     # Example: 21JEEG1 for Feb 1, Jeep Grand Cherokee, order #1
@@ -259,6 +397,12 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         order_date = inv.sale_date or datetime.now()
                         order_id = generate_order_id(v.make, v.model, order_date)
                         outputs["order_id"] = order_id
+                        field_sources["order_id"] = {
+                            "value": order_id,
+                            "source": "GENERATED",
+                            "confidence": 1.0,
+                            "method": "order_id_generator",
+                        }
                     except Exception as e:
                         # Don't fail extraction if order_id generation fails
                         outputs["order_id"] = None
@@ -279,6 +423,14 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                             # Update the run as well
                             ExtractionRunRepository.update(run_id, auction_type_id=detected_type.id)
 
+        # Calculate field metrics
+        metrics["fields_extracted_count"] = len(outputs)
+        metrics["fields_filled_count"] = sum(1 for v in outputs.values() if v is not None and v != "")
+
+        # Count required fields filled
+        required_fields = ["vehicle_vin", "pickup_address", "pickup_city", "pickup_state"]
+        metrics["required_fields_filled"] = sum(1 for f in required_fields if outputs.get(f))
+
         processing_time_ms = int((time.time() - start_time) * 1000)
 
         # Determine status based on extraction quality
@@ -291,12 +443,14 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
             # For now, all successful extractions need review
             run_status = "needs_review"
 
-        # Update run with results
+        # Update run with results including metrics and field sources
         ExtractionRunRepository.update(
             run_id,
             status=run_status,
             extraction_score=extraction_score,
             outputs_json=outputs,
+            metrics_json=metrics,
+            field_sources_json=field_sources,
             processing_time_ms=processing_time_ms,
             completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
@@ -313,10 +467,14 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
             "error": str(e),
             "traceback": traceback.format_exc(),
         }
+        # Update metrics with error info
+        metrics["extraction_timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
         ExtractionRunRepository.update(
             run_id,
             status="failed",
             errors_json=[error_details],
+            metrics_json=metrics,
             completed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
@@ -795,3 +953,139 @@ async def update_extraction_run(id: int, data: ExtractionUpdateRequest):
         created_at=run.created_at,
         completed_at=run.completed_at,
     )
+
+
+@router.get("/{id}/debug", response_model=ExtractionDebugResponse)
+async def get_extraction_debug(id: int):
+    """
+    Get detailed debug information for an extraction run.
+
+    Returns comprehensive diagnostics including:
+    - Extraction metrics (text length, word count, pages)
+    - Classification scores from all extractors
+    - Field sources (where each value came from)
+    - OCR status and recommendations
+    - Raw text preview
+
+    This endpoint is designed for troubleshooting extraction issues
+    and understanding why fields may be empty or incorrect.
+    """
+    import os
+
+    run = ExtractionRunRepository.get_by_id(id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+
+    doc = DocumentRepository.get_by_id(run.document_id)
+    at = AuctionTypeRepository.get_by_id(run.auction_type_id)
+
+    # Initialize response
+    response = ExtractionDebugResponse(
+        run_id=run.id,
+        document_id=run.document_id,
+        document_filename=doc.filename if doc else None,
+        auction_type=at.code if at else None,
+        status=run.status,
+        extraction_score=run.extraction_score,
+        processing_time_ms=run.processing_time_ms,
+        errors=run.errors_json,
+    )
+
+    # Get raw text from document
+    raw_text = doc.raw_text or "" if doc else ""
+    response.raw_text_length = len(raw_text)
+    response.raw_text_preview = raw_text[:2000] if raw_text else None
+
+    # Load stored metrics if available
+    if run.metrics_json:
+        response.metrics = ExtractionMetricsResponse(**run.metrics_json)
+    else:
+        # Calculate metrics on the fly if not stored
+        words = raw_text.split() if raw_text else []
+        response.metrics = ExtractionMetricsResponse(
+            raw_text_length=len(raw_text),
+            words_count=len(words),
+            text_mode="native",  # Assume native if not stored
+            needs_ocr=len(raw_text) < 100,
+        )
+
+    # Get field sources from stored data or compute from outputs
+    field_sources = []
+    if run.field_sources_json:
+        for key, info in run.field_sources_json.items():
+            field_sources.append(FieldSourceInfo(
+                field_key=key,
+                value=str(info.get("value")) if info.get("value") is not None else None,
+                source=info.get("source", "EXTRACTED"),
+                confidence=info.get("confidence"),
+                extractor_method=info.get("method"),
+            ))
+    elif run.outputs_json:
+        # Generate field sources from outputs
+        for key, value in run.outputs_json.items():
+            field_sources.append(FieldSourceInfo(
+                field_key=key,
+                value=str(value) if value is not None else None,
+                source="EXTRACTED" if value is not None else "DEFAULT",
+                confidence=0.5 if value is not None else 0.0,
+            ))
+    response.field_sources = field_sources
+
+    # Get classification scores from all extractors
+    all_scores = []
+    if doc and doc.file_path and os.path.exists(doc.file_path):
+        try:
+            from extractors import ExtractorManager
+            manager = ExtractorManager()
+
+            for extractor in manager.extractors:
+                score, patterns = extractor.score(raw_text)
+                all_scores.append({
+                    "source": extractor.source.value,
+                    "score": score,
+                    "matched_patterns": patterns[:5] if patterns else [],
+                    "is_selected": (at and extractor.source.value == at.code),
+                })
+        except Exception as e:
+            all_scores.append({"error": str(e)})
+    response.all_scores = all_scores
+
+    # Generate recommendations
+    recommendations = []
+
+    # Check text length
+    if len(raw_text) < 100:
+        recommendations.append("Document has very little text. OCR may be required.")
+
+    # Check for missing required fields
+    outputs = run.outputs_json or {}
+    required_fields = ["vehicle_vin", "pickup_address", "pickup_city", "pickup_state"]
+    missing_required = [f for f in required_fields if not outputs.get(f)]
+    if missing_required:
+        recommendations.append(f"Missing required fields: {', '.join(missing_required)}")
+
+    # Check extraction score
+    if run.extraction_score and run.extraction_score < 0.3:
+        recommendations.append("Low extraction score. Document format may not match expected template.")
+
+    # Check if extractor was selected
+    if not at:
+        recommendations.append("No auction type assigned. Classification may have failed.")
+
+    # Check for errors
+    if run.errors_json:
+        recommendations.append(f"Extraction errors occurred: {len(run.errors_json)} error(s)")
+
+    # Check vehicle info
+    if not outputs.get("vehicle_vin"):
+        recommendations.append("VIN not extracted. Check if VIN is present in document.")
+    if not outputs.get("vehicle_year") or not outputs.get("vehicle_make"):
+        recommendations.append("Vehicle year/make/model incomplete.")
+
+    # Check pickup address
+    if not outputs.get("pickup_address"):
+        recommendations.append("Pickup address not extracted. May require manual entry.")
+
+    response.recommendations = recommendations
+
+    return response

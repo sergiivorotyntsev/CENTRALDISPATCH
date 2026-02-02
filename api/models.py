@@ -164,6 +164,8 @@ def init_extended_schema():
                 extraction_score REAL,
                 outputs_json TEXT,
                 errors_json TEXT,
+                metrics_json TEXT,
+                field_sources_json TEXT,
                 processing_time_ms INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 completed_at TIMESTAMP,
@@ -550,9 +552,47 @@ class ExtractionRun:
     extraction_score: Optional[float] = None
     outputs_json: Optional[Dict] = None
     errors_json: Optional[List] = None
+    metrics_json: Optional[Dict] = None
+    field_sources_json: Optional[Dict] = None
     processing_time_ms: Optional[int] = None
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
+
+
+@dataclass
+class ExtractionMetrics:
+    """
+    Extraction metrics for diagnostics and observability.
+
+    These metrics are tracked during extraction and stored in metrics_json.
+    Used for monitoring extraction quality and debugging issues.
+    """
+    # Text extraction metrics
+    raw_text_length: int = 0
+    words_count: int = 0
+    text_mode: str = "native"  # "native", "ocr", "hybrid"
+    pages_count: int = 0
+
+    # Classification metrics
+    detected_source: Optional[str] = None
+    classification_score: float = 0.0
+    classification_patterns: List[str] = field(default_factory=list)
+
+    # Extraction metrics
+    fields_extracted_count: int = 0
+    fields_filled_count: int = 0
+    required_fields_filled: int = 0
+    required_fields_total: int = 0
+
+    # Quality indicators
+    needs_ocr: bool = False
+    has_pickup_address: bool = False
+    has_vehicle_vin: bool = False
+    has_vehicle_ymm: bool = False  # year, make, model
+
+    # Processing info
+    extractor_version: str = "1.0"
+    extraction_timestamp: Optional[str] = None
 
 
 @dataclass
@@ -930,6 +970,10 @@ class ExtractionRunRepository:
                     data["outputs_json"] = json.loads(data["outputs_json"])
                 if data.get("errors_json"):
                     data["errors_json"] = json.loads(data["errors_json"])
+                if data.get("metrics_json"):
+                    data["metrics_json"] = json.loads(data["metrics_json"])
+                if data.get("field_sources_json"):
+                    data["field_sources_json"] = json.loads(data["field_sources_json"])
                 return ExtractionRun(**data)
             return None
 
@@ -951,6 +995,10 @@ class ExtractionRunRepository:
             kwargs["outputs_json"] = json.dumps(kwargs["outputs_json"], default=json_serializer)
         if "errors_json" in kwargs and isinstance(kwargs["errors_json"], list):
             kwargs["errors_json"] = json.dumps(kwargs["errors_json"], default=json_serializer)
+        if "metrics_json" in kwargs and isinstance(kwargs["metrics_json"], dict):
+            kwargs["metrics_json"] = json.dumps(kwargs["metrics_json"], default=json_serializer)
+        if "field_sources_json" in kwargs and isinstance(kwargs["field_sources_json"], dict):
+            kwargs["field_sources_json"] = json.dumps(kwargs["field_sources_json"], default=json_serializer)
 
         set_clause = ", ".join(f"{k} = ?" for k in kwargs.keys())
         values = list(kwargs.values()) + [id]
@@ -975,6 +1023,10 @@ class ExtractionRunRepository:
                     data["outputs_json"] = json.loads(data["outputs_json"])
                 if data.get("errors_json"):
                     data["errors_json"] = json.loads(data["errors_json"])
+                if data.get("metrics_json"):
+                    data["metrics_json"] = json.loads(data["metrics_json"])
+                if data.get("field_sources_json"):
+                    data["field_sources_json"] = json.loads(data["field_sources_json"])
                 result.append(ExtractionRun(**data))
             return result
 
