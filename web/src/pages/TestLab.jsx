@@ -521,6 +521,33 @@ function TestLab() {
     }
   }
 
+  async function handleDeleteDocument(documentId, e) {
+    if (e) e.stopPropagation()
+    if (!confirm('Delete this document and all related extraction data? This cannot be undone.')) return
+
+    try {
+      await api.deleteDocument(documentId)
+      loadRecentTests()
+      loadTrainingStats()
+    } catch (err) {
+      alert('Error deleting document: ' + err.message)
+    }
+  }
+
+  async function handleClearAllTestDocuments() {
+    if (!confirm('DELETE ALL TEST DOCUMENTS?\n\nThis will permanently remove all documents uploaded in Test Lab and their extraction data.\n\nThis action CANNOT be undone!')) return
+    if (!confirm('Are you SURE? Type "DELETE" to confirm.')) return
+
+    try {
+      const result = await api.clearTestLabDocuments()
+      alert(result.message || `Deleted ${result.deleted_count} documents`)
+      loadRecentTests()
+      loadTrainingStats()
+    } catch (err) {
+      alert('Error clearing documents: ' + err.message)
+    }
+  }
+
   async function handleCreateAuctionType(e) {
     e.preventDefault()
     try {
@@ -859,9 +886,14 @@ function TestLab() {
           <div className="card">
             <div className="card-header flex items-center justify-between">
               <h2 className="font-semibold">Recent Extractions</h2>
-              <button onClick={loadRecentTests} className="btn btn-sm btn-secondary">
-                Refresh
-              </button>
+              <div className="flex space-x-2">
+                <button onClick={handleClearAllTestDocuments} className="btn btn-sm bg-red-600 text-white hover:bg-red-700">
+                  Clear All Test Data
+                </button>
+                <button onClick={loadRecentTests} className="btn btn-sm btn-secondary">
+                  Refresh
+                </button>
+              </div>
             </div>
             <div className="card-body p-0">
               {loadingTests ? (
@@ -919,6 +951,13 @@ function TestLab() {
                                 Dry Run
                               </button>
                             )}
+                            <button
+                              onClick={(e) => handleDeleteDocument(run.document_id, e)}
+                              className="text-sm text-red-600 hover:text-red-800"
+                              title="Delete document and extraction"
+                            >
+                              Delete
+                            </button>
                           </div>
                         </td>
                       </tr>

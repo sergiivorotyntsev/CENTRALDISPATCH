@@ -636,7 +636,14 @@ async def get_document_export_preview(id: int):
 
 @router.delete("/{id}", status_code=204)
 async def delete_document(id: int):
-    """Delete a document."""
+    """
+    Delete a document and all related data.
+
+    This will cascade delete:
+    - Extraction runs for this document
+    - Review items for those extraction runs
+    - The document file from disk
+    """
     doc = DocumentRepository.get_by_id(id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -645,10 +652,82 @@ async def delete_document(id: int):
     if doc.file_path and os.path.exists(doc.file_path):
         os.remove(doc.file_path)
 
-    # Delete from database
+    # Delete from database with cascade
     from api.database import get_connection
     with get_connection() as conn:
+        # First get extraction run IDs for this document
+        run_ids = conn.execute(
+            "SELECT id FROM extraction_runs WHERE document_id = ?", (id,)
+        ).fetchall()
+        run_ids = [r[0] for r in run_ids]
+
+        # Delete review items for these runs
+        if run_ids:
+            placeholders = ','.join('?' * len(run_ids))
+            conn.execute(f"DELETE FROM review_items WHERE run_id IN ({placeholders})", run_ids)
+
+        # Delete extraction runs
+        conn.execute("DELETE FROM extraction_runs WHERE document_id = ?", (id,))
+
+        # Delete the document
         conn.execute("DELETE FROM documents WHERE id = ?", (id,))
         conn.commit()
 
     return None
+
+
+@router.delete("/test-lab/clear-all", status_code=200)
+async def clear_all_test_lab_documents():
+    """
+    Delete ALL Test Lab documents and their related data.
+
+    This is a bulk operation that removes:
+    - All documents with source='test_lab' or is_test=true
+    - All extraction runs for those documents
+    - All review items for those runs
+    - All files from disk
+
+    Use with caution - this cannot be undone!
+    """
+    from api.database import get_connection
+
+    deleted_count = 0
+    with get_connection() as conn:
+        # Get all test lab documents
+        docs = conn.execute("""
+            SELECT id, file_path FROM documents
+            WHERE source = 'test_lab' OR is_test = 1
+        """).fetchall()
+
+        for doc in docs:
+            doc_id = doc[0]
+            file_path = doc[1]
+
+            # Delete file if exists
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass  # Continue even if file deletion fails
+
+            # Get extraction run IDs for this document
+            run_ids = conn.execute(
+                "SELECT id FROM extraction_runs WHERE document_id = ?", (doc_id,)
+            ).fetchall()
+            run_ids = [r[0] for r in run_ids]
+
+            # Delete review items for these runs
+            if run_ids:
+                placeholders = ','.join('?' * len(run_ids))
+                conn.execute(f"DELETE FROM review_items WHERE run_id IN ({placeholders})", run_ids)
+
+            # Delete extraction runs
+            conn.execute("DELETE FROM extraction_runs WHERE document_id = ?", (doc_id,))
+
+            deleted_count += 1
+
+        # Delete all test lab documents
+        conn.execute("DELETE FROM documents WHERE source = 'test_lab' OR is_test = 1")
+        conn.commit()
+
+    return {"success": True, "deleted_count": deleted_count, "message": f"Deleted {deleted_count} test documents"}

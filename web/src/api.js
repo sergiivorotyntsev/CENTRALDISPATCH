@@ -132,6 +132,7 @@ export const api = {
   getDocumentText: (id) => request(`/documents/${id}/text`),
   getDocumentExportPreview: (id) => request(`/documents/${id}/export-preview`),
   deleteDocument: (id) => request(`/documents/${id}`, { method: 'DELETE' }),
+  clearTestLabDocuments: () => request('/documents/test-lab/clear-all', { method: 'DELETE' }),
   uploadDocument: async (file, auctionTypeId, datasetSplit = 'train') => {
     const formData = new FormData()
     formData.append('file', file)
