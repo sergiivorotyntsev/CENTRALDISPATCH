@@ -141,9 +141,20 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
         item_map[item.source_key] = value
 
     errors = []
+    warnings = []
 
-    # Build dispatch_id
+    # Build dispatch_id (externalId) - CD API limit: 50 characters
     dispatch_id = f"DC-{datetime.now().strftime('%Y%m%d')}-{at.code}-{run.uuid[:8].upper()}"
+    if len(dispatch_id) > 50:
+        original_len = len(dispatch_id)
+        dispatch_id = dispatch_id[:50]
+        warnings.append(f"externalId truncated from {original_len} to 50 characters")
+        logger.warning(f"externalId truncated: {original_len} -> 50 chars for run {run_id}")
+
+    # Build partnerReferenceId for retry-safe POST (CD API limit: 50 chars)
+    partner_ref_id = f"CD-RUN-{run_id}"
+    if len(partner_ref_id) > 50:
+        partner_ref_id = partner_ref_id[:50]
 
     # Get field values with defaults
     def get_field(key: str, default=None):
@@ -237,6 +248,7 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
     # Full payload (CD Listings API V2)
     payload = {
         "externalId": dispatch_id,
+        "partnerReferenceId": partner_ref_id,  # For retry-safe POST (duplicate detection)
         "trailerType": trailer_type,
         "hasInOpVehicle": is_inop,
         "availableDate": available_date,
@@ -254,6 +266,10 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
             }
         ],
     }
+
+    # Include warnings in errors (prefixed) for visibility
+    for w in warnings:
+        errors.append(f"[WARNING] {w}")
 
     return payload, errors
 
@@ -339,6 +355,8 @@ def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool,
     """
     GET a listing from CD to retrieve current ETag.
 
+    CD API V2 endpoint: GET /listings/id/{id}
+
     Returns (success, etag, response_data).
     Required before PUT/update operations (If-Match header).
     """
@@ -349,7 +367,8 @@ def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool,
     else:
         base_url = "https://api.centraldispatch.com"
 
-    endpoint = f"{base_url}/listings/{cd_listing_id}"
+    # CD API V2 uses /listings/id/{id} for GET by ID
+    endpoint = f"{base_url}/listings/id/{cd_listing_id}"
 
     headers = {
         "Accept": "application/vnd.coxauto.v2+json",
@@ -358,6 +377,7 @@ def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool,
     }
 
     try:
+        logger.info(f"GET {endpoint} to retrieve ETag")
         response = requests.get(
             endpoint,
             headers=headers,
@@ -366,15 +386,64 @@ def get_cd_listing_etag(cd_listing_id: str, sandbox: bool = True) -> Tuple[bool,
 
         if response.status_code == 200:
             etag = response.headers.get("ETag")
+            logger.info(f"GET success, ETag: {etag}")
             return True, etag, response.json()
         else:
+            logger.warning(f"GET failed: {response.status_code} - {response.text[:200]}")
             return False, None, {
                 "status_code": response.status_code,
                 "error": response.text,
             }
 
     except requests.RequestException as e:
+        logger.error(f"GET request error: {e}")
         return False, None, {"error": str(e)}
+
+
+def find_listing_by_partner_ref(partner_ref_id: str, sandbox: bool = True) -> Optional[str]:
+    """
+    Search for existing listing by partnerReferenceId.
+
+    Used for retry-safe POST to detect if listing was already created.
+
+    Returns cd_listing_id if found, None otherwise.
+    """
+    import requests
+
+    if sandbox:
+        base_url = "https://api.sandbox.centraldispatch.com"
+    else:
+        base_url = "https://api.centraldispatch.com"
+
+    # CD API V2: search listings by partnerReferenceId
+    endpoint = f"{base_url}/listings"
+    params = {"partnerReferenceId": partner_ref_id}
+
+    headers = {
+        "Accept": "application/vnd.coxauto.v2+json",
+    }
+
+    try:
+        logger.info(f"Searching for listing with partnerReferenceId: {partner_ref_id}")
+        response = requests.get(
+            endpoint,
+            params=params,
+            headers=headers,
+            timeout=30,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            listings = data.get("listings") or data.get("items") or []
+            if listings:
+                listing_id = listings[0].get("id") or listings[0].get("listingId")
+                logger.info(f"Found existing listing: {listing_id}")
+                return listing_id
+        return None
+
+    except requests.RequestException as e:
+        logger.warning(f"Search request error: {e}")
+        return None
 
 
 def send_to_cd(
@@ -382,12 +451,13 @@ def send_to_cd(
     sandbox: bool = True,
     cd_listing_id: Optional[str] = None,
     etag: Optional[str] = None,
-) -> Tuple[bool, dict, Optional[str]]:
+) -> Tuple[bool, dict, Optional[str], Optional[str]]:
     """
     Send payload to Central Dispatch API V2.
 
-    For new listings: POST /listings
-    For updates: PUT /listings/{id} with If-Match header
+    CD API V2 endpoints:
+    - POST /listings (create) → returns Location header with new listing URL
+    - PUT /listings/id/{id} (update) → requires If-Match header, returns 204
 
     Args:
         payload: The listing payload
@@ -395,7 +465,7 @@ def send_to_cd(
         cd_listing_id: Existing listing ID (for updates)
         etag: ETag for If-Match header (required for updates)
 
-    Returns (success, response_data, new_etag).
+    Returns (success, response_data, new_etag, listing_id).
     """
     import requests
 
@@ -415,7 +485,8 @@ def send_to_cd(
     try:
         if cd_listing_id and etag:
             # UPDATE existing listing with If-Match
-            endpoint = f"{base_url}/listings/{cd_listing_id}"
+            # CD API V2 uses /listings/id/{id} for PUT
+            endpoint = f"{base_url}/listings/id/{cd_listing_id}"
             headers["If-Match"] = etag
             logger.info(f"PUT {endpoint} with If-Match: {etag}")
 
@@ -425,10 +496,19 @@ def send_to_cd(
                 headers=headers,
                 timeout=30,
             )
+
+            # CD API returns 204 No Content for successful PUT
+            if response.status_code == 204:
+                logger.info(f"PUT success (204 No Content) for listing {cd_listing_id}")
+                # Need to GET the listing to retrieve new ETag
+                success, new_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
+                return True, {"id": cd_listing_id, "updated": True}, new_etag, cd_listing_id
+
         else:
             # CREATE new listing
             endpoint = f"{base_url}/listings"
             logger.info(f"POST {endpoint}")
+            logger.debug(f"Payload partnerReferenceId: {payload.get('partnerReferenceId')}")
 
             response = requests.post(
                 endpoint,
@@ -437,34 +517,75 @@ def send_to_cd(
                 timeout=30,
             )
 
-        # Extract new ETag from response
+        # Handle response
         new_etag = response.headers.get("ETag")
+        location = response.headers.get("Location")
+        listing_id = None
 
-        if response.status_code in (200, 201):
-            return True, response.json(), new_etag
+        if response.status_code == 201:
+            # POST success - extract listing ID from Location header
+            # Location format: /listings/id/{id}
+            if location:
+                listing_id = location.rstrip("/").split("/")[-1]
+                logger.info(f"POST success, Location: {location}, listing_id: {listing_id}")
+            else:
+                # Fallback to response body if Location not present
+                try:
+                    resp_data = response.json()
+                    listing_id = resp_data.get("id") or resp_data.get("listingId")
+                except Exception:
+                    pass
+                logger.warning("POST success but no Location header")
+
+            # If no ETag in response, fetch it
+            if listing_id and not new_etag:
+                logger.info(f"No ETag in POST response, fetching via GET")
+                success, new_etag, _ = get_cd_listing_etag(listing_id, sandbox=sandbox)
+
+            try:
+                return True, response.json(), new_etag, listing_id
+            except Exception:
+                return True, {"id": listing_id}, new_etag, listing_id
+
+        elif response.status_code == 200:
+            # Some CD endpoints may return 200 for updates
+            try:
+                resp_data = response.json()
+                listing_id = resp_data.get("id") or resp_data.get("listingId") or cd_listing_id
+                return True, resp_data, new_etag, listing_id
+            except Exception:
+                return True, {"id": cd_listing_id}, new_etag, cd_listing_id
+
         elif response.status_code == 412:
             # Precondition Failed - ETag mismatch (concurrent modification)
+            logger.warning(f"412 Precondition Failed - ETag mismatch for {cd_listing_id}")
             return False, {
                 "status_code": 412,
                 "error": "ETag mismatch - listing was modified. Please refresh and retry.",
                 "error_code": "ETAG_MISMATCH",
-            }, None
+            }, None, None
+
         elif response.status_code == 429:
             # Rate limited
+            retry_after = response.headers.get("Retry-After", "60")
+            logger.warning(f"429 Rate Limited, Retry-After: {retry_after}")
             return False, {
                 "status_code": 429,
                 "error": "Rate limited by CD API. Please wait and retry.",
                 "error_code": "RATE_LIMITED",
-                "retry_after": response.headers.get("Retry-After", "60"),
-            }, None
+                "retry_after": retry_after,
+            }, None, None
+
         else:
+            logger.error(f"CD API error {response.status_code}: {response.text[:500]}")
             return False, {
                 "status_code": response.status_code,
                 "error": response.text,
-            }, None
+            }, None, None
 
     except requests.RequestException as e:
-        return False, {"error": str(e)}, None
+        logger.error(f"Request exception: {e}")
+        return False, {"error": str(e)}, None, None
 
 
 async def send_to_cd_with_retry(
@@ -480,6 +601,7 @@ async def send_to_cd_with_retry(
     - Concurrent request throttling (max 3 concurrent)
     - Exponential backoff on 429/5xx errors
     - ETag-based updates for existing listings
+    - Retry-safe POST using partnerReferenceId to detect duplicates
 
     Args:
         payload: The listing payload
@@ -494,6 +616,7 @@ async def send_to_cd_with_retry(
     # Check for existing CD listing (for update with ETag)
     cd_listing_id = None
     etag = None
+    is_update = False
 
     if run_id and not force_create:
         existing = get_cd_listing_info(run_id)
@@ -505,6 +628,7 @@ async def send_to_cd_with_retry(
                 success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
                 if success and fresh_etag:
                     etag = fresh_etag
+                    is_update = True
                     logger.info(f"Got fresh ETag: {etag}")
                 else:
                     # Listing may have been deleted, force create
@@ -512,20 +636,43 @@ async def send_to_cd_with_retry(
                     cd_listing_id = None
 
     last_error = None
+    partner_ref_id = payload.get("partnerReferenceId")
 
     for attempt in range(CD_RETRY_ATTEMPTS):
+        # For POST retries: check if listing was created on previous attempt
+        # (handles network errors where CD created listing but response was lost)
+        if attempt > 0 and not is_update and partner_ref_id:
+            logger.info(f"Retry attempt {attempt + 1}: checking for existing listing by partnerReferenceId")
+            loop = asyncio.get_event_loop()
+            existing_id = await loop.run_in_executor(
+                None,
+                lambda: find_listing_by_partner_ref(partner_ref_id, sandbox=sandbox)
+            )
+            if existing_id:
+                logger.info(f"Found existing listing {existing_id} from previous attempt, treating as success")
+                # Fetch ETag for the found listing
+                success, found_etag, resp_data = get_cd_listing_etag(existing_id, sandbox=sandbox)
+                if run_id:
+                    save_cd_listing_info(
+                        run_id=run_id,
+                        cd_listing_id=existing_id,
+                        etag=found_etag,
+                        external_id=payload.get("externalId"),
+                        sandbox=sandbox,
+                    )
+                return True, {"id": existing_id, "recovered_from_retry": True}, existing_id
+
         async with semaphore:
             # Run sync function in thread pool
             loop = asyncio.get_event_loop()
-            success, response, new_etag = await loop.run_in_executor(
+            # Note: send_to_cd now returns 4 values: (success, response, new_etag, listing_id)
+            result = await loop.run_in_executor(
                 None,
-                lambda: send_to_cd(payload, sandbox, cd_listing_id, etag)
+                lambda: send_to_cd(payload, sandbox, cd_listing_id if is_update else None, etag if is_update else None)
             )
+            success, response, new_etag, result_listing_id = result
 
             if success:
-                # Extract listing ID from response
-                result_listing_id = response.get("id") or response.get("listingId") or cd_listing_id
-
                 # Save listing info with new ETag
                 if run_id and result_listing_id:
                     save_cd_listing_info(
@@ -548,6 +695,7 @@ async def send_to_cd_with_retry(
                     success, fresh_etag, _ = get_cd_listing_etag(cd_listing_id, sandbox=sandbox)
                     if success and fresh_etag:
                         etag = fresh_etag
+                        logger.info(f"Refreshed ETag after 412: {etag}")
                         continue
 
             if status_code in (429, 500, 502, 503, 504):

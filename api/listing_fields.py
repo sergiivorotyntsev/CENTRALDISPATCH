@@ -12,10 +12,13 @@ Content-Type: application/vnd.coxauto.v2+json
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from enum import Enum
 from datetime import datetime, timedelta
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FieldSection(str, Enum):
@@ -846,7 +849,7 @@ def get_registry() -> ListingFieldRegistry:
 # CD API PAYLOAD BUILDER
 # =============================================================================
 
-def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]:
+def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Tuple[Dict[str, Any], List[str]]:
     """
     Build Central Dispatch Listings API V2 payload from extracted data.
 
@@ -855,9 +858,13 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
         run_id: Optional extraction run ID for external reference
 
     Returns:
-        CD API payload dictionary
+        Tuple of (CD API payload dictionary, list of warnings)
+
+    Warnings are returned for:
+    - Field truncation (externalId, partnerReferenceId, shipperOrderId > 50 chars)
     """
     registry = get_registry()
+    warnings = []
 
     # Generate external ID (CD API limit: 50 characters max)
     external_id = data.get("external_id")
@@ -872,9 +879,27 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
             parts.append(str(run_id))
         external_id = "-".join(parts)
 
-    # Enforce CD API limit of 50 characters
+    # Enforce CD API limit of 50 characters with warning
     if len(external_id) > 50:
+        original_len = len(external_id)
         external_id = external_id[:50]
+        warnings.append(f"externalId truncated from {original_len} to 50 characters")
+        logger.warning(f"externalId truncated: {original_len} -> 50 chars")
+
+    # Generate partnerReferenceId for retry-safe POST (CD API limit: 50 chars)
+    # This is a stable key based on run_id or document identifiers
+    partner_ref_id = None
+    if run_id:
+        partner_ref_id = f"CD-RUN-{run_id}"
+    elif data.get("vehicle_vin"):
+        # Fallback: use VIN + date as stable reference
+        partner_ref_id = f"CD-{data['vehicle_vin'][:17]}-{datetime.now().strftime('%Y%m%d')}"
+
+    if partner_ref_id and len(partner_ref_id) > 50:
+        original_len = len(partner_ref_id)
+        partner_ref_id = partner_ref_id[:50]
+        warnings.append(f"partnerReferenceId truncated from {original_len} to 50 characters")
+        logger.warning(f"partnerReferenceId truncated: {original_len} -> 50 chars")
 
     # Build vehicle
     vehicle = {
@@ -957,6 +982,20 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
         "vehicles": [vehicle],
     }
 
+    # Add partnerReferenceId for retry-safe POST (prevents duplicates)
+    if partner_ref_id:
+        payload["partnerReferenceId"] = partner_ref_id
+
+    # Optional: shipperOrderId (also limited to 50 chars)
+    shipper_order_id = data.get("shipper_order_id")
+    if shipper_order_id:
+        if len(shipper_order_id) > 50:
+            original_len = len(shipper_order_id)
+            shipper_order_id = shipper_order_id[:50]
+            warnings.append(f"shipperOrderId truncated from {original_len} to 50 characters")
+            logger.warning(f"shipperOrderId truncated: {original_len} -> 50 chars")
+        payload["shipperOrderId"] = shipper_order_id
+
     # Optional: expiration date
     if data.get("expiration_date"):
         payload["expirationDate"] = data["expiration_date"]
@@ -976,4 +1015,4 @@ def build_cd_payload(data: Dict[str, Any], run_id: int = None) -> Dict[str, Any]
     if data.get("transport_special_instructions"):
         payload["transportationReleaseNotes"] = data["transport_special_instructions"]
 
-    return payload
+    return payload, warnings

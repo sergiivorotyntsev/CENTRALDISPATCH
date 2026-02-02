@@ -291,7 +291,7 @@ class TestBuildCDPayload:
             'delivery_zip': '75001',
         }
 
-        payload = build_cd_payload(data)
+        payload, warnings = build_cd_payload(data)
 
         assert 'externalId' in payload
         assert 'trailerType' in payload
@@ -299,6 +299,9 @@ class TestBuildCDPayload:
         assert len(payload['stops']) == 2
         assert 'vehicles' in payload
         assert len(payload['vehicles']) == 1
+
+        # Verify partnerReferenceId is generated for retry safety
+        assert 'partnerReferenceId' in payload
 
         # Verify vehicle
         vehicle = payload['vehicles'][0]
@@ -335,7 +338,7 @@ class TestBuildCDPayload:
             'price_cod_method': 'CASH',
         }
 
-        payload = build_cd_payload(data)
+        payload, warnings = build_cd_payload(data)
 
         assert 'price' in payload
         assert payload['price']['total'] == 450.00
@@ -361,7 +364,7 @@ class TestBuildCDPayload:
             'transport_special_instructions': 'Gate code: 1234',
         }
 
-        payload = build_cd_payload(data)
+        payload, warnings = build_cd_payload(data)
 
         assert payload.get('notes') == 'Call before delivery'
         assert payload.get('transportationReleaseNotes') == 'Gate code: 1234'
@@ -384,13 +387,13 @@ class TestBuildCDPayload:
             'delivery_zip': '77001',
         }
 
-        payload = build_cd_payload(data)
+        payload, warnings = build_cd_payload(data)
 
         assert payload['hasInOpVehicle'] is True
         assert payload['vehicles'][0]['isOperable'] is False
 
     def test_external_id_truncation(self):
-        """Should truncate external_id to 50 characters (CD API limit)."""
+        """Should truncate external_id to 50 characters (CD API limit) and return warning."""
         data = {
             'vehicle_vin': 'KM8JCCD18RU178398',
             'vehicle_year': 2024,
@@ -407,10 +410,62 @@ class TestBuildCDPayload:
             'external_id': 'A' * 100,  # 100 chars, should be truncated
         }
 
-        payload = build_cd_payload(data)
+        payload, warnings = build_cd_payload(data)
 
         assert len(payload['externalId']) == 50
         assert payload['externalId'] == 'A' * 50
+        # Verify truncation warning is returned (not silent)
+        assert any('truncated' in w.lower() for w in warnings)
+
+    def test_partner_reference_id_with_run_id(self):
+        """Should generate partnerReferenceId when run_id is provided (for retry-safe POST)."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+        }
+
+        payload, warnings = build_cd_payload(data, run_id=12345)
+
+        # partnerReferenceId should be generated based on run_id
+        assert 'partnerReferenceId' in payload
+        assert 'CD-RUN-12345' == payload['partnerReferenceId']
+        # Must be <= 50 characters per CD API
+        assert len(payload['partnerReferenceId']) <= 50
+
+    def test_partner_reference_id_fallback_to_vin(self):
+        """Should generate partnerReferenceId from VIN when no run_id."""
+        data = {
+            'vehicle_vin': 'KM8JCCD18RU178398',
+            'vehicle_year': 2024,
+            'vehicle_make': 'Hyundai',
+            'vehicle_model': 'Tucson',
+            'pickup_address': '123 Main St',
+            'pickup_city': 'Austin',
+            'pickup_state': 'TX',
+            'pickup_zip': '78701',
+            'delivery_address': '456 Oak St',
+            'delivery_city': 'Houston',
+            'delivery_state': 'TX',
+            'delivery_zip': '77001',
+        }
+
+        payload, warnings = build_cd_payload(data)  # No run_id
+
+        # partnerReferenceId should be generated from VIN
+        assert 'partnerReferenceId' in payload
+        assert payload['partnerReferenceId'].startswith('CD-KM8JCCD18RU178398')
+        # Must be <= 50 characters per CD API
+        assert len(payload['partnerReferenceId']) <= 50
 
 
 class TestFieldDefinitions:
