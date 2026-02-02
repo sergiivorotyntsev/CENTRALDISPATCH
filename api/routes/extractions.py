@@ -302,32 +302,10 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         )
 
         # Create review items from outputs
-        if outputs:
-            review_items = []
-            from api.models import get_connection
-            with get_connection() as conn:
-                # Get field mappings for this auction type
-                mappings = conn.execute(
-                    "SELECT * FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE",
-                    (auction_type_id,)
-                ).fetchall()
-
-                mapping_dict = {m["source_key"]: dict(m) for m in mappings}
-
-            for source_key, value in outputs.items():
-                mapping = mapping_dict.get(source_key, {})
-                review_items.append({
-                    "source_key": source_key,
-                    "internal_key": mapping.get("internal_key", source_key),
-                    "cd_key": mapping.get("cd_key"),
-                    "predicted_value": str(value) if value is not None else None,
-                    "is_match_ok": False,
-                    "export_field": mapping.get("is_required", False) or value is not None,
-                    "confidence": extraction_score,
-                })
-
-            if review_items:
-                ReviewItemRepository.create_batch(run_id, review_items)
+        # CRITICAL: Always create review items for ALL configured field mappings,
+        # not just the extracted fields. This ensures consistent field display.
+        if True:  # Always create review items, even if outputs is empty
+            _create_review_items_for_all_fields(run_id, auction_type_id, outputs or {})
 
     except Exception as e:
         import traceback
@@ -346,61 +324,122 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         _create_empty_review_items(run_id, auction_type_id)
 
 
-def _create_empty_review_items(run_id: int, auction_type_id: int):
-    """Create empty review items for manual data entry."""
+def _create_review_items_for_all_fields(run_id: int, auction_type_id: int, outputs: dict):
+    """
+    Create review items for ALL configured field mappings.
+
+    This ensures consistent field display - all fields appear in Review page,
+    using extracted values where available and empty for fields not extracted.
+
+    Args:
+        run_id: Extraction run ID
+        auction_type_id: Auction type ID for field mappings
+        outputs: Dict of extracted field values (may be incomplete)
+    """
     from api.database import get_connection
 
-    # Get field mappings for this auction type
+    # Get ALL field mappings for this auction type (ordered for consistent display)
     with get_connection() as conn:
         mappings = conn.execute(
             "SELECT * FROM field_mappings WHERE auction_type_id = ? AND is_active = TRUE ORDER BY display_order",
             (auction_type_id,)
         ).fetchall()
 
-    if not mappings:
-        # Use default fields if no mappings exist
-        default_fields = [
-            ("vehicle_vin", "vin", "vehicles[0].vin", True),
-            ("vehicle_year", "year", "vehicles[0].year", False),
-            ("vehicle_make", "make", "vehicles[0].make", False),
-            ("vehicle_model", "model", "vehicles[0].model", False),
-            ("vehicle_color", "color", "vehicles[0].color", False),
-            ("vehicle_lot", "lot_number", "vehicles[0].lotNumber", False),
-            ("pickup_city", "pickup_city", "stops[0].city", True),
-            ("pickup_state", "pickup_state", "stops[0].state", True),
-            ("pickup_zip", "pickup_postal_code", "stops[0].postalCode", True),
-            ("buyer_id", "buyer_id", None, False),
-            ("buyer_name", "buyer_name", None, False),
-        ]
+    # Default field set if no mappings configured
+    DEFAULT_FIELDS = [
+        # Key fields for Central Dispatch
+        ("auction_source", "auction_source", None, False),
+        ("order_id", "order_id", None, False),
+        ("reference_id", "reference_id", "externalId", False),
+        # Vehicle
+        ("vehicle_vin", "vehicle_vin", "vehicles[0].vin", True),
+        ("vehicle_year", "vehicle_year", "vehicles[0].year", True),
+        ("vehicle_make", "vehicle_make", "vehicles[0].make", True),
+        ("vehicle_model", "vehicle_model", "vehicles[0].model", True),
+        ("vehicle_color", "vehicle_color", "vehicles[0].color", False),
+        ("vehicle_lot", "vehicle_lot", "vehicles[0].lotNumber", False),
+        ("vehicle_mileage", "vehicle_mileage", None, False),
+        ("vehicle_is_inoperable", "vehicle_is_inoperable", "vehicles[0].isInoperable", False),
+        # Pickup location
+        ("pickup_name", "pickup_name", "stops[0].locationName", False),
+        ("pickup_address", "pickup_address", "stops[0].address", True),
+        ("pickup_city", "pickup_city", "stops[0].city", True),
+        ("pickup_state", "pickup_state", "stops[0].state", True),
+        ("pickup_zip", "pickup_zip", "stops[0].postalCode", True),
+        ("pickup_phone", "pickup_phone", "stops[0].phone", False),
+        # Delivery location (usually filled from warehouse)
+        ("delivery_name", "delivery_name", "stops[1].locationName", False),
+        ("delivery_address", "delivery_address", "stops[1].address", False),
+        ("delivery_city", "delivery_city", "stops[1].city", False),
+        ("delivery_state", "delivery_state", "stops[1].state", False),
+        ("delivery_zip", "delivery_zip", "stops[1].postalCode", False),
+        ("delivery_phone", "delivery_phone", "stops[1].phone", False),
+        # Buyer/Sale info
+        ("buyer_id", "buyer_id", None, False),
+        ("buyer_name", "buyer_name", None, False),
+        ("sale_date", "sale_date", None, False),
+        ("total_amount", "total_amount", None, False),
+    ]
 
-        review_items = [
-            {
+    # Build list of all fields to create
+    review_items = []
+    used_keys = set()
+
+    if mappings:
+        # Use configured mappings
+        for m in mappings:
+            source_key = m["source_key"]
+            used_keys.add(source_key)
+
+            # Get value from outputs if available
+            value = outputs.get(source_key)
+
+            review_items.append({
+                "source_key": source_key,
+                "internal_key": m["internal_key"] or source_key,
+                "cd_key": m["cd_key"],
+                "predicted_value": str(value) if value is not None else None,
+                "is_match_ok": False,
+                "export_field": m["is_required"] or value is not None,
+                "confidence": 0.5 if value is not None else 0.0,
+            })
+    else:
+        # Use default fields
+        for source_key, internal_key, cd_key, is_required in DEFAULT_FIELDS:
+            used_keys.add(source_key)
+            value = outputs.get(source_key)
+
+            review_items.append({
                 "source_key": source_key,
                 "internal_key": internal_key,
                 "cd_key": cd_key,
-                "predicted_value": None,
+                "predicted_value": str(value) if value is not None else None,
                 "is_match_ok": False,
-                "export_field": is_required,
-                "confidence": 0.0,
-            }
-            for source_key, internal_key, cd_key, is_required in default_fields
-        ]
-    else:
-        review_items = [
-            {
-                "source_key": m["source_key"],
-                "internal_key": m["internal_key"],
-                "cd_key": m["cd_key"],
-                "predicted_value": None,
+                "export_field": is_required or value is not None,
+                "confidence": 0.5 if value is not None else 0.0,
+            })
+
+    # Also include any extracted fields that weren't in mappings
+    # (in case extraction found additional fields)
+    for key, value in outputs.items():
+        if key not in used_keys and value is not None:
+            review_items.append({
+                "source_key": key,
+                "internal_key": key,
+                "cd_key": None,
+                "predicted_value": str(value) if value is not None else None,
                 "is_match_ok": False,
-                "export_field": m["is_required"],
-                "confidence": 0.0,
-            }
-            for m in mappings
-        ]
+                "export_field": True,
+                "confidence": 0.5,
+            })
 
     if review_items:
         ReviewItemRepository.create_batch(run_id, review_items)
+
+
+def _create_empty_review_items(run_id: int, auction_type_id: int):
+    """Create empty review items for manual data entry (failed extractions)."""
+    _create_review_items_for_all_fields(run_id, auction_type_id, {})
 
 
 # =============================================================================

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from extractors.base import BaseExtractor
 from extractors.address_parser import extract_pickup_address, extract_lines_after_label
+from extractors.spatial_parser import parse_document, DocumentStructure
 from models.vehicle import AuctionInvoice, Vehicle, Address, AuctionSource, LocationType, VehicleType
 
 logger = logging.getLogger(__name__)
@@ -122,8 +123,8 @@ class CopartExtractor(BaseExtractor):
                 if invoice.sale_date:
                     break
 
-        # Extract pickup location using learned rules or defaults
-        pickup_location = self._extract_pickup_location(text)
+        # Extract pickup location using learned rules, spatial parsing, or defaults
+        pickup_location = self._extract_pickup_location(text, pdf_path)
         if pickup_location:
             invoice.pickup_address = pickup_location
 
@@ -146,28 +147,95 @@ class CopartExtractor(BaseExtractor):
         invoice.location_type = LocationType.ONSITE
         return invoice
 
-    def _extract_pickup_location(self, text: str) -> Optional[Address]:
-        """Extract pickup address using learned rules or shared parser."""
-        # First check for learned rules
+    def _extract_pickup_location(self, text: str, pdf_path: str = None) -> Optional[Address]:
+        """
+        Extract pickup address using multiple strategies:
+        1. Learned rules from training
+        2. Spatial parsing (block-based extraction)
+        3. Fallback to text-based extraction
+        """
+        # Strategy 1: Check for learned rules first
         rule = self.get_learned_rule('pickup_address')
-
         if rule and rule.label_patterns:
             logger.debug(f"Using learned rule for pickup_address: {rule.label_patterns}")
-            # Try learned patterns first
             for label_pattern in rule.label_patterns:
                 lines = extract_lines_after_label(text, label_pattern)
                 if lines:
-                    # Parse address from lines
                     addr = self._parse_address_from_lines(lines, rule.exclude_patterns)
-                    if addr:
+                    if addr and (addr.street or addr.city):
                         return addr
 
-        # Fallback to default extraction
+        # Strategy 2: Try spatial parsing if we have the PDF path
+        if pdf_path:
+            try:
+                structure = parse_document(pdf_path)
+                addr = self._extract_address_spatial(structure)
+                if addr and (addr.street or addr.city):
+                    logger.debug(f"Extracted address using spatial parsing: {addr.city}, {addr.state}")
+                    return addr
+            except Exception as e:
+                logger.warning(f"Spatial parsing failed: {e}")
+
+        # Strategy 3: Text-based extraction with multiple label patterns
+        # Copart documents have "PHYSICAL ADDRESS OF LOT:" label
+        label_patterns = [
+            r'PHYSICAL\s*ADDRESS\s*(?:OF\s*)?LOT[:\s]*',
+            r'LOT\s*(?:LOCATION|ADDRESS)[:\s]*',
+            r'PICKUP\s*(?:LOCATION|ADDRESS)[:\s]*',
+        ]
+
+        for pattern in label_patterns:
+            lines = extract_lines_after_label(text, pattern, max_lines=4)
+            if lines:
+                addr = self._parse_address_from_lines(lines)
+                if addr and (addr.street or addr.city):
+                    return addr
+
+        # Strategy 4: Final fallback to shared parser
         return extract_pickup_address(
             text,
             source="Copart",
             custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
         )
+
+    def _extract_address_spatial(self, structure: DocumentStructure) -> Optional[Address]:
+        """Extract address using spatial document structure."""
+        # Look for the "PHYSICAL ADDRESS OF LOT" block
+        label_patterns = [
+            r'PHYSICAL\s*ADDRESS',
+            r'LOT\s*(?:LOCATION|ADDRESS)',
+        ]
+
+        for pattern in label_patterns:
+            block = structure.get_block_by_label(pattern)
+            if block:
+                lines = block.lines
+                # Find lines after the label
+                found_label = False
+                address_lines = []
+
+                for line in lines:
+                    if re.search(pattern, line, re.IGNORECASE):
+                        found_label = True
+                        # Check for inline value
+                        after = re.split(pattern, line, flags=re.IGNORECASE)[-1].strip()
+                        after = re.sub(r'^[:\s]+', '', after)
+                        if after and len(after) > 3:
+                            address_lines.append(after)
+                        continue
+
+                    if found_label and line.strip():
+                        # Skip seller-related lines
+                        if re.search(r'SELLER|SOLD\s*THROUGH|INSURANCE', line, re.IGNORECASE):
+                            break
+                        address_lines.append(line.strip())
+                        if len(address_lines) >= 3:
+                            break
+
+                if address_lines:
+                    return self._parse_address_from_lines(address_lines)
+
+        return None
 
     def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
         """Parse address from extracted lines."""

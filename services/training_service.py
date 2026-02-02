@@ -139,18 +139,88 @@ class TrainingService:
 
         pos = text.find(value)
         if pos == -1:
+            # Try partial match for addresses (first word)
+            first_word = value.split()[0] if value else None
+            if first_word and len(first_word) > 3:
+                pos = text.find(first_word)
+
+        if pos == -1:
             return None
 
-        # Look at the line above the value
+        # Look at the lines before the value
         before = text[:pos]
         lines = before.split('\n')
-        if len(lines) >= 2:
-            prev_line = lines[-2].strip()
-            # Check if it looks like a label (ends with colon or is ALL CAPS)
-            if prev_line.endswith(':') or (prev_line.isupper() and len(prev_line) > 3):
-                return prev_line.rstrip(':')
+
+        # Try to find the closest label
+        for i in range(len(lines) - 1, max(len(lines) - 5, -1), -1):
+            line = lines[i].strip() if i < len(lines) else ""
+            if not line:
+                continue
+
+            # Check if it looks like a label
+            # Common label patterns in auction documents
+            label_indicators = [
+                r'PHYSICAL\s*ADDRESS',
+                r'LOT\s*(LOCATION|ADDRESS)',
+                r'PICKUP',
+                r'DELIVERY',
+                r'MEMBER',
+                r'SELLER',
+                r'BUYER',
+                r'VEHICLE',
+                r'VIN',
+                r'LOT\s*#',
+            ]
+
+            for indicator in label_indicators:
+                if re.search(indicator, line, re.IGNORECASE):
+                    return line.rstrip(':').strip()
+
+            # Generic: ends with colon or is ALL CAPS short phrase
+            if line.endswith(':'):
+                return line.rstrip(':').strip()
+            if line.isupper() and 3 < len(line) < 50:
+                return line
 
         return None
+
+    def _extract_text_patterns(self, text: str, value: str) -> List[str]:
+        """
+        Extract patterns that could identify this value in similar documents.
+
+        Returns a list of regex patterns that match the value location.
+        """
+        patterns = []
+
+        if not text or not value:
+            return patterns
+
+        pos = text.find(value)
+        if pos == -1:
+            return patterns
+
+        # Get preceding text (up to 200 chars)
+        before = text[max(0, pos - 200):pos]
+        lines_before = before.split('\n')
+
+        # Pattern 1: Direct preceding label
+        for line in reversed(lines_before[-3:]):
+            line = line.strip()
+            if line and (line.endswith(':') or line.isupper()):
+                # Create regex pattern from the label
+                escaped = re.escape(line.rstrip(':'))
+                patterns.append(escaped)
+                break
+
+        # Pattern 2: Same-line prefix (e.g., "Address: 123 Main St")
+        same_line_start = before.rfind('\n')
+        if same_line_start >= 0:
+            same_line_prefix = before[same_line_start + 1:].strip()
+            if same_line_prefix:
+                escaped = re.escape(same_line_prefix)
+                patterns.append(f"{escaped}[:\\s]*")
+
+        return patterns
 
     # =========================================================================
     # LEARNING
@@ -192,18 +262,70 @@ class TrainingService:
         field_key: str,
         corrections: List[FieldCorrection]
     ):
-        """Learn extraction patterns for a specific field."""
-        # Collect labels from corrections
+        """
+        Learn extraction patterns for a specific field.
+
+        This method:
+        1. Collects labels that preceded corrected values
+        2. Extracts regex patterns from the correction contexts
+        3. Updates or creates extraction rules with learned patterns
+        """
+        # Collect labels and patterns from corrections
         labels = []
+        exclude_patterns = []
+
         for c in corrections:
             if c.preceding_label:
                 labels.append(c.preceding_label)
 
-        if not labels:
-            return
+            # Also extract patterns from context
+            if c.context_text and c.corrected_value:
+                extracted = self._extract_text_patterns(c.context_text, c.corrected_value)
+                labels.extend(extracted)
 
-        # Find common patterns
-        label_patterns = list(set(labels))
+            # If correction changed the value, the predicted value might be an exclude pattern
+            if not c.was_correct and c.predicted_value and c.corrected_value:
+                if c.predicted_value != c.corrected_value:
+                    # The predicted value came from somewhere wrong - could be an exclude pattern
+                    pass  # TODO: analyze why prediction was wrong
+
+        if not labels:
+            # Try to generate patterns from corrected values themselves
+            for c in corrections:
+                if c.corrected_value:
+                    # For address fields, look for common address label patterns
+                    if 'address' in field_key or 'city' in field_key or 'state' in field_key:
+                        labels.extend([
+                            r'PHYSICAL\s*ADDRESS',
+                            r'LOT\s*(LOCATION|ADDRESS)',
+                            r'PICKUP\s*(LOCATION|ADDRESS)?',
+                        ])
+                        break
+            if not labels:
+                return
+
+        # Deduplicate and clean patterns
+        label_patterns = []
+        seen = set()
+        for label in labels:
+            # Clean up the label
+            clean_label = label.strip()
+            if not clean_label or clean_label.lower() in seen:
+                continue
+            if len(clean_label) < 3:
+                continue
+
+            seen.add(clean_label.lower())
+
+            # Convert to regex-friendly pattern
+            # Escape special characters but keep the pattern flexible
+            pattern = re.escape(clean_label)
+            # Make whitespace flexible
+            pattern = re.sub(r'\\ +', r'\\s+', pattern)
+            label_patterns.append(pattern)
+
+        if not label_patterns:
+            return
 
         # Get or create rule
         rule = self.session.exec(
@@ -223,16 +345,36 @@ class TrainingService:
 
         # Update rule with learned patterns
         existing_patterns = rule.get_label_patterns()
-        new_patterns = list(set(existing_patterns + label_patterns))
-        rule.set_label_patterns(new_patterns)
 
-        # Update confidence based on correction agreement
+        # Merge patterns, prioritizing new ones
+        all_patterns = existing_patterns + label_patterns
+        # Deduplicate while preserving order
+        unique_patterns = []
+        seen_lower = set()
+        for p in all_patterns:
+            p_lower = p.lower()
+            if p_lower not in seen_lower:
+                seen_lower.add(p_lower)
+                unique_patterns.append(p)
+
+        rule.set_label_patterns(unique_patterns[:20])  # Keep top 20 patterns
+
+        # Update confidence based on correction results
         correct_count = sum(1 for c in corrections if c.was_correct)
-        rule.confidence = correct_count / len(corrections) if corrections else 0.5
-        rule.validation_count += len(corrections)
+        total_count = len(corrections)
+
+        # Weighted average with existing confidence
+        old_weight = min(rule.validation_count, 10) / 10
+        new_weight = 1 - old_weight
+        new_confidence = correct_count / total_count if total_count > 0 else 0.5
+        rule.confidence = (rule.confidence * old_weight + new_confidence * new_weight)
+
+        rule.validation_count += total_count
         rule.updated_at = datetime.utcnow()
 
         self.session.commit()
+
+        logger.info(f"Updated rule for {field_key}: {len(unique_patterns)} patterns, confidence={rule.confidence:.2f}")
 
     # =========================================================================
     # STATS AND QUERIES
