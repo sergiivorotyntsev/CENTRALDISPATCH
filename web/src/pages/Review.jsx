@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../api'
+import PreflightBanner from '../components/PreflightBanner'
+import PDFViewer from '../components/PDFViewer'
 
 /**
  * Review & Training Page
@@ -31,6 +33,9 @@ function Review() {
   // PDF viewer state
   const [showPdf, setShowPdf] = useState(true)
   const [pdfUrl, setPdfUrl] = useState(null)
+
+  // Highlighted field for evidence display (M3.P2.2)
+  const [highlightedField, setHighlightedField] = useState(null)
 
   // Field values and status
   const [fields, setFields] = useState({})
@@ -326,34 +331,26 @@ function Review() {
       {/* Main Content */}
       <div className="p-6">
         <div className={`flex gap-6 ${showPdf && pdfUrl ? '' : ''}`}>
-          {/* PDF Viewer */}
+          {/* PDF Viewer with Evidence Overlay (M3.P2.1 & M3.P2.2) */}
           {showPdf && pdfUrl && (
-            <div className="w-1/2 flex-shrink-0">
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden sticky top-6">
-                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                  <span className="font-medium text-sm text-gray-700">Original Document</span>
-                  <a
-                    href={pdfUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary-600 hover:text-primary-800"
-                  >
-                    Open in new tab
-                  </a>
-                </div>
-                <div className="h-[calc(100vh-200px)]">
-                  <iframe
-                    src={pdfUrl}
-                    className="w-full h-full border-0"
-                    title="Document PDF"
-                  />
-                </div>
-              </div>
+            <div className="w-1/2 flex-shrink-0 sticky top-6">
+              <PDFViewer
+                pdfUrl={pdfUrl}
+                runId={parseInt(runId)}
+                highlightedField={highlightedField}
+                onBlockClick={(block) => console.log('Block clicked:', block)}
+              />
             </div>
           )}
 
           {/* Fields Panel */}
           <div className={showPdf && pdfUrl ? 'w-1/2' : 'w-full'}>
+            {/* Preflight Banner (M3.P2.3) */}
+            <PreflightBanner
+              runId={parseInt(runId)}
+              onIssueClick={(fieldKey) => setHighlightedField(fieldKey)}
+            />
+
             {/* Progress Bar */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-4">
               <div className="flex justify-between items-center mb-2">
@@ -422,18 +419,31 @@ function Review() {
                 {fieldList.map((field) => (
                   <div
                     key={field.key}
-                    className={`p-4 ${
+                    className={`p-4 cursor-pointer transition-colors ${
                       field.status === 'correct' ? 'bg-green-50' :
                       field.status === 'corrected' ? 'bg-blue-50' :
                       'bg-white'
-                    }`}
+                    } ${highlightedField === field.key ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
+                    onClick={() => setHighlightedField(highlightedField === field.key ? null : field.key)}
                   >
                     <div className="flex items-start justify-between mb-2">
-                      <div>
+                      <div className="flex items-center">
                         <span className="font-medium text-gray-900 text-sm">
                           {field.label || field.key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                         </span>
                         <span className="ml-2 text-xs text-gray-400 font-mono">{field.key}</span>
+                        {/* Evidence indicator (M3.P2.2) */}
+                        {showPdf && (
+                          <span
+                            className={`ml-2 text-xs ${highlightedField === field.key ? 'text-blue-600' : 'text-gray-400'}`}
+                            title="Click to highlight source in PDF"
+                          >
+                            <svg className="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center space-x-2">
                         {/* Status indicator */}

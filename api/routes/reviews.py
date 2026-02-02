@@ -15,6 +15,8 @@ from api.models import (
     DocumentRepository,
     AuctionTypeRepository,
     ReviewStatus,
+    FieldEvidenceRepository,
+    LayoutBlockRepository,
 )
 
 router = APIRouter(prefix="/api/review", tags=["Review"])
@@ -98,6 +100,64 @@ class TrainingExamplesListResponse(BaseModel):
     """Response for training examples list."""
     items: List[TrainingExampleResponse]
     total: int
+
+
+class BboxResponse(BaseModel):
+    """Bounding box coordinates."""
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+class FieldEvidenceResponse(BaseModel):
+    """Evidence for a single field extraction."""
+    id: int
+    field_key: str
+    block_id: Optional[int] = None
+    text_snippet: Optional[str] = None
+    page_num: Optional[int] = None
+    bbox: Optional[BboxResponse] = None
+    extraction_method: Optional[str] = None
+    confidence: float = 1.0
+    value_source: str = "extracted"
+
+
+class LayoutBlockResponse(BaseModel):
+    """A layout block from the document."""
+    id: int
+    block_id: Optional[str] = None
+    page_num: int
+    bbox: BboxResponse
+    text: Optional[str] = None
+    block_type: str = "data"
+    label: Optional[str] = None
+
+
+class RunEvidenceResponse(BaseModel):
+    """All evidence and layout blocks for a run."""
+    run_id: int
+    document_id: int
+    evidence: List[FieldEvidenceResponse]
+    blocks: List[LayoutBlockResponse]
+    evidence_by_field: dict  # {field_key: [evidence_items]}
+
+
+class PreflightIssue(BaseModel):
+    """A preflight validation issue."""
+    field_key: str
+    issue: str
+    severity: str  # "blocking", "warning"
+    cd_key: Optional[str] = None
+
+
+class PreflightResponse(BaseModel):
+    """Preflight validation result for a run."""
+    run_id: int
+    is_ready: bool
+    blocking_count: int
+    warning_count: int
+    issues: List[PreflightIssue]
 
 
 # =============================================================================
@@ -432,3 +492,155 @@ async def export_training_data(
             media_type="application/x-jsonlines",
             headers={"Content-Disposition": "attachment; filename=training_examples.jsonl"}
         )
+
+
+# =============================================================================
+# EVIDENCE & PREFLIGHT ENDPOINTS (M3.P2)
+# =============================================================================
+
+@router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
+async def get_run_evidence(run_id: int):
+    """
+    Get all field evidence and layout blocks for a run.
+
+    Returns bbox coordinates for highlighting in the PDF viewer.
+    Used by the frontend to show where extracted values came from.
+    """
+    run = ExtractionRunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+
+    # Get field evidence
+    evidence_list = FieldEvidenceRepository.get_by_run(run_id)
+
+    # Get layout blocks for the document
+    blocks = LayoutBlockRepository.get_by_document(run.document_id)
+
+    # Build evidence responses
+    evidence_responses = []
+    evidence_by_field = {}
+
+    for ev in evidence_list:
+        bbox = None
+        if ev.bbox_json:
+            bbox = BboxResponse(
+                x0=ev.bbox_json.get("x0", 0),
+                y0=ev.bbox_json.get("y0", 0),
+                x1=ev.bbox_json.get("x1", 0),
+                y1=ev.bbox_json.get("y1", 0),
+            )
+
+        ev_response = FieldEvidenceResponse(
+            id=ev.id,
+            field_key=ev.field_key,
+            block_id=ev.block_id,
+            text_snippet=ev.text_snippet,
+            page_num=ev.page_num,
+            bbox=bbox,
+            extraction_method=ev.extraction_method,
+            confidence=ev.confidence,
+            value_source=ev.value_source,
+        )
+        evidence_responses.append(ev_response)
+
+        # Group by field
+        if ev.field_key not in evidence_by_field:
+            evidence_by_field[ev.field_key] = []
+        evidence_by_field[ev.field_key].append(ev_response.model_dump())
+
+    # Build block responses
+    block_responses = []
+    for block in blocks:
+        block_responses.append(LayoutBlockResponse(
+            id=block.id,
+            block_id=block.block_id,
+            page_num=block.page_num,
+            bbox=BboxResponse(
+                x0=block.x0,
+                y0=block.y0,
+                x1=block.x1,
+                y1=block.y1,
+            ),
+            text=block.text,
+            block_type=block.block_type,
+            label=block.label,
+        ))
+
+    return RunEvidenceResponse(
+        run_id=run_id,
+        document_id=run.document_id,
+        evidence=evidence_responses,
+        blocks=block_responses,
+        evidence_by_field=evidence_by_field,
+    )
+
+
+@router.get("/{run_id}/preflight", response_model=PreflightResponse)
+async def get_run_preflight(run_id: int):
+    """
+    Get preflight validation for a run before export.
+
+    Checks for blocking issues like missing required fields,
+    warehouse not selected, etc.
+    """
+    from api.listing_fields import get_registry
+    import json
+
+    run = ExtractionRunRepository.get_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Extraction run not found")
+
+    # Get outputs
+    outputs = run.outputs_json or {}
+    if isinstance(outputs, str):
+        outputs = json.loads(outputs)
+
+    # Check if warehouse is selected
+    warehouse_selected = bool(
+        outputs.get("warehouse_id") or
+        outputs.get("delivery_address")
+    )
+
+    # Get blocking issues from field registry
+    registry = get_registry()
+    raw_issues = registry.get_blocking_issues(outputs, warehouse_selected=warehouse_selected)
+
+    # Build issue list
+    issues = []
+    blocking_count = 0
+    warning_count = 0
+
+    for issue_data in raw_issues:
+        severity = "blocking" if issue_data.get("is_blocking", True) else "warning"
+        if severity == "blocking":
+            blocking_count += 1
+        else:
+            warning_count += 1
+
+        issues.append(PreflightIssue(
+            field_key=issue_data.get("field_key", "unknown"),
+            issue=issue_data.get("issue", "Unknown issue"),
+            severity=severity,
+            cd_key=issue_data.get("cd_key"),
+        ))
+
+    # Also check for low confidence fields
+    review_items = ReviewItemRepository.get_by_run(run_id)
+    for item in review_items:
+        if item.confidence is not None and item.confidence < 0.5:
+            if not item.corrected_value and not item.is_match_ok:
+                warning_count += 1
+                issues.append(PreflightIssue(
+                    field_key=item.source_key,
+                    issue=f"Low confidence ({item.confidence:.0%}), needs review",
+                    severity="warning",
+                    cd_key=item.cd_key,
+                ))
+
+    return PreflightResponse(
+        run_id=run_id,
+        is_ready=blocking_count == 0,
+        blocking_count=blocking_count,
+        warning_count=warning_count,
+        issues=issues,
+    )

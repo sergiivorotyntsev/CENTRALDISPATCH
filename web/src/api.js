@@ -184,6 +184,12 @@ export const api = {
     body: JSON.stringify(data),
   }),
 
+  // Review Evidence (M3.P2) - Get field evidence with bbox for highlighting
+  getRunEvidence: (runId) => request(`/review/${runId}/evidence`),
+
+  // Review Preflight (M3.P2) - Get validation status before export
+  getRunPreflight: (runId) => request(`/review/${runId}/preflight`),
+
   // Get latest extraction run for a document
   getDocumentExtractions: (documentId) => request(`/extractions/?document_id=${documentId}&limit=1`),
 
