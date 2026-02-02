@@ -16,11 +16,377 @@ from api.models import (
     AuctionTypeRepository,
     ModelVersionRepository,
     ReviewItemRepository,
+    LayoutBlockRepository,
+    FieldEvidenceRepository,
     ExtractionRun,
     RunStatus,
+    LayoutBlock,
 )
 
 router = APIRouter(prefix="/api/extractions", tags=["Extractions"])
+
+
+# =============================================================================
+# BLOCK EXTRACTION IMPORTS (M3.P0.1)
+# =============================================================================
+
+def _get_block_extractor():
+    """Lazy import for block extractor."""
+    from extractors.block_extractor import get_block_extractor
+    return get_block_extractor()
+
+
+def _get_spatial_parser():
+    """Lazy import for spatial parser."""
+    from extractors.spatial_parser import get_spatial_parser
+    return get_spatial_parser()
+
+
+def _get_field_resolver():
+    """Lazy import for field resolver."""
+    from extractors.field_resolver import get_field_resolver
+    return get_field_resolver()
+
+
+def _get_ocr_strategy():
+    """Lazy import for OCR strategy."""
+    from extractors.ocr_strategy import get_ocr_strategy
+    return get_ocr_strategy()
+
+
+def _run_ocr_if_needed(
+    file_path: str,
+    raw_text: str,
+    metrics: dict,
+    timeout_seconds: int = 120,
+) -> tuple[str, bool]:
+    """
+    Run OCR if needed based on text quality assessment (M3.P0.3).
+
+    Uses OCRmyPDF to add/replace OCR layer in the PDF, then
+    re-extracts text from the resulting file.
+
+    Args:
+        file_path: Path to PDF file
+        raw_text: Pre-extracted native text
+        metrics: Metrics dict to update
+        timeout_seconds: OCR timeout
+
+    Returns:
+        Tuple of (text after OCR, was_ocr_applied)
+    """
+    import os
+    import time
+    import tempfile
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Analyze text quality
+    ocr_strategy = _get_ocr_strategy()
+    quality_before = ocr_strategy.analyze_text_quality(raw_text)
+
+    metrics["text_quality_score_before"] = quality_before.quality.value
+    metrics["text_quality_metrics"] = quality_before.to_dict()
+
+    # Check if OCR is needed
+    should_ocr, reason = ocr_strategy.should_use_ocr(raw_text)
+
+    if not should_ocr:
+        metrics["ocr_applied"] = False
+        metrics["ocr_skip_reason"] = reason
+        metrics["text_mode"] = "native"
+        return raw_text, False
+
+    # OCR is recommended
+    logger.info(f"OCR recommended: {reason}")
+    metrics["ocr_reason"] = reason
+
+    # Try to run OCRmyPDF
+    try:
+        import subprocess
+
+        # Check if ocrmypdf is available
+        which_result = subprocess.run(
+            ["which", "ocrmypdf"],
+            capture_output=True,
+            text=True
+        )
+        if which_result.returncode != 0:
+            logger.warning("ocrmypdf not found, skipping OCR")
+            metrics["ocr_applied"] = False
+            metrics["ocr_error"] = "ocrmypdf not installed"
+            return raw_text, False
+
+        # Create temp file for OCR output
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            ocr_output_path = tmp.name
+
+        start_time = time.time()
+
+        # Run OCRmyPDF
+        # --skip-text: Only OCR pages without text layer
+        # --redo-ocr: Redo OCR even if text exists (for hybrid mode)
+        # --force-ocr: Always OCR (for full OCR mode)
+        ocr_cmd = [
+            "ocrmypdf",
+            "--skip-text",  # Don't OCR pages that already have text
+            "--deskew",     # Straighten tilted pages
+            "--clean",      # Clean up pages before OCR
+            "--quiet",      # Reduce output
+            "-l", "eng",    # English language
+            file_path,
+            ocr_output_path
+        ]
+
+        result = subprocess.run(
+            ocr_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds
+        )
+
+        ocr_duration_ms = int((time.time() - start_time) * 1000)
+        metrics["ocr_duration_ms"] = ocr_duration_ms
+
+        if result.returncode != 0:
+            # OCR failed
+            logger.warning(f"OCRmyPDF failed: {result.stderr[:200]}")
+            metrics["ocr_applied"] = False
+            metrics["ocr_error"] = result.stderr[:200] if result.stderr else "Unknown error"
+
+            # Cleanup temp file
+            if os.path.exists(ocr_output_path):
+                os.remove(ocr_output_path)
+
+            return raw_text, False
+
+        # OCR succeeded - extract text from OCR'd PDF
+        import pdfplumber
+
+        ocr_text_parts = []
+        pages_ocrd = 0
+
+        with pdfplumber.open(ocr_output_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    ocr_text_parts.append(page_text)
+                    pages_ocrd += 1
+
+        ocr_text = "\n".join(ocr_text_parts)
+
+        # Cleanup temp file
+        if os.path.exists(ocr_output_path):
+            os.remove(ocr_output_path)
+
+        # Analyze quality after OCR
+        quality_after = ocr_strategy.analyze_text_quality(ocr_text)
+
+        metrics["ocr_applied"] = True
+        metrics["pages_ocrd_count"] = pages_ocrd
+        metrics["text_quality_score_after"] = quality_after.quality.value
+        metrics["text_mode"] = "hybrid" if quality_before.total_chars > 50 else "ocr"
+        metrics["raw_text_length_after_ocr"] = len(ocr_text)
+        metrics["words_count_after_ocr"] = len(ocr_text.split()) if ocr_text else 0
+
+        logger.info(
+            f"OCR completed: {ocr_duration_ms}ms, "
+            f"quality {quality_before.quality.value} -> {quality_after.quality.value}"
+        )
+
+        # Use OCR text if it's better, otherwise keep original
+        if len(ocr_text) > len(raw_text) * 1.2:  # OCR text significantly longer
+            return ocr_text, True
+        elif quality_after.quality.value in ("excellent", "good") and quality_before.quality.value in ("poor", "unusable"):
+            return ocr_text, True
+        else:
+            # Merge: use longer of the two
+            if len(ocr_text) > len(raw_text):
+                return ocr_text, True
+            else:
+                metrics["ocr_text_not_used"] = "native text better"
+                return raw_text, True
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"OCR timed out after {timeout_seconds}s")
+        metrics["ocr_applied"] = False
+        metrics["ocr_error"] = f"Timeout after {timeout_seconds}s"
+        return raw_text, False
+
+    except Exception as e:
+        logger.error(f"OCR error: {e}")
+        metrics["ocr_applied"] = False
+        metrics["ocr_error"] = str(e)
+        return raw_text, False
+
+
+def _run_block_extraction(
+    document_id: int,
+    run_id: int,
+    file_path: str,
+    raw_text: str,
+    metrics: dict,
+) -> tuple[dict, list]:
+    """
+    Run block-based extraction (M3.P0.1).
+
+    This is the new default extraction path using layout-aware extraction.
+    Falls back to pattern extraction when block extraction fails.
+
+    Args:
+        document_id: Document database ID
+        run_id: Extraction run ID
+        file_path: Path to PDF file
+        raw_text: Pre-extracted raw text
+        metrics: Metrics dict to update
+
+    Returns:
+        Tuple of (extracted_fields dict, evidence_list)
+    """
+    import os
+    import logging
+
+    logger = logging.getLogger(__name__)
+    extracted_fields = {}
+    evidence_list = []
+
+    try:
+        # 1. Parse document structure with spatial awareness
+        parser = _get_spatial_parser()
+        structure = parser.parse(file_path)
+
+        # Update metrics with layout info
+        metrics["layout_blocks_count"] = len(structure.blocks)
+        metrics["detected_columns_count"] = 1  # TODO: Add column detection in M3.P1
+        metrics["reading_order_strategy"] = "linear"  # TODO: Update when column-aware
+
+        # 2. Store layout blocks in database
+        if structure.blocks and document_id:
+            _store_layout_blocks(document_id, structure)
+
+        # 3. Run block-based extraction
+        extractor = _get_block_extractor()
+        results = extractor.extract_all_fields(structure, use_fallback=True)
+
+        # 4. Collect extracted values and evidence
+        for field_key, result in results.items():
+            if result.success and result.value:
+                extracted_fields[field_key] = result.value
+
+                if result.evidence:
+                    evidence_dict = result.evidence.to_dict()
+                    evidence_list.append(evidence_dict)
+
+        # 5. Update metrics
+        metrics["block_extraction_used"] = True
+        metrics["fields_from_blocks"] = sum(
+            1 for r in results.values()
+            if r.success and r.evidence and r.evidence.extraction_method != "pattern"
+        )
+        metrics["fields_from_patterns"] = sum(
+            1 for r in results.values()
+            if r.success and r.evidence and r.evidence.extraction_method == "pattern"
+        )
+        metrics["evidence_coverage"] = (
+            len(evidence_list) / len(extracted_fields) * 100
+            if extracted_fields else 0
+        )
+
+        logger.info(
+            f"Block extraction: {len(extracted_fields)} fields, "
+            f"{len(evidence_list)} evidence records"
+        )
+
+    except Exception as e:
+        logger.warning(f"Block extraction failed, falling back to pattern: {e}")
+        metrics["block_extraction_used"] = False
+        metrics["block_extraction_error"] = str(e)
+
+    return extracted_fields, evidence_list
+
+
+def _store_layout_blocks(document_id: int, structure: 'DocumentStructure') -> int:
+    """
+    Store layout blocks from DocumentStructure to database.
+
+    Args:
+        document_id: Document database ID
+        structure: Parsed DocumentStructure
+
+    Returns:
+        Number of blocks stored
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    blocks_to_store = []
+
+    for block in structure.blocks:
+        blocks_to_store.append({
+            "block_id": block.id,
+            "page_num": block.page,
+            "x0": block.x0,
+            "y0": block.y0,
+            "x1": block.x1,
+            "y1": block.y1,
+            "text": block.text[:1000] if block.text else None,  # Truncate for DB
+            "block_type": block.block_type,
+            "label": block.label,
+            "text_source": "native",
+            "confidence": 1.0,
+        })
+
+    if blocks_to_store:
+        try:
+            # Clear existing blocks for this document first
+            LayoutBlockRepository.delete_by_document(document_id)
+            # Store new blocks (document_id passed separately)
+            ids = LayoutBlockRepository.create_batch(document_id, blocks_to_store)
+            logger.info(f"Stored {len(ids)} layout blocks for document {document_id}")
+            return len(ids)
+        except Exception as e:
+            logger.error(f"Failed to store layout blocks: {e}")
+            return 0
+
+    return 0
+
+
+def _store_field_evidence(run_id: int, evidence_list: list, document_id: int = None) -> int:
+    """
+    Store field evidence from extraction.
+
+    Args:
+        run_id: Extraction run ID
+        evidence_list: List of evidence dicts
+        document_id: Optional document ID for linking to blocks
+
+    Returns:
+        Number of evidence records stored
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if not evidence_list:
+        return 0
+
+    # If we have document_id, try to link evidence to stored layout blocks
+    if document_id:
+        stored_blocks = LayoutBlockRepository.get_by_document(document_id)
+        block_map = {b.block_id: b.id for b in stored_blocks}
+
+        for evidence in evidence_list:
+            block_str_id = evidence.get("_block_str_id") or evidence.get("block_id")
+            if block_str_id and isinstance(block_str_id, str) and block_str_id in block_map:
+                evidence["block_id"] = block_map[block_str_id]
+
+    try:
+        ids = FieldEvidenceRepository.create_batch(run_id, evidence_list)
+        logger.info(f"Stored {len(ids)} evidence records for run {run_id}")
+        return len(ids)
+    except Exception as e:
+        logger.error(f"Failed to store field evidence: {e}")
+        return 0
 
 
 def generate_order_id(make: str, model: str, sale_date: datetime = None) -> str:
@@ -279,6 +645,27 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         metrics["pages_count"] = pages_count
         metrics["needs_ocr"] = len(raw_text) < 100
 
+        # =================================================================
+        # M3.P0.3: OCR STRATEGY - Run OCR if needed
+        # Analyze text quality and apply OCR if native extraction is poor
+        # =================================================================
+        if doc.file_path:
+            try:
+                raw_text, ocr_applied = _run_ocr_if_needed(
+                    doc.file_path,
+                    raw_text,
+                    metrics,
+                    timeout_seconds=120
+                )
+                # Update metrics after OCR
+                if ocr_applied:
+                    metrics["raw_text_length"] = len(raw_text)
+                    metrics["words_count"] = len(raw_text.split()) if raw_text else 0
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"OCR strategy error: {e}")
+                metrics["ocr_error"] = str(e)
+
         if not raw_text:
             ExtractionRunRepository.update(
                 run_id,
@@ -297,7 +684,39 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
         # Rule-based extraction
         outputs = {}
         extraction_score = 0.0
+        evidence_list = []
 
+        # =================================================================
+        # M3.P0.1: BLOCK EXTRACTION (default path)
+        # Run layout-aware extraction first, then fall back to pattern
+        # =================================================================
+        block_outputs = {}
+        if doc.file_path:
+            try:
+                block_outputs, evidence_list = _run_block_extraction(
+                    document_id=document_id,
+                    run_id=run_id,
+                    file_path=doc.file_path,
+                    raw_text=raw_text,
+                    metrics=metrics,
+                )
+                # Track block-extracted fields
+                for key, value in block_outputs.items():
+                    if value is not None:
+                        field_sources[key] = {
+                            "value": value,
+                            "source": "EXTRACTED",
+                            "confidence": 0.85,
+                            "method": "block_extractor",
+                        }
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Block extraction error: {e}")
+                metrics["block_extraction_error"] = str(e)
+
+        # =================================================================
+        # PATTERN EXTRACTION (fallback/supplement)
+        # =================================================================
         from extractors import ExtractorManager
         manager = ExtractorManager()
 
@@ -408,6 +827,37 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                         outputs["order_id"] = None
 
                 extraction_score = result.score
+
+                # =================================================================
+                # M3.P0.1: MERGE BLOCK + PATTERN EXTRACTION RESULTS
+                # Block extraction takes precedence for high-confidence fields
+                # =================================================================
+                block_preferred_fields = [
+                    "vehicle_vin", "vehicle_lot", "buyer_id", "total_amount",
+                    "reference_id", "sale_date"
+                ]
+
+                for field_key, block_value in block_outputs.items():
+                    if block_value is not None and str(block_value).strip():
+                        # Block extraction takes precedence for preferred fields
+                        if field_key in block_preferred_fields:
+                            if outputs.get(field_key) != block_value:
+                                outputs[field_key] = block_value
+                                field_sources[field_key] = {
+                                    "value": block_value,
+                                    "source": "EXTRACTED",
+                                    "confidence": 0.9,
+                                    "method": "block_extractor",
+                                }
+                        # For other fields, use block value if pattern didn't find it
+                        elif not outputs.get(field_key):
+                            outputs[field_key] = block_value
+                            field_sources[field_key] = {
+                                "value": block_value,
+                                "source": "EXTRACTED",
+                                "confidence": 0.85,
+                                "method": "block_extractor",
+                            }
 
                 # Update document's auction_type_id if detected source differs
                 if result.source:
@@ -520,6 +970,18 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
             update_kwargs["errors_json"] = errors_to_save
 
         ExtractionRunRepository.update(run_id, **update_kwargs)
+
+        # =================================================================
+        # M3.P0.1: STORE FIELD EVIDENCE
+        # Store extraction evidence for transparency and debugging
+        # =================================================================
+        if evidence_list:
+            try:
+                evidence_count = _store_field_evidence(run_id, evidence_list, document_id)
+                metrics["evidence_records_stored"] = evidence_count
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to store evidence: {e}")
 
         # Create review items from outputs
         # CRITICAL: Always create review items for ALL configured field mappings,

@@ -513,3 +513,203 @@ def extract_delivery_address(
         text,
         label_patterns=labels,
     )
+
+
+# =============================================================================
+# CD API VALIDATION (M3.P0.4)
+# =============================================================================
+
+# Valid US state codes for CD API
+US_STATE_CODES = set(STATE_ABBREVS.values()) | {"DC", "PR", "VI", "GU", "AS", "MP"}
+
+
+def validate_state_for_cd(state: str) -> Tuple[bool, str]:
+    """
+    Validate state code for CD API requirements.
+
+    CD API requires 2-letter state abbreviation.
+
+    Args:
+        state: State value to validate
+
+    Returns:
+        Tuple of (is_valid, normalized_value_or_error)
+    """
+    if not state:
+        return False, "State is required"
+
+    # Normalize
+    normalized = normalize_state(state)
+
+    if len(normalized) != 2:
+        return False, f"Invalid state: {state} (must be 2-letter code)"
+
+    if normalized.upper() not in US_STATE_CODES:
+        return False, f"Unknown state code: {normalized}"
+
+    return True, normalized.upper()
+
+
+def validate_zip_for_cd(zip_code: str) -> Tuple[bool, str]:
+    """
+    Validate ZIP code for CD API requirements.
+
+    CD API accepts 5-digit or 9-digit (ZIP+4) format.
+
+    Args:
+        zip_code: ZIP code to validate
+
+    Returns:
+        Tuple of (is_valid, normalized_value_or_error)
+    """
+    if not zip_code:
+        return False, "ZIP code is required"
+
+    # Clean to digits only
+    digits = re.sub(r'[^0-9]', '', zip_code)
+
+    if len(digits) == 5:
+        return True, digits
+
+    if len(digits) == 9:
+        return True, f"{digits[:5]}-{digits[5:]}"
+
+    return False, f"Invalid ZIP code: {zip_code} (must be 5 or 9 digits)"
+
+
+def validate_address_for_cd(address: ParsedAddress) -> Tuple[bool, List[str]]:
+    """
+    Validate parsed address for Central Dispatch API requirements.
+
+    CD API requires:
+    - address (street) - required for stops
+    - city - required
+    - state - 2-letter code required
+    - postalCode - 5 or 9 digits required
+
+    Args:
+        address: ParsedAddress to validate
+
+    Returns:
+        Tuple of (is_valid, list of validation errors)
+    """
+    errors = []
+
+    # Validate street address
+    if not address.street:
+        errors.append("Street address is required")
+
+    # Validate city
+    if not address.city:
+        errors.append("City is required")
+    elif len(address.city) < 2:
+        errors.append(f"City too short: {address.city}")
+
+    # Validate state
+    if not address.state:
+        errors.append("State is required")
+    else:
+        state_valid, state_result = validate_state_for_cd(address.state)
+        if not state_valid:
+            errors.append(state_result)
+        else:
+            address.state = state_result  # Update with normalized value
+
+    # Validate ZIP code
+    if not address.postal_code:
+        errors.append("ZIP code is required")
+    else:
+        zip_valid, zip_result = validate_zip_for_cd(address.postal_code)
+        if not zip_valid:
+            errors.append(zip_result)
+        else:
+            address.postal_code = zip_result  # Update with normalized value
+
+    return len(errors) == 0, errors
+
+
+def calculate_address_confidence(address: ParsedAddress) -> float:
+    """
+    Calculate confidence score for a parsed address.
+
+    Args:
+        address: ParsedAddress to score
+
+    Returns:
+        Float between 0.0 and 1.0
+    """
+    score = 0.0
+    max_score = 4.0  # Base weights for main fields
+
+    # Street address (0.8 weight)
+    if address.street:
+        score += 0.8
+        # Bonus if street has number
+        if re.search(r'\d', address.street):
+            score += 0.2
+    else:
+        max_score -= 0.2  # Reduce penalty if no street
+
+    # City (1.0 weight)
+    if address.city:
+        score += 1.0
+        # Bonus for reasonable length
+        if len(address.city) >= 3:
+            score += 0.1
+
+    # State (1.2 weight - critical for CD)
+    if address.state:
+        score += 1.0
+        # Bonus for valid state code
+        if address.state.upper() in US_STATE_CODES:
+            score += 0.2
+
+    # ZIP code (1.0 weight)
+    if address.postal_code:
+        score += 0.8
+        # Bonus for valid format
+        digits = re.sub(r'[^0-9]', '', address.postal_code)
+        if len(digits) in (5, 9):
+            score += 0.2
+
+    return min(1.0, score / max_score)
+
+
+def parse_and_validate_address(
+    text: str,
+    source_hint: str = None,
+) -> Tuple[ParsedAddress, List[str], float]:
+    """
+    Parse address text and validate for CD API.
+
+    Args:
+        text: Address text to parse
+        source_hint: Optional source hint (e.g., "COPART", "IAA")
+
+    Returns:
+        Tuple of (ParsedAddress, validation_errors, confidence_score)
+    """
+    # Use existing parser
+    parsed = extract_address_from_section(text, location_label=source_hint)
+
+    # Validate for CD
+    is_valid, errors = validate_address_for_cd(parsed)
+
+    # Calculate confidence
+    confidence = calculate_address_confidence(parsed)
+
+    return parsed, errors, confidence
+
+
+def get_address_parser():
+    """Get address parser instance (for consistency with other modules)."""
+    # This module uses functions rather than a class, but provide
+    # this for API consistency
+    class AddressParserWrapper:
+        def parse(self, text, source_hint=None):
+            return parse_and_validate_address(text, source_hint)
+
+        def validate(self, address):
+            return validate_address_for_cd(address)
+
+    return AddressParserWrapper()

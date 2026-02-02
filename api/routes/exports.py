@@ -112,9 +112,16 @@ class ExportJobListResponse(BaseModel):
 # CD PAYLOAD BUILDER
 # =============================================================================
 
-def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
+def build_cd_payload(run_id: int, warehouse_code: str = None) -> tuple[dict, List[str]]:
     """
     Build Central Dispatch API V2 payload from extraction run.
+
+    Uses FieldResolver (M3.P0.2) to apply precedence chain:
+    USER_OVERRIDE > WAREHOUSE_CONST > AUCTION_CONST > EXTRACTED > DEFAULT
+
+    Args:
+        run_id: Extraction run ID
+        warehouse_code: Optional warehouse code for constants
 
     Returns (payload, validation_errors).
     """
@@ -132,13 +139,65 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
 
     # Get review items (with corrections applied)
     items = ReviewItemRepository.get_by_run(run_id)
-    item_map = {}
+    user_overrides = {}  # User corrections from review
+    extracted_values = {}  # Original extracted values
+
     for item in items:
         if not item.export_field:
             continue
-        # Use corrected value if available, else predicted
-        value = item.corrected_value if item.corrected_value else item.predicted_value
-        item_map[item.source_key] = value
+        # Separate user corrections from extracted values
+        if item.corrected_value:
+            user_overrides[item.source_key] = item.corrected_value
+        if item.predicted_value:
+            extracted_values[item.source_key] = item.predicted_value
+
+    # Also get extracted values from outputs_json
+    if run.outputs_json:
+        outputs = run.outputs_json if isinstance(run.outputs_json, dict) else json.loads(run.outputs_json)
+        for key, value in outputs.items():
+            if key not in extracted_values and value is not None:
+                extracted_values[key] = value
+        # Check for warehouse_id in outputs
+        if not warehouse_code and outputs.get("warehouse_id"):
+            # Try to get warehouse code from warehouse_id
+            from api.database import get_connection
+            with get_connection() as conn:
+                wh_row = conn.execute(
+                    "SELECT code FROM warehouses WHERE id = ?",
+                    (outputs.get("warehouse_id"),)
+                ).fetchone()
+                if wh_row:
+                    warehouse_code = wh_row["code"]
+
+    # =================================================================
+    # M3.P0.2: FIELD RESOLUTION WITH PRECEDENCE
+    # Use FieldResolver to combine values from multiple sources
+    # =================================================================
+    from extractors.field_resolver import FieldResolver, ResolutionContext
+
+    resolver = FieldResolver()
+    context = ResolutionContext(
+        auction_code=at.code,
+        warehouse_code=warehouse_code,
+        user_overrides=user_overrides,
+        default_values={
+            # Defaults for CD payload fields
+            "trailer_type": "OPEN",
+            "dropoff_country": "US",
+            "pickup_country": "US",
+        },
+    )
+
+    # Resolve all fields with precedence
+    resolved = resolver.resolve_all(extracted_values, context)
+
+    # Build item_map from resolved values (for backward compatibility)
+    item_map = {}
+    field_sources_info = {}  # Track where each field value came from
+    for field_key, resolved_field in resolved.items():
+        if resolved_field.value is not None:
+            item_map[field_key] = resolved_field.value
+            field_sources_info[field_key] = resolved_field.source.value
 
     errors = []
     warnings = []
@@ -193,16 +252,27 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
         "locationType": "AUCTION",
     }
 
+    # Build delivery stop (M3.P0.2: uses resolved values from FieldResolver)
+    # Delivery address is populated from warehouse constants when warehouse is selected
     dropoff_stop = {
         "stopNumber": 2,
-        "locationName": get_field("dropoff_name", "Warehouse"),
-        "address": get_field("dropoff_address", "TBD"),
-        "city": get_field("dropoff_city", "TBD"),
-        "state": get_field("dropoff_state", "TX"),
-        "postalCode": get_field("dropoff_zip", "00000"),
+        "locationName": get_field("delivery_name") or get_field("dropoff_name", "Warehouse"),
+        "address": get_field("delivery_address") or get_field("dropoff_address", "TBD"),
+        "city": get_field("delivery_city") or get_field("dropoff_city", "TBD"),
+        "state": get_field("delivery_state") or get_field("dropoff_state", "TX"),
+        "postalCode": get_field("delivery_zip") or get_field("dropoff_zip", "00000"),
         "country": "US",
         "locationType": "BUSINESS",
     }
+
+    # Add delivery phone and contact if available
+    delivery_phone = get_field("delivery_phone")
+    if delivery_phone:
+        dropoff_stop["phone"] = delivery_phone
+
+    delivery_contact = get_field("delivery_contact")
+    if delivery_contact:
+        dropoff_stop["contactName"] = delivery_contact
 
     # Build vehicle
     vehicle = {
@@ -244,6 +314,14 @@ def build_cd_payload(run_id: int) -> tuple[dict, List[str]]:
     if get_field("buyer_id"):
         notes_parts.append(f"Buyer: {get_field('buyer_id')}")
     notes = "; ".join(notes_parts) if notes_parts else ""
+
+    # Add warehouse special instructions (from warehouse constants)
+    transportation_notes = get_field("transportation_release_notes") or get_field("special_instructions")
+    if transportation_notes:
+        if notes:
+            notes = f"{notes}; {transportation_notes}"
+        else:
+            notes = transportation_notes
 
     # Full payload (CD Listings API V2)
     payload = {
@@ -595,13 +673,14 @@ async def send_to_cd_with_retry(
     force_create: bool = False,
 ) -> Tuple[bool, dict, Optional[str]]:
     """
-    Send to CD with rate limiting and retry logic.
+    Send to CD with rate limiting and retry logic (M3.Export).
 
     Handles:
     - Concurrent request throttling (max 3 concurrent)
     - Exponential backoff on 429/5xx errors
     - ETag-based updates for existing listings
     - Retry-safe POST using partnerReferenceId to detect duplicates
+    - Full audit trail logging
 
     Args:
         payload: The listing payload
@@ -611,6 +690,14 @@ async def send_to_cd_with_retry(
 
     Returns (success, response_data, cd_listing_id).
     """
+    # Import audit logging (M3.Export)
+    from api.audit_log import (
+        log_post_create, log_post_update, log_post_fail,
+        log_etag_conflict, log_etag_refresh, log_duplicate_detected,
+        generate_request_id,
+    )
+
+    request_id = generate_request_id()
     semaphore = get_cd_semaphore()
 
     # Check for existing CD listing (for update with ETag)
@@ -659,6 +746,14 @@ async def send_to_cd_with_retry(
                 )
                 if existing_id:
                     logger.info(f"Found existing listing {existing_id} from previous attempt, treating as success")
+                    # Audit: Duplicate detected during retry
+                    if run_id:
+                        log_duplicate_detected(
+                            run_id=run_id,
+                            external_id=payload.get("externalId"),
+                            existing_listing_id=existing_id,
+                            request_id=request_id,
+                        )
                     # Fetch ETag for the found listing
                     success, found_etag, resp_data = await loop.run_in_executor(
                         None,
@@ -697,6 +792,29 @@ async def send_to_cd_with_retry(
                         sandbox=sandbox,
                     )
 
+                    # Audit: Log successful create or update
+                    if is_update:
+                        log_post_update(
+                            run_id=run_id,
+                            payload=payload,
+                            response_status=200,
+                            response_body=response,
+                            cd_listing_id=result_listing_id,
+                            etag_before=etag,
+                            etag_after=new_etag,
+                            request_id=request_id,
+                        )
+                    else:
+                        log_post_create(
+                            run_id=run_id,
+                            payload=payload,
+                            response_status=201,
+                            response_body=response,
+                            cd_listing_id=result_listing_id,
+                            etag=new_etag,
+                            request_id=request_id,
+                        )
+
                 return True, response, result_listing_id
 
             # Handle specific error codes
@@ -704,8 +822,18 @@ async def send_to_cd_with_retry(
             status_code = response.get("status_code")
 
             if error_code == "ETAG_MISMATCH":
+                # Audit: Log ETag conflict
+                if run_id and cd_listing_id:
+                    log_etag_conflict(
+                        run_id=run_id,
+                        cd_listing_id=cd_listing_id,
+                        etag_used=etag,
+                        request_id=request_id,
+                    )
+
                 # Refresh ETag and retry immediately (already inside semaphore)
                 if cd_listing_id:
+                    old_etag = etag
                     success, fresh_etag, _ = await loop.run_in_executor(
                         None,
                         lambda lid=cd_listing_id: get_cd_listing_etag(lid, sandbox=sandbox)
@@ -713,6 +841,16 @@ async def send_to_cd_with_retry(
                     if success and fresh_etag:
                         etag = fresh_etag
                         logger.info(f"Refreshed ETag after 412: {etag}")
+
+                        # Audit: Log ETag refresh
+                        if run_id:
+                            log_etag_refresh(
+                                run_id=run_id,
+                                cd_listing_id=cd_listing_id,
+                                old_etag=old_etag,
+                                new_etag=fresh_etag,
+                                request_id=request_id,
+                            )
                         continue
 
             if status_code in (429, 500, 502, 503, 504):
@@ -733,9 +871,27 @@ async def send_to_cd_with_retry(
                 continue
 
             # Non-retryable error
+            if run_id:
+                log_post_fail(
+                    run_id=run_id,
+                    payload=payload,
+                    response_status=status_code or 0,
+                    error_message=response.get("error", "Unknown error"),
+                    cd_listing_id=cd_listing_id,
+                    request_id=request_id,
+                )
             return False, response, None
 
     # All retries exhausted
+    if run_id:
+        log_post_fail(
+            run_id=run_id,
+            payload=payload,
+            response_status=0,
+            error_message="Max retries exceeded",
+            cd_listing_id=cd_listing_id,
+            request_id=request_id,
+        )
     return False, last_error or {"error": "Max retries exceeded"}, None
 
 
@@ -1693,4 +1849,181 @@ async def apply_production_corrections_to_training(
         "success": True,
         "applied_count": applied_count,
         "message": f"Applied {applied_count} production corrections to training",
+    }
+
+
+# =============================================================================
+# BATCH JOB ENDPOINTS (M3.BatchQueue)
+# =============================================================================
+
+@router.post("/batch-jobs")
+async def create_batch_export_job(
+    run_ids: List[int],
+    sandbox: bool = True,
+    post_only_ready: bool = True,
+    background_tasks: BackgroundTasks = None,
+):
+    """
+    Create a batch export job for multiple extraction runs.
+
+    The job will be processed asynchronously. Use the returned job_id
+    to check progress via GET /batch-jobs/{job_id}.
+
+    Args:
+        run_ids: List of extraction run IDs to export
+        sandbox: Use CD sandbox environment
+        post_only_ready: Only post runs without blocking issues
+
+    Returns:
+        Job ID and initial status
+    """
+    from api.batch_jobs import create_batch_job, run_batch_job
+
+    if not run_ids:
+        raise HTTPException(status_code=400, detail="No run IDs provided")
+
+    # Create job
+    job_id = create_batch_job(
+        run_ids=run_ids,
+        options={
+            "sandbox": sandbox,
+            "post_only_ready": post_only_ready,
+        },
+    )
+
+    # Start processing in background
+    if background_tasks:
+        background_tasks.add_task(
+            _run_batch_job_sync,
+            job_id=job_id,
+            sandbox=sandbox,
+        )
+
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "total_runs": len(run_ids),
+        "message": "Batch job created. Poll GET /batch-jobs/{job_id} for progress.",
+    }
+
+
+def _run_batch_job_sync(job_id: int, sandbox: bool):
+    """Synchronous wrapper for async batch job processing."""
+    import asyncio
+    from api.batch_jobs import run_batch_job
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(run_batch_job(job_id, sandbox=sandbox))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Batch job {job_id} error: {e}")
+    finally:
+        loop.close()
+
+
+@router.get("/batch-jobs/{job_id}")
+async def get_batch_job(job_id: int):
+    """
+    Get batch job status and progress.
+
+    Returns current status, progress (percent complete, counts),
+    and results (if completed).
+    """
+    from api.batch_jobs import get_batch_job_status
+
+    status = get_batch_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    return status
+
+
+@router.get("/batch-jobs")
+async def list_batch_jobs(
+    status: str = None,
+    limit: int = 20,
+):
+    """
+    List recent batch jobs.
+
+    Args:
+        status: Filter by status (pending, running, completed, failed)
+        limit: Maximum number of jobs to return
+    """
+    from api.batch_jobs import BatchJobRepository
+
+    jobs = BatchJobRepository.list_recent(limit=limit, status=status)
+    return {"jobs": jobs}
+
+
+# =============================================================================
+# AUDIT TRAIL ENDPOINTS (M3.Export)
+# =============================================================================
+
+@router.get("/audit-trail/{run_id}")
+async def get_run_audit_trail(run_id: int):
+    """
+    Get complete audit trail for an extraction run.
+
+    Returns all audit events (export attempts, ETag operations, etc.)
+    in chronological order.
+    """
+    from api.audit_log import get_audit_trail
+
+    events = get_audit_trail(run_id)
+    return {
+        "run_id": run_id,
+        "events_count": len(events),
+        "events": events,
+    }
+
+
+@router.get("/audit-trail/listing/{cd_listing_id}")
+async def get_listing_audit_trail(cd_listing_id: str):
+    """
+    Get audit trail for a specific CD listing.
+
+    Returns all audit events related to this listing ID.
+    """
+    from api.audit_log import AuditLogRepository
+
+    events = AuditLogRepository.get_by_listing(cd_listing_id)
+    return {
+        "cd_listing_id": cd_listing_id,
+        "events_count": len(events),
+        "events": [e.to_dict() for e in events],
+    }
+
+
+@router.post("/batch-jobs/{job_id}/cancel")
+async def cancel_batch_job(job_id: int):
+    """
+    Cancel a running batch job.
+
+    Note: Items already processed will not be rolled back.
+    """
+    from api.batch_jobs import BatchJobRepository, BatchJobStatus
+
+    job = BatchJobRepository.get_by_id(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job["status"] not in (BatchJobStatus.PENDING.value, BatchJobStatus.RUNNING.value):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel job with status: {job['status']}"
+        )
+
+    BatchJobRepository.update(
+        job_id,
+        status=BatchJobStatus.CANCELLED.value,
+        completed_at=datetime.utcnow().isoformat(),
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "cancelled",
+        "message": "Job cancelled. Items already processed are not affected.",
     }
