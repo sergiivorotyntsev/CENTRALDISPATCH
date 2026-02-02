@@ -41,3 +41,15 @@ Thumbs.db
 # Runtime data
 data/
 uploads/
+
+# Node.js
+node_modules/
+web/node_modules/
+
+# Build output
+static/
+web/dist/
+
+# Package manager locks (optional - can be committed for reproducibility)
+# Uncomment if you want to track package-lock.json
+# !web/package-lock.json
