@@ -144,7 +144,10 @@ class IAAExtractor(BaseExtractor):
 
     def _extract_pickup_location(self, text: str) -> Optional[Address]:
         """Extract pickup address using learned rules or shared parser."""
-        # First check for learned rules
+        # First, try to extract branch/location name for better identification
+        location_name = self._extract_branch_name(text)
+
+        # Check for learned rules
         rule = self.get_learned_rule('pickup_address')
 
         if rule and rule.label_patterns:
@@ -154,18 +157,49 @@ class IAAExtractor(BaseExtractor):
                 lines = extract_lines_after_label(text, label_pattern)
                 if lines:
                     # Parse address from lines
-                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns)
+                    addr = self._parse_address_from_lines(lines, rule.exclude_patterns, location_name)
                     if addr:
                         return addr
 
         # Fallback to default extraction
-        return extract_pickup_address(
+        addr = extract_pickup_address(
             text,
             source="IAA",
             custom_labels=self.DEFAULT_LABELS.get('pickup_address', [])
         )
 
-    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None) -> Optional[Address]:
+        # If we found an address but no name, use the extracted branch name
+        if addr and (not addr.name or addr.name == "IAA") and location_name:
+            addr.name = location_name
+
+        return addr
+
+    def _extract_branch_name(self, text: str) -> Optional[str]:
+        """Extract IAA branch/location name from document."""
+        # Try various patterns to find the branch name
+        branch_patterns = [
+            r'Sold\s*At\s*Branch[:\s]*([^\n]+)',  # "Sold At Branch: IAA Tampa South"
+            r'Branch[:\s]+([A-Z][A-Za-z\s\-]+?)(?:\n|$)',  # "Branch: Tampa South"
+            r'IAA\s*[-–]\s*([A-Z][A-Za-z\s]+?)(?:\n|\d|$)',  # "IAA - Tampa South"
+            r'Insurance\s+Auto\s+Auctions?\s*[-–]\s*([A-Z][A-Za-z\s]+?)(?:\n|\d|$)',  # Full name variant
+            r'Pick[-\s]?Up\s*Location[:\s]*([A-Z][A-Za-z\s\-]+?)(?:,|\n|\d{5})',  # "Pick-Up Location: Tampa South"
+        ]
+
+        for pattern in branch_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                name = match.group(1).strip()
+                # Clean up common suffixes
+                name = re.sub(r'\s*(Branch|Location|Facility)$', '', name, flags=re.IGNORECASE)
+                if len(name) > 2 and len(name) < 50:
+                    # Add "IAA" prefix if not present
+                    if not name.upper().startswith('IAA'):
+                        name = f"IAA {name}"
+                    return name.strip()
+
+        return None
+
+    def _parse_address_from_lines(self, lines: list, exclude_patterns: list = None, location_name: str = None) -> Optional[Address]:
         """Parse address from extracted lines."""
         if not lines:
             return None
@@ -205,8 +239,10 @@ class IAAExtractor(BaseExtractor):
                 street = ""
 
         if street or (city and state):
+            # Use location_name if provided, otherwise default to "IAA"
+            name = location_name or "IAA"
             return Address(
-                name="IAA",
+                name=name,
                 street=street,
                 city=city,
                 state=state,

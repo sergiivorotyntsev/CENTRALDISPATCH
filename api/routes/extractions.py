@@ -224,9 +224,15 @@ def run_extraction(run_id: int, document_id: int, auction_type_id: int,
                 # Pickup address
                 if inv.pickup_address:
                     addr = inv.pickup_address
+                    # pickup_address should be street address; fallback to location name if no street
+                    # Central Dispatch requires pickup_address, so provide best available info
+                    street_address = addr.street
+                    if not street_address and addr.name:
+                        # Use location name as fallback (e.g., "IAA Tampa South")
+                        street_address = addr.name
                     outputs.update({
                         "pickup_name": addr.name,
-                        "pickup_address": addr.street,
+                        "pickup_address": street_address,
                         "pickup_city": addr.city,
                         "pickup_state": addr.state,
                         "pickup_zip": addr.postal_code,
