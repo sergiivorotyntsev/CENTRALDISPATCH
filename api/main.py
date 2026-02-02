@@ -35,7 +35,7 @@ request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
 from api.routes import settings, test, runs, health
 from api.routes import auction_types, documents, extractions, reviews, exports, models
-from api.routes import integrations, warehouses, field_mappings, training
+from api.routes import integrations, warehouses, field_mappings, training, metrics
 from api.database import init_db
 from api.models import init_schema, seed_base_auction_types
 
@@ -110,6 +110,7 @@ app.include_router(integrations.router)
 app.include_router(warehouses.router)
 app.include_router(field_mappings.router)
 app.include_router(training.router, prefix="/api")
+app.include_router(metrics.router)  # M3.P1.5: Metrics endpoints
 
 
 # =============================================================================

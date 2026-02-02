@@ -256,10 +256,14 @@ def _run_block_extraction(
         parser = _get_spatial_parser()
         structure = parser.parse(file_path)
 
-        # Update metrics with layout info
+        # Update metrics with layout info (M3.P1.1 column detection)
         metrics["layout_blocks_count"] = len(structure.blocks)
-        metrics["detected_columns_count"] = 1  # TODO: Add column detection in M3.P1
-        metrics["reading_order_strategy"] = "linear"  # TODO: Update when column-aware
+        metrics["detected_columns_count"] = structure.column_count
+        metrics["reading_order_strategy"] = structure.reading_order_strategy
+        if structure.detected_columns:
+            metrics["column_boundaries"] = [
+                {"start": c[0], "end": c[1]} for c in structure.detected_columns
+            ]
 
         # 2. Store layout blocks in database
         if structure.blocks and document_id:

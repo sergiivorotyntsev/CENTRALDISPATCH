@@ -120,6 +120,11 @@ class DocumentStructure:
     # Label to block mapping
     labeled_blocks: Dict[str, DocumentBlock] = field(default_factory=dict)
 
+    # Column detection (M3.P1.1)
+    detected_columns: List[Tuple[float, float]] = field(default_factory=list)  # (x_start, x_end) per column
+    column_count: int = 1
+    reading_order_strategy: str = "linear"  # linear, column_aware
+
     def get_block_by_label(self, label_pattern: str) -> Optional[DocumentBlock]:
         """Find a block by its label pattern."""
         pattern = re.compile(label_pattern, re.IGNORECASE)
@@ -262,6 +267,12 @@ class SpatialParser:
         # Classify block types
         self._classify_blocks(structure)
 
+        # M3.P1.1: Detect columns
+        self.detect_columns(structure)
+
+        # M3.P1.2: Sort in reading order
+        structure.blocks = self.sort_reading_order(structure)
+
         # Cache result
         self._cached_structures[pdf_path] = structure
 
@@ -384,6 +395,182 @@ class SpatialParser:
             return True
 
         return False
+
+    # =========================================================================
+    # M3.P1.1: COLUMN DETECTION
+    # =========================================================================
+
+    def detect_columns(
+        self,
+        structure: DocumentStructure,
+        min_gap_ratio: float = 0.10,
+    ) -> int:
+        """
+        Detect columns in the document based on horizontal gap analysis.
+
+        Args:
+            structure: DocumentStructure to analyze
+            min_gap_ratio: Minimum gap as ratio of page width to separate columns
+
+        Returns:
+            Number of detected columns
+        """
+        if not structure.blocks or structure.width == 0:
+            structure.column_count = 1
+            return 1
+
+        min_gap = structure.width * min_gap_ratio
+
+        # Collect all block x-coordinates
+        block_positions = []
+        for block in structure.blocks:
+            if block.block_type in ('data', 'label'):
+                block_positions.append({
+                    'x0': block.x0,
+                    'x1': block.x1,
+                    'center_x': (block.x0 + block.x1) / 2,
+                    'block': block,
+                })
+
+        if len(block_positions) < 2:
+            structure.column_count = 1
+            return 1
+
+        # Sort by x position
+        block_positions.sort(key=lambda b: b['x0'])
+
+        # Find gaps between blocks
+        gaps = []
+        for i in range(len(block_positions) - 1):
+            current = block_positions[i]
+            next_block = block_positions[i + 1]
+            gap = next_block['x0'] - current['x1']
+            if gap > min_gap:
+                gaps.append({
+                    'position': (current['x1'] + next_block['x0']) / 2,
+                    'size': gap,
+                })
+
+        if not gaps:
+            structure.column_count = 1
+            structure.detected_columns = [(0, structure.width)]
+            return 1
+
+        # Sort gaps by size (largest first) and take significant ones
+        gaps.sort(key=lambda g: g['size'], reverse=True)
+
+        # Determine column boundaries
+        column_dividers = [g['position'] for g in gaps[:3]]  # Max 4 columns
+        column_dividers.sort()
+
+        # Build column ranges
+        columns = []
+        prev_x = 0
+        for divider in column_dividers:
+            columns.append((prev_x, divider))
+            prev_x = divider
+        columns.append((prev_x, structure.width))
+
+        structure.detected_columns = columns
+        structure.column_count = len(columns)
+        structure.reading_order_strategy = "column_aware" if len(columns) > 1 else "linear"
+
+        logger.debug(f"Detected {len(columns)} columns: {columns}")
+        return len(columns)
+
+    def sort_reading_order(
+        self,
+        structure: DocumentStructure,
+    ) -> List[DocumentBlock]:
+        """
+        Sort blocks in reading order (M3.P1.2).
+
+        For multi-column documents:
+        - Within each column: top to bottom
+        - Columns: left to right
+        - Cross-column: complete left column before right
+
+        Args:
+            structure: DocumentStructure with blocks
+
+        Returns:
+            List of blocks in reading order
+        """
+        if not structure.blocks:
+            return []
+
+        # Ensure columns are detected
+        if not structure.detected_columns:
+            self.detect_columns(structure)
+
+        if structure.column_count <= 1:
+            # Single column: simple top-to-bottom, left-to-right
+            return sorted(
+                structure.blocks,
+                key=lambda b: (b.page, b.y0, b.x0)
+            )
+
+        # Multi-column: assign blocks to columns, then sort
+        columns = structure.detected_columns
+
+        def get_column_index(block: DocumentBlock) -> int:
+            """Get the column index for a block based on its center_x."""
+            center_x = (block.x0 + block.x1) / 2
+            for i, (col_start, col_end) in enumerate(columns):
+                if col_start <= center_x <= col_end:
+                    return i
+            # Fallback: find closest column
+            min_dist = float('inf')
+            best_col = 0
+            for i, (col_start, col_end) in enumerate(columns):
+                col_center = (col_start + col_end) / 2
+                dist = abs(center_x - col_center)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_col = i
+            return best_col
+
+        # Sort by: page, column index, y position, x position
+        return sorted(
+            structure.blocks,
+            key=lambda b: (b.page, get_column_index(b), b.y0, b.x0)
+        )
+
+    def get_column_text(
+        self,
+        structure: DocumentStructure,
+        column_index: int = 0,
+    ) -> str:
+        """
+        Get text from a specific column in reading order.
+
+        Args:
+            structure: DocumentStructure
+            column_index: Column index (0-based, left to right)
+
+        Returns:
+            Text from the specified column
+        """
+        if not structure.detected_columns:
+            self.detect_columns(structure)
+
+        if column_index >= len(structure.detected_columns):
+            return ""
+
+        col_start, col_end = structure.detected_columns[column_index]
+
+        # Get blocks in this column
+        column_blocks = []
+        for block in structure.blocks:
+            center_x = (block.x0 + block.x1) / 2
+            if col_start <= center_x <= col_end:
+                column_blocks.append(block)
+
+        # Sort by y position
+        column_blocks.sort(key=lambda b: (b.page, b.y0))
+
+        # Join text
+        return "\n".join(b.text for b in column_blocks if b.text)
 
     def extract_field_by_label(
         self,
