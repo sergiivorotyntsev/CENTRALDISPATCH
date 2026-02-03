@@ -165,7 +165,7 @@ class BatchQueue:
 
     def cancel(self, job_id: str) -> bool:
         """
-        Cancel a running job.
+        Cancel a running or pending job.
 
         Cancellation is best-effort - currently processing items will complete,
         but no new items will start.
@@ -182,6 +182,12 @@ class BatchQueue:
                 job._cancel_requested = True
                 job.status = JobStatus.CANCELLING
                 logger.info(f"Cancel requested for job {job_id}")
+                return True
+            elif job.status == JobStatus.PENDING:
+                job._cancel_requested = True
+                job.status = JobStatus.CANCELLED
+                job.completed_at = datetime.now().isoformat()
+                logger.info(f"Pending job {job_id} cancelled")
                 return True
 
             return False
