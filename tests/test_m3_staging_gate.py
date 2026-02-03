@@ -68,9 +68,7 @@ class TestExtractionInvariants:
         sample_text = "COPART Invoice #12345 VIN: 1HGBH41JXMN109186 Lot Number: 87654321"
         manager = ExtractorManager()
 
-        # Get all scores for classification
-        scores = manager.get_all_scores.__self__  # dummy - we need a real PDF
-        # Instead, test that ExtractorManager has scoring capability
+        # Test that ExtractorManager has scoring capability
         for extractor in manager.extractors:
             score, patterns = extractor.score(sample_text)
             assert isinstance(score, (int, float)), "Score must be numeric"
