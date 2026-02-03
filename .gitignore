@@ -53,3 +53,4 @@ web/dist/
 # Package manager locks (optional - can be committed for reproducibility)
 # Uncomment if you want to track package-lock.json
 # !web/package-lock.json
+vehicle_transport_automation.egg-info/
